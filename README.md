@@ -35,10 +35,7 @@ services:
     ports:
       - "5080:5080"
     volumes:
-      - ./config.yaml:/app/config.yaml
-      - ./state.yaml:/app/state.yaml
-      - ./status.json:/app/status.json
-      - ./logs:/app/logs
+      - .:/app
 \`\`\`
 
 ### 3. 실행
