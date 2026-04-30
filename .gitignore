@@ -1,0 +1,9 @@
+config.yaml
+state.yaml
+status.json
+logs/
+__pycache__/
+*.zip
+.venv/
+*.code-workspace
+*.bak

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>규칙 수정</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial;max-width:800px;margin:30px auto}
+    input[type=text],select{width:100%;box-sizing:border-box;padding:6px}
+    form{margin:16px 0}
+  </style>
+</head>
+<body>
+  <h1>규칙 수정</h1>
+  <form method="post" action="/edit">
+    <input type="hidden" name="idx" value="{{ idx }}">
+
+    <label>Category</label>
+    <select name="category">
+      {% for k in ['예능','다큐','드라마','애니메이션'] %}
+        <option value="{{k}}" {{ (rule.category or '') == k and 'selected' or '' }}>{{k}}</option>
+      {% endfor %}
+    </select>
+
+    <label>Pattern</label>
+    <input type="text" name="pattern" value="{{ rule.pattern or '' }}">
+
+    <label>Subfolder</label>
+    <input type="text" name="subfolder" value="{{ rule.subfolder or '' }}">
+
+    <fieldset style="margin-top:8px">
+      <legend>요일(선택하지 않으면 전체 요일)</legend>
+      {% set rdays = rule.days or [] %}
+      {% for d in ['월','화','수','목','금','토','일'] %}
+        <label style="margin-right:8px">
+          <input type="checkbox" name="days" value="{{ d }}" {{ d in rdays and 'checked' or '' }}> {{ d }}
+        </label>
+      {% endfor %}
+    </fieldset>
+
+    <p><small>기존 target 필드가 있던 규칙은 subfolder 저장 시 target 없이 동작합니다.</small></p>
+    <button>저장</button>
+  </form>
+
+  <p><a href="/">뒤로</a></p>
+</body>
+</html>

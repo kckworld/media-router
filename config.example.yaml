@@ -1,0 +1,49 @@
+telegram:
+  bot_token: "YOUR_BOT_TOKEN"
+  chat_id: "YOUR_CHAT_ID"
+  enabled: false
+
+paths:
+  sources:
+    - /path/to/download
+  cleanup:
+    remove_dirs:
+      - "@eaDir"
+    remove_files:
+      - thumbs.db
+      - Thumbs.db
+
+base_paths:
+  예능: /path/to/video/예능
+  드라마: /path/to/video/드라마
+  다큐: /path/to/video/다큐
+  애니메이션: /path/to/video/애니메이션
+
+rules:
+  - category: 예능
+    pattern: "*런닝맨*.*"
+    subfolder: 런닝맨
+    days: [일]
+    updated: N
+    updated_map:
+      일: N
+    last_episode: 1
+  - category: 드라마
+    pattern: "*드라마제목*.*"
+    subfolder: 드라마제목 (2024)
+    days: [월, 화]
+    updated: N
+    updated_map:
+      월: N
+      화: N
+    total_episodes: 16
+    received_episodes: []
+
+ownership:
+  apply: true
+  user: your_user
+  group: your_group
+  file_mode: 664
+  dir_mode: 775
+  setgid_dirs: true
+  enforce_inherit: false

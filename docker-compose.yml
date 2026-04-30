@@ -1,0 +1,15 @@
+services:
+  media-router:
+    build: .
+    container_name: media_router
+    restart: unless-stopped
+    ports:
+      - "5080:5080"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./state.yaml:/app/state.yaml
+      - ./status.json:/app/status.json
+      - ./logs:/app/logs
+      - ./static:/app/static
+    environment:
+      - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}

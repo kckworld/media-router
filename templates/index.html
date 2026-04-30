@@ -1,0 +1,1161 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Media Router Web Admin</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --fg: #0f172a;
+      --muted: #64748b;
+      --bg: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+      --bg-solid: #f8fafc;
+      --bg-card: #ffffff;
+      --line: #e2e8f0;
+      --line-hover: #cbd5e1;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --accent-light: #eef2ff;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --danger-light: #fef2f2;
+      --success: #10b981;
+      --success-hover: #059669;
+      --success-light: #ecfdf5;
+      --warning: #f59e0b;
+      --warning-light: #fffbeb;
+      --info: #3b82f6;
+      --info-light: #eff6ff;
+      --purple: #8b5cf6;
+      --purple-light: #f5f3ff;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    }
+    
+    * { box-sizing: border-box; }
+    
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", Arial, sans-serif;
+      color: var(--fg);
+      background: var(--bg-solid);
+      background-image: var(--bg);
+      min-height: 100vh;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-bottom: none;
+      padding: 28px 32px;
+      box-shadow: var(--shadow-md);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    header > div {
+      flex: 1;
+    }
+    
+    header .header-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    
+    header h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: -0.02em;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    }
+    
+    header .sub {
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 14px;
+      margin-top: 6px;
+      font-weight: 400;
+    }
+    
+    header .btn {
+      background: rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.3);
+      backdrop-filter: blur(10px);
+    }
+    
+    header .btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+    
+    main {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+    
+    .row {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 28px;
+      box-shadow: var(--shadow);
+      transition: all 0.3s ease;
+      backdrop-filter: blur(10px);
+    }
+    
+    .card:hover {
+      box-shadow: var(--shadow-lg);
+      transform: translateY(-2px);
+      border-color: var(--line-hover);
+    }
+    
+    .muted {
+      color: var(--muted);
+    }
+    
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 11px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg-card);
+      cursor: pointer;
+      text-decoration: none;
+      color: var(--fg);
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      white-space: nowrap;
+      box-shadow: var(--shadow-sm);
+    }
+    
+    .btn:hover {
+      background: #f8fafc;
+      border-color: var(--line-hover);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+    }
+    
+    .btn.primary {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+      color: #fff;
+      border-color: var(--accent);
+      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.25);
+    }
+    
+    .btn.primary:hover {
+      background: linear-gradient(135deg, var(--accent-hover) 0%, #4338ca 100%);
+      border-color: var(--accent-hover);
+      box-shadow: 0 6px 20px rgba(99, 102, 241, 0.35);
+      transform: translateY(-2px);
+    }
+    
+    .btn.danger {
+      background: linear-gradient(135deg, var(--danger) 0%, var(--danger-hover) 100%);
+      color: #fff;
+      border-color: var(--danger);
+      box-shadow: 0 4px 14px rgba(239, 68, 68, 0.25);
+    }
+    
+    .btn.danger:hover {
+      background: linear-gradient(135deg, var(--danger-hover) 0%, #b91c1c 100%);
+      border-color: var(--danger-hover);
+      box-shadow: 0 6px 20px rgba(239, 68, 68, 0.35);
+      transform: translateY(-2px);
+    }
+    
+    .btn.small {
+      padding: 6px 12px;
+      font-size: 13px;
+    }
+    
+    .btn:active {
+      transform: translateY(0);
+    }
+    
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 12px 0;
+    }
+    
+    .field label,
+    .field .muted {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      height: 20px;
+      display: flex;
+      align-items: center;
+      line-height: 20px;
+    }
+    
+    .field .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: -4px;
+      line-height: 1.4;
+      min-height: 32px;
+    }
+    
+    input[type=text],
+    input[type=password],
+    input[type=number],
+    select {
+      padding: 12px 16px;
+      font-size: 14px;
+      border: 2px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg-card);
+      color: var(--fg);
+      transition: all 0.25s ease;
+      min-width: 220px;
+      width: 100%;
+    }
+    
+    input[type=text]:focus,
+    input[type=password]:focus,
+    input[type=number]:focus,
+    select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1), 0 4px 12px rgba(99, 102, 241, 0.15);
+      transform: translateY(-1px);
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      background: var(--bg-card);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    
+    th, td {
+      padding: 14px 16px;
+      text-align: left;
+      font-size: 14px;
+      vertical-align: middle;
+      border-bottom: 1px solid var(--line);
+    }
+    
+    th {
+      background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+      font-weight: 700;
+      color: var(--fg);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 2px solid var(--line);
+    }
+    
+    th a {
+      color: inherit;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.2s ease;
+    }
+    
+    th a:hover {
+      color: var(--accent);
+    }
+    
+    tbody tr {
+      transition: all 0.2s ease;
+    }
+    
+    tbody tr:hover {
+      background: linear-gradient(90deg, #f8fafc 0%, #ffffff 100%);
+      transform: scale(1.001);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+    
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+    
+    .sort-caret {
+      width: 0;
+      height: 0;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      opacity: 0.4;
+    }
+    
+    .sort-caret.asc {
+      border-bottom: 6px solid currentColor;
+      margin-top: 2px;
+    }
+    
+    .sort-caret.desc {
+      border-top: 6px solid currentColor;
+      margin-bottom: 2px;
+    }
+    
+    .badge {
+      display: inline-block;
+      padding: 6px 14px;
+      border: none;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: 8px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #ffffff;
+      box-shadow: 0 2px 4px rgba(102, 126, 234, 0.25);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    /* 체크모드 요일별 색상 */
+    .badge.day-two-days-ago {
+      background: linear-gradient(135deg, var(--purple) 0%, #7c3aed 100%);
+      color: #ffffff;
+      box-shadow: 0 2px 4px rgba(139, 92, 246, 0.25);
+    }
+    
+    .badge.day-yesterday {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+      color: #ffffff;
+      box-shadow: 0 2px 4px rgba(99, 102, 241, 0.25);
+    }
+    
+    .badge.day-today {
+      background: linear-gradient(135deg, var(--success) 0%, var(--success-hover) 100%);
+      color: #ffffff;
+      box-shadow: 0 2px 4px rgba(16, 185, 129, 0.25);
+    }
+    
+    .pill {
+      display: inline-block;
+      padding: 6px 12px;
+      background: var(--accent-light);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      border-radius: 16px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: 8px;
+      color: var(--accent-hover);
+      box-shadow: 0 1px 3px rgba(99, 102, 241, 0.15);
+    }
+    
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 10px;
+    }
+    
+    .daybox {
+      padding: 14px 10px;
+      border: 2px solid var(--line);
+      border-radius: 12px;
+      background: var(--bg-card);
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: var(--shadow-sm);
+    }
+    
+    .daybox:hover {
+      border-color: var(--accent);
+      background: var(--accent-light);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+    }
+    
+    .daybox input[type=checkbox] {
+      margin-right: 4px;
+      cursor: pointer;
+    }
+    
+    .daybox:has(input[type=checkbox]:checked) {
+      border-color: var(--accent);
+      background: linear-gradient(135deg, var(--accent-light) 0%, #e0e7ff 100%);
+      color: var(--accent-hover);
+      font-weight: 700;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+      transform: translateY(-1px);
+    }
+    
+    .filters {
+      gap: 16px;
+      align-items: flex-end;
+    }
+    
+    .filter-form {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      flex: 1;
+    }
+    
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 180px;
+      flex: 1;
+    }
+    
+    .filter-group label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    
+    .spacer {
+      height: 16px;
+    }
+    
+    .section-title {
+      font-weight: 700;
+      font-size: 18px;
+      margin: 0 0 20px 0;
+      color: var(--fg);
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .section-title::before {
+      content: '';
+      width: 4px;
+      height: 20px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%);
+      border-radius: 2px;
+    }
+    
+    form.inline {
+      display: inline;
+    }
+    
+    .right {
+      margin-left: auto;
+    }
+    
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    
+    code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+    }
+    
+    a.subfolder-link {
+      color: inherit;
+      text-decoration: none;
+      cursor: pointer;
+      border-bottom: 1px dashed rgba(99, 102, 241, 0.4);
+      transition: all 0.2s ease;
+      padding-bottom: 1px;
+    }
+    
+    a.subfolder-link:hover {
+      border-bottom-color: rgba(99, 102, 241, 0.8);
+      color: var(--accent);
+    }
+    
+    /* 체크모드 카드뷰 */
+    .card-list {
+      display: none;
+    }
+    
+    .card-item {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      background: var(--bg-card);
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      transition: all 0.3s ease;
+      box-shadow: var(--shadow-sm);
+    }
+    
+    .card-item:hover {
+      box-shadow: var(--shadow-md);
+      border-color: var(--line-hover);
+      transform: translateY(-2px);
+      background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    }
+    
+    .card-check {
+      margin-top: 2px;
+      transform: scale(1.6);
+      transform-origin: left top;
+      cursor: pointer;
+      width: 20px;
+      height: 20px;
+    }
+    
+    .card-body {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .card-title {
+      font-weight: 600;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+    
+    details {
+      margin-top: 8px;
+    }
+    
+    details summary {
+      cursor: pointer;
+      user-select: none;
+      padding: 4px 0;
+      font-size: 13px;
+    }
+    
+    details summary:hover {
+      color: var(--accent);
+    }
+    
+    details[open] summary {
+      margin-bottom: 12px;
+    }
+    
+    @media (max-width: 768px) {
+      header {
+        padding: 16px 20px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+      }
+      
+      header .header-actions {
+        width: 100%;
+        justify-content: flex-end;
+      }
+      
+      header h1 {
+        font-size: 18px;
+      }
+      
+      main {
+        padding: 16px;
+      }
+      
+      .card {
+        padding: 20px;
+        border-radius: 10px;
+      }
+      
+      .table-wrapper {
+        display: none;
+      }
+      
+      .card-list {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      
+      .card-item {
+        padding: 14px;
+      }
+      
+      .filter-group {
+        min-width: 100%;
+      }
+      
+      .right {
+        width: 100%;
+        margin-left: 0;
+      }
+      
+      .btn {
+        width: 100%;
+        justify-content: center;
+      }
+      
+      input[type=text],
+      input[type=password],
+      input[type=number],
+      select {
+        min-width: 100%;
+      }
+      
+      .grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+      }
+      
+      th, td {
+        padding: 10px 12px;
+        font-size: 13px;
+      }
+    }
+    
+    @media (max-width: 480px) {
+      .grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      
+      .card {
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Media Router Web Admin</h1>
+      <div class="sub">체크모드(그저께+어제+오늘) / 전체 관리</div>
+    </div>
+    {% if mode != 'check' %}
+    <div class="header-actions">
+      <button type="button" class="btn small" onclick="restartServer()">서버 재시작</button>
+    </div>
+    {% endif %}
+  </header>
+
+  <main>
+
+    {% if not authed %}
+      <div class="card">
+        <h3 style="margin:0 0 10px;">로그인</h3>
+        <form method="post" action="/login">
+          <div class="row">
+            <input type="password" name="pw" placeholder="관리자 비밀번호" autocomplete="current-password">
+            <button class="btn primary" type="submit">로그인</button>
+          </div>
+        </form>
+        <div class="hint">환경변수 <code>MEDIA_ADMIN_PASSWORD</code> 로 비밀번호를 설정하세요.</div>
+      </div>
+      <div class="spacer"></div>
+    {% endif %}
+
+    <!-- 상단 컨트롤 -->
+    <div class="row card">
+      <div class="row filters">
+        <form class="filter-form" method="get" action="/">
+          <input type="hidden" name="mode" value="{{ mode }}">
+          {% if mode != 'check' %}
+          <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
+          {% endif %}
+          <div class="filter-group">
+            <label class="muted">요일</label>
+            <select name="day" onchange="this.form.submit()">
+              {% if mode == 'check' %}
+                <option value="__three__" {{ 'selected' if selected_day == '__three__' else '' }}>그저께+어제+오늘</option>
+              {% endif %}
+              {% for d in weekdays %}
+                <option value="{{ d }}" {{ 'selected' if selected_day == d else '' }}>{{ d }}</option>
+              {% endfor %}
+              {% if mode != 'check' %}
+                <option value="전체" {{ 'selected' if selected_day == '전체' else '' }}>전체</option>
+              {% endif %}
+            </select>
+          </div>
+
+          {% if mode != 'check' %}
+          <div class="filter-group">
+            <label class="muted">카테고리</label>
+            <select name="cat" onchange="this.form.submit()">
+              <option value="전체" {{ 'selected' if selected_cat == '전체' or not selected_cat else '' }}>전체</option>
+              {% for c in categories %}
+                <option value="{{ c }}" {{ 'selected' if selected_cat == c else '' }}>{{ c }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="filter-group">
+            <label class="muted">요일 없는 규칙</label>
+            <a class="btn" href="/?mode=&day={{ selected_day }}&cat={{ selected_cat }}&sort={{ sort_key }}&dir={{ sort_dir }}&hide_no_days={{ '0' if hide_no_days == '1' else '1' }}">
+              {{ '표시' if hide_no_days == '1' else '숨김' }}
+            </a>
+          </div>
+          {% endif %}
+
+          <noscript><button class="btn small" type="submit">적용</button></noscript>
+        </form>
+
+        <div class="right">
+          {% if mode == 'check' %}
+            <a class="btn" href="/?mode=">전체 관리로</a>
+          {% else %}
+            <a class="btn" href="/?mode=check">체크모드로</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+
+    {% if mode == 'check' %}
+      <!-- 체크모드: 카드뷰 + 데스크톱 테이블 -->
+      <form method="post" action="/check">
+        <input type="hidden" name="day" value="{{ selected_day }}">
+
+        <div class="card card-list">
+          <div class="section-title">체크 목록 (미처리)</div>
+          {% if rules|length == 0 %}
+            <div class="muted">표시할 항목이 없습니다.</div>
+          {% else %}
+            <div style="display:grid; gap:6px;">
+              {% for r in rules %}
+                <div class="card-item" style="align-items:center;">
+                  <input class="card-check" type="checkbox" name="rkday" value="{{ r.rkday }}">
+                  <div class="card-body" style="flex:1;">
+                    <div class="card-title">
+                      <span class="badge{% if mode == 'check' %}{% if r.day == two_days_ago_name %} day-two-days-ago{% elif r.day == yest_name %} day-yesterday{% elif r.day == today_name %} day-today{% endif %}{% endif %}">{{ r.day }}</span>
+                      {{ r.category }} / <a href="#" onclick="searchNaver('{{ r.subfolder }}'); return false;" class="subfolder-link">{{ r.subfolder }}</a>
+                      {% if r.release %}
+                        <span class="pill" style="background:linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%); border-color:#818cf8; margin-left:6px; color:#4338ca; box-shadow:0 2px 4px rgba(129, 140, 248, 0.2);">{{ r.release }}</span>
+                      {% endif %}
+                      {% if r.next_episode %}
+                        <span class="pill" style="background:linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-color:#f59e0b; margin-left:6px; color:#92400e; box-shadow:0 2px 4px rgba(245, 158, 11, 0.2);">다음: E{{ r.next_episode }}</span>
+                      {% endif %}
+                    </div>
+                  </div>
+                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:nowrap;">
+                    {% if r.category == '드라마' or r.category == '예능' %}
+                    <button class="btn small" type="button" onclick="checkEpisodes({{ r._idx }}, this)" style="background:#10b981; color:#fff; border-color:#10b981; white-space:nowrap;">에피소드 점검</button>
+                    {% endif %}
+                    <button class="btn danger small" type="button" onclick="deleteRule({{ r._idx }}, '{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">삭제</button>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <button class="btn primary" type="submit">선택 항목 체크 처리</button>
+              <span class="hint">선택한 항목만 해당 요일이 Y로 변경됩니다.</span>
+            </div>
+          {% endif %}
+        </div>
+
+        <div class="card table-wrapper">
+          <div class="section-title">체크 목록 (미처리)</div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:40px;"><input type="checkbox" onclick="document.querySelectorAll('input[name=rkday]').forEach(cb=>cb.checked=this.checked)" style="transform: scale(1.4); cursor: pointer; width: 18px; height: 18px;"></th>
+                <th>요일</th>
+                <th>카테고리</th>
+                <th>패턴</th>
+                <th>대상 폴더</th>
+                <th style="width:150px;">작업</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if rules|length == 0 %}
+                <tr><td colspan="6" class="muted">표시할 항목이 없습니다.</td></tr>
+              {% else %}
+                {% for r in rules %}
+                  <tr>
+                    <td><input type="checkbox" name="rkday" value="{{ r.rkday }}" style="transform: scale(1.4); cursor: pointer; width: 18px; height: 18px;"></td>
+                    <td><span class="badge{% if mode == 'check' %}{% if r.day == two_days_ago_name %} day-two-days-ago{% elif r.day == yest_name %} day-yesterday{% elif r.day == today_name %} day-today{% endif %}{% endif %}">{{ r.day }}</span></td>
+                    <td>{{ r.category }}</td>
+                    <td><code>{{ r.pattern }}</code></td>
+                    <td>
+                      <a href="#" onclick="searchNaver('{{ r.subfolder }}'); return false;" class="subfolder-link">{{ r.subfolder }}</a>
+                      {% if r.release %}
+                        <span class="pill" style="background:linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%); border-color:#818cf8; margin-left:6px; color:#4338ca; box-shadow:0 2px 4px rgba(129, 140, 248, 0.2);">{{ r.release }}</span>
+                      {% endif %}
+                      {% if r.next_episode %}
+                        <span class="pill" style="background:linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-color:#f59e0b; margin-left:6px; color:#92400e; box-shadow:0 2px 4px rgba(245, 158, 11, 0.2);">다음: E{{ r.next_episode }}</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      <div style="display:flex; gap:6px; align-items:center; flex-wrap:nowrap;">
+                        {% if r.category == '드라마' or r.category == '예능' %}
+                        <button class="btn small" type="button" onclick="checkEpisodes({{ r._idx }}, this)" style="background:#10b981; color:#fff; border-color:#10b981; white-space:nowrap;">에피소드 점검</button>
+                        {% endif %}
+                        <button class="btn danger small" type="button" onclick="deleteRule({{ r._idx }}, '{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">삭제</button>
+                      </div>
+                    </td>
+                  </tr>
+                {% endfor %}
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+        <!-- 데스크톱 테이블 하단 저장 버튼 (테이블 뷰에서만 보이도록) -->
+        <div class="row table-wrapper" style="margin-top:10px;">
+          <button class="btn primary" type="submit">선택 항목 체크 처리</button>
+          <span class="hint">선택한 항목만 해당 요일이 Y로 변경됩니다.</span>
+        </div>
+
+      </form>
+
+    {% else %}
+      <!-- 전체 관리: 규칙 추가 -->
+      <div class="card">
+        <div class="section-title">규칙 추가</div>
+        <form method="post" action="/add">
+          <!-- 현재 모드와 필터 조건 유지 -->
+          <input type="hidden" name="mode" value="{{ mode }}">
+          <input type="hidden" name="day" value="{{ selected_day }}">
+          <input type="hidden" name="cat" value="{{ selected_cat }}">
+          <input type="hidden" name="sort" value="{{ sort_key }}">
+          <input type="hidden" name="dir" value="{{ sort_dir }}">
+          <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
+          
+          <div class="row" style="align-items: flex-start;">
+            <div class="field" style="flex: 0 0 auto; min-width: 180px;">
+              <label class="muted">카테고리</label>
+              <select name="category">
+                {% for c in categories %}
+                  <option value="{{ c }}">{{ c }}</option>
+                {% endfor %}
+              </select>
+              <div class="hint" style="visibility: hidden; height: 32px;">placeholder</div>
+            </div>
+            <div class="field" style="flex:1;">
+              <label class="muted">패턴</label>
+              <input type="text" name="pattern" placeholder="예: 트웰브">
+              <div class="hint">단어만 입력하면 <code>*단어*.*</code>로 자동 보정됩니다. 와일드카드 직접 사용 가능.</div>
+            </div>
+            <div class="field" style="flex:1;">
+              <label class="muted">대상 하위 폴더</label>
+              <input type="text" name="subfolder" placeholder="예: 트웰브 (2025)">
+              <div class="hint" style="visibility: hidden; height: 32px;">placeholder</div>
+            </div>
+            <div class="field" style="flex:1;">
+              <label class="muted">릴리즈</label>
+              <input type="text" name="release" placeholder="예: 1080p.WEB-DL.x264">
+              <div class="hint">원하는 릴리즈 형식을 입력하세요 (선택사항)</div>
+            </div>
+          </div>
+          <div class="field">
+            <label class="muted">요일</label>
+            <div class="grid">
+              {% for d in weekdays %}
+                <label class="daybox"><input type="checkbox" name="days" value="{{ d }}"> {{ d }}</label>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="field" id="total_episodes_field" style="display:none;">
+            <label class="muted">전체 에피소드 수 (드라마만)</label>
+            <input type="number" name="total_episodes" min="1" placeholder="예: 16">
+            <div class="hint">드라마 등록 시 전체 에피소드 수를 입력하세요.</div>
+          </div>
+          <button class="btn primary" type="submit">추가</button>
+          <script>
+            document.querySelector('select[name="category"]').addEventListener('change', function() {
+              var field = document.getElementById('total_episodes_field');
+              field.style.display = (this.value === '드라마') ? 'block' : 'none';
+            });
+          </script>
+        </form>
+      </div>
+
+      <div class="spacer"></div>
+
+      <!-- 전체 관리: 정렬 가능 테이블 -->
+      <div class="card">
+        <div class="section-title">규칙 목록</div>
+        <table>
+          <thead>
+            {% set next_dir = 'desc' if sort_dir == 'asc' else 'asc' %}
+            <tr>
+              <th style="width:38px;">#</th>
+              <th>
+                <a href="/?mode=&day={{ selected_day }}&cat={{ selected_cat }}&sort=category&dir={{ next_dir if sort_key=='category' else 'asc' }}&hide_no_days={{ hide_no_days }}">
+                  카테고리
+                  {% if sort_key == 'category' %}
+                    <span class="sort-caret {{ sort_dir }}"></span>
+                  {% endif %}
+                </a>
+              </th>
+              <th>
+                <a href="/?mode=&day={{ selected_day }}&cat={{ selected_cat }}&sort=pattern&dir={{ next_dir if sort_key=='pattern' else 'asc' }}&hide_no_days={{ hide_no_days }}">
+                  패턴
+                  {% if sort_key == 'pattern' %}
+                    <span class="sort-caret {{ sort_dir }}"></span>
+                  {% endif %}
+                </a>
+              </th>
+              <th>
+                <a href="/?mode=&day={{ selected_day }}&cat={{ selected_cat }}&sort=subfolder&dir={{ next_dir if sort_key=='subfolder' else 'asc' }}&hide_no_days={{ hide_no_days }}">
+                  대상 폴더
+                  {% if sort_key == 'subfolder' %}
+                    <span class="sort-caret {{ sort_dir }}"></span>
+                  {% endif %}
+                </a>
+              </th>
+              <th>
+                <a href="/?mode=&day={{ selected_day }}&cat={{ selected_cat }}&sort=days&dir={{ next_dir if sort_key=='days' else 'asc' }}&hide_no_days={{ hide_no_days }}">
+                  요일
+                  {% if sort_key == 'days' %}
+                    <span class="sort-caret {{ sort_dir }}"></span>
+                  {% endif %}
+                </a>
+              </th>
+              <th style="width:190px;">작업</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if rules|length == 0 %}
+              <tr><td colspan="6" class="muted">등록된 규칙이 없습니다.</td></tr>
+            {% else %}
+              {% for r in rules %}
+                <tr>
+                  <td>{{ r._idx }}</td>
+                  <td>{{ r.category }}</td>
+                  <td><code>{{ r.pattern }}</code></td>
+                  <td>
+                    {{ r.subfolder }}
+                    {% if r.release %}
+                      <span class="pill" style="background:#e0e7ff; border-color:#818cf8; margin-left:4px; color:#4338ca;">{{ r.release }}</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if r.days %}
+                      {% for d in r.days %}<span class="pill">{{ d }}</span>{% endfor %}
+                    {% else %}
+                      <span class="muted">지정 없음</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <form class="inline" method="post" action="/delete" onsubmit="return confirm('삭제하시겠습니까?')">
+                      <input type="hidden" name="idx" value="{{ r._idx }}">
+                      <input type="hidden" name="mode" value="{{ mode }}">
+                      <input type="hidden" name="day" value="{{ selected_day }}">
+                      <input type="hidden" name="cat" value="{{ selected_cat }}">
+                      <input type="hidden" name="sort" value="{{ sort_key }}">
+                      <input type="hidden" name="dir" value="{{ sort_dir }}">
+                      <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
+                      <button class="btn danger small" type="submit">삭제</button>
+                    </form>
+                    <details style="margin-top:6px;">
+                      <summary class="muted">편집</summary>
+                      <form method="post" action="/edit" style="margin-top:8px;">
+                        <input type="hidden" name="idx" value="{{ r._idx }}">
+                        <input type="hidden" name="mode" value="{{ mode }}">
+                        <input type="hidden" name="day" value="{{ selected_day }}">
+                        <input type="hidden" name="cat" value="{{ selected_cat }}">
+                        <input type="hidden" name="sort" value="{{ sort_key }}">
+                        <input type="hidden" name="dir" value="{{ sort_dir }}">
+                        <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
+                        <div class="row">
+                          <div class="field">
+                            <label class="muted">카테고리</label>
+                            <select name="category">
+                              {% for c in categories %}
+                                <option value="{{ c }}" {{ 'selected' if r.category==c else '' }}>{{ c }}</option>
+                              {% endfor %}
+                            </select>
+                          </div>
+                          <div class="field">
+                            <label class="muted">패턴</label>
+                            <input type="text" name="pattern" value="{{ r.pattern }}" placeholder="예: 전현무계획">
+                            <div class="hint">단어만 입력해도 자동으로 <code>*단어*.*</code>로 처리됩니다.</div>
+                          </div>
+                          <div class="field">
+                            <label class="muted">대상 하위 폴더</label>
+                            <input type="text" name="subfolder" value="{{ r.subfolder }}" placeholder="예: 전현무계획 (2025)">
+                          </div>
+                          <div class="field">
+                            <label class="muted">릴리즈</label>
+                            <input type="text" name="release" value="{{ r.release or '' }}" placeholder="예: 1080p.WEB-DL.x264">
+                            <div class="hint">원하는 릴리즈 형식을 입력하세요 (선택사항)</div>
+                          </div>
+                        </div>
+                        <div class="field">
+                          <label class="muted">요일</label>
+                          <div class="grid">
+                            {% for d in weekdays %}
+                              <label class="daybox"><input type="checkbox" name="days" value="{{ d }}" {{ 'checked' if r.days and d in r.days else '' }}> {{ d }}</label>
+                            {% endfor %}
+                          </div>
+                        </div>
+                        <div class="field edit-episodes-field-{{ r._idx }}" style="display:{{ 'block' if r.category == '드라마' else 'none' }};">
+                          <label class="muted">전체 에피소드 수 (드라마만)</label>
+                          <input type="number" name="total_episodes" min="1" value="{{ r.total_episodes or '' }}" placeholder="예: 16">
+                          <div class="hint">드라마 등록 시 전체 에피소드 수를 입력하세요.</div>
+                        </div>
+                        <button class="btn primary small" type="submit">저장</button>
+                      </form>
+                    </details>
+                  </td>
+                </tr>
+              {% endfor %}
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+
+    <div class="spacer"></div>
+    <div style="text-align:center; padding:16px; background:linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius:12px; border:1px solid var(--line);">
+      <span class="muted" style="font-size:13px;">그저께: <strong style="color:var(--purple);">{{ two_days_ago_name }}</strong></span>
+      <span style="margin:0 12px; color:var(--line);">|</span>
+      <span class="muted" style="font-size:13px;">어제: <strong style="color:var(--accent);">{{ yest_name }}</strong></span>
+      <span style="margin:0 12px; color:var(--line);">|</span>
+      <span class="muted" style="font-size:13px;">오늘: <strong style="color:var(--success);">{{ today_name }}</strong></span>
+    </div>
+  </main>
+  <script>
+    // 편집 폼에서 카테고리 변경 시 에피소드 필드 표시/숨김
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('form[action="/edit"]').forEach(function(form) {
+        var categorySelect = form.querySelector('select[name="category"]');
+        var episodeField = form.querySelector('[class*="edit-episodes-field-"]');
+        if (categorySelect && episodeField) {
+          categorySelect.addEventListener('change', function() {
+            episodeField.style.display = (this.value === '드라마') ? 'block' : 'none';
+          });
+        }
+      });
+    });
+    
+    // 에피소드 점검 함수
+    function checkEpisodes(idx, button) {
+      var originalText = button.textContent;
+      button.disabled = true;
+      button.textContent = '점검 중...';
+      
+      var formData = new FormData();
+      formData.append('idx', idx);
+      
+      fetch('/check_episodes', {
+        method: 'POST',
+        body: formData
+      })
+      .then(function(response) {
+        if (!response.ok) {
+          return response.text().then(function(text) {
+            try {
+              return JSON.parse(text);
+            } catch (e) {
+              return { success: false, message: '서버 오류가 발생했습니다.' };
+            }
+          });
+        }
+        return response.json();
+      })
+      .then(function(data) {
+        if (data.success) {
+          alert(data.message + (data.episodes ? '\n발견된 에피소드: ' + data.episodes.join(', ') : ''));
+          location.reload();
+        } else {
+          alert(data.message || '에피소드 점검 실패');
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      })
+      .catch(function(error) {
+        alert('에러가 발생했습니다: ' + error);
+        button.disabled = false;
+        button.textContent = originalText;
+      });
+    }
+    
+    // 네이버 검색 함수 (결방 검색)
+    function searchNaver(subfolder) {
+      // 괄호와 연도 제거 (예: "경도를 기다리며 (2025)" -> "경도를 기다리며")
+      var cleanName = subfolder.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      // "결방" 추가
+      var searchQuery = cleanName + ' 결방';
+      // 네이버 검색 URL 생성
+      var searchUrl = 'https://search.naver.com/search.naver?query=' + encodeURIComponent(searchQuery);
+      // 새 탭에서 열기
+      window.open(searchUrl, '_blank');
+    }
+    
+    // 삭제 함수 (체크모드용)
+    function deleteRule(idx, day, cat, sort, dir) {
+      if (!confirm('삭제하시겠습니까?')) {
+        return;
+      }
+      
+      var formData = new FormData();
+      formData.append('idx', idx);
+      formData.append('mode', 'check');
+      formData.append('day', day);
+      formData.append('cat', cat);
+      formData.append('sort', sort);
+      formData.append('dir', dir);
+      
+      fetch('/delete', {
+        method: 'POST',
+        body: formData
+      })
+      .then(function(response) {
+        if (response.redirected) {
+          window.location.href = response.url;
+        } else {
+          location.reload();
+        }
+      })
+      .catch(function(error) {
+        alert('삭제 중 오류가 발생했습니다: ' + error);
+        location.reload();
+      });
+    }
+    
+    // 서버 재시작 함수
+    function restartServer() {
+      if (!confirm('서버를 재시작하시겠습니까? 재시작 중에는 잠시 접속이 불가능할 수 있습니다.')) {
+        return;
+      }
+      
+      fetch('/restart', {
+        method: 'POST'
+      })
+      .then(function(response) {
+        return response.json();
+      })
+      .then(function(data) {
+        if (data.success) {
+          alert(data.message);
+          // 3초 후 자동 새로고침
+          setTimeout(function() {
+            location.reload();
+          }, 3000);
+        } else {
+          alert('재시작 실패: ' + data.message);
+        }
+      })
+      .catch(function(error) {
+        alert('재시작 중 오류가 발생했습니다: ' + error);
+      });
+    }
+  </script>
+</body>
+</html>
+
