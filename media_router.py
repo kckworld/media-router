@@ -78,14 +78,14 @@ def load_cfg() -> Dict:
         if bp: cfg["base_paths"] = bp
 
     cfg.setdefault("paths", {})
-    cfg["paths"].setdefault("sources", ["/volume2/torrent/download"])
+    cfg["paths"].setdefault("sources", ["/path/to/download"])
     cfg["paths"].setdefault("cleanup", {"remove_dirs": ["@eaDir"], "remove_files": ["thumbs.db","Thumbs.db"]})
 
     cfg.setdefault("base_paths", {
-        "예능": "/volume1/video/03.예능",
-        "드라마": "/volume1/video/01.드라마",
-        "다큐": "/volume1/video/07.다큐",
-        "애니메이션": "/volume1/video/04.애니메이션",
+        "예능": "/path/to/video/예능",
+        "드라마": "/path/to/video/드라마",
+        "다큐": "/path/to/video/다큐",
+        "애니메이션": "/path/to/video/애니메이션",
     })
     cfg.setdefault("rules", [])
     cfg.setdefault("telegram", {"enabled": False, "bot_token": "", "chat_id": ""})
