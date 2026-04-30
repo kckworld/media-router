@@ -538,4 +538,4 @@ def restart():
         return jsonify({"success": False, "message": f"재시작 실패: {str(e)}"}), 500
 
 if __name__=="__main__":
-    app.run(host="127.0.0.1", port=5080)
+    app.run(host="0.0.0.0", port=5080)
