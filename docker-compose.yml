@@ -10,3 +10,4 @@ services:
       - /volume1/video:/volume1/video:ro
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
