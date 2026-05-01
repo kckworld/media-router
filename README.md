@@ -36,6 +36,7 @@ services:
       - /volume1/video:/volume1/video:ro
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
 ```
 
 ### 3. 실행
@@ -62,6 +63,7 @@ sudo /usr/local/bin/docker exec media_router python media_router.py
 - 매일 자정~1시 사이 실행 시 해당 요일의 `updated_map`을 자동으로 `N`으로 리셋합니다.
 - 파일 이동 성공 시 해당 요일의 `updated_map`을 `Y`로 마킹합니다.
 - 에피소드 점검 기능을 사용하려면 컨테이너에서 대상 경로를 읽을 수 있어야 하므로 `/volume1/video` 마운트가 필요합니다.
+- 드라마 추가 시 전체 에피소드 수를 비워두면 `TMDB_API_KEY`가 설정된 경우 TMDB에서 자동 조회해 채웁니다.
 
 ---
 

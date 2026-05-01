@@ -4,6 +4,7 @@ import os, hashlib, re
 from flask import Flask, request, redirect, render_template, abort, make_response, jsonify
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import requests
 from db import load_cfg, save_cfg
 
 BASE = Path(__file__).resolve().parent
@@ -15,6 +16,7 @@ WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 CATEGORIES = ["예능", "다큐", "드라마", "애니메이션"]
 DAY_ORDER = {d: i for i, d in enumerate(WEEKDAYS)}
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Seoul"))
+TMDB_API_KEY = os.getenv("TMDB_API_KEY", "").strip()
 
 
 def current_weekday() -> int:
@@ -33,6 +35,71 @@ def normalize_pattern(p: str) -> str:
     if not has_ext_dot and not p.endswith(".*"):
         return p + ".*"
     return p
+
+
+def split_title_and_year(name: str) -> tuple[str, int | None]:
+    cleaned = (name or "").strip()
+    m = re.search(r"\((\d{4})\)\s*$", cleaned)
+    if m:
+        year = int(m.group(1))
+        title = re.sub(r"\s*\(\d{4}\)\s*$", "", cleaned).strip()
+        return title, year
+    return cleaned, None
+
+
+def tmdb_auto_total_episodes(subfolder: str) -> int | None:
+    if not TMDB_API_KEY:
+        return None
+
+    title, year = split_title_and_year(subfolder)
+    if not title:
+        return None
+
+    try:
+        params = {
+            "api_key": TMDB_API_KEY,
+            "query": title,
+            "language": "ko-KR",
+        }
+        if year:
+            params["first_air_date_year"] = year
+
+        res = requests.get("https://api.themoviedb.org/3/search/tv", params=params, timeout=8)
+        if res.status_code != 200:
+            return None
+
+        results = res.json().get("results", [])
+        if not results:
+            return None
+
+        title_key = title.lower().strip()
+        picked = results[0]
+        for item in results:
+            ko_name = (item.get("name") or "").lower().strip()
+            origin_name = (item.get("original_name") or "").lower().strip()
+            if ko_name == title_key or origin_name == title_key:
+                picked = item
+                break
+
+        tv_id = picked.get("id")
+        if not tv_id:
+            return None
+
+        detail = requests.get(
+            f"https://api.themoviedb.org/3/tv/{tv_id}",
+            params={"api_key": TMDB_API_KEY, "language": "ko-KR"},
+            timeout=8,
+        )
+        if detail.status_code != 200:
+            return None
+
+        total = detail.json().get("number_of_episodes")
+        if isinstance(total, int) and total > 0:
+            return total
+    except Exception:
+        return None
+
+    return None
 
 def rule_key(rule):
     raw = f"{(rule.get('category') or '').strip()}|" \
@@ -375,6 +442,10 @@ def add():
                 rule["total_episodes"] = int(total_eps)
             except ValueError:
                 pass
+        else:
+            auto_total = tmdb_auto_total_episodes(rule["subfolder"])
+            if auto_total:
+                rule["total_episodes"] = auto_total
         rule.setdefault("received_episodes", [])
     if not rule["category"] or not rule["pattern"] or not rule["subfolder"]:
         return abort(400)
