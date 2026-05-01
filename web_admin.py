@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
-import os, yaml, hashlib, re, subprocess
+import os, hashlib, re, subprocess
 from flask import Flask, request, redirect, render_template, abort, make_response, jsonify
 from datetime import date
+from db import load_cfg, save_cfg
 
 BASE = Path(__file__).resolve().parent
-CONFIG = BASE / "config.yaml"
 PASSWORD = os.getenv("MEDIA_ADMIN_PASSWORD", "")
 
 app = Flask(__name__, template_folder=str(BASE / "templates"))
@@ -80,37 +80,7 @@ def get_next_episode(rule):
     
     return None
 
-def load_cfg():
-    with open(CONFIG, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    if "base_paths" not in data:
-        bp = (data.get("paths") or {}).get("base_paths")
-        if bp: data["base_paths"] = bp
-    data.setdefault("base_paths", {
-        "예능": "/volume1/video/03.예능",
-        "드라마": "/volume1/video/01.드라마",
-        "다큐": "/volume1/video/07.다큐",
-        "애니메이션": "/volume1/video/04.애니메이션",
-    })
-    data.setdefault("rules", [])
-    # 하위호환: updated_map 생성
-    for r in data["rules"]:
-        days = r.get("days") or []
-        umap = r.get("updated_map") or {}
-        base_u = r.get("updated", "N")
-        if base_u not in ("Y","N"): base_u = "N"
-        for d in days:
-            if d in WEEKDAYS and d not in umap:
-                umap[d] = base_u
-        r["updated_map"] = umap
-    return data
-
-def save_cfg(cfg):
-    # 원자적 저장을 위해 임시 파일 사용 (media_router.py와 동일한 방식)
-    tmp = CONFIG.with_suffix(".yaml.tmp")
-    data = yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False)
-    tmp.write_text(data, encoding="utf-8")
-    tmp.replace(CONFIG)
+# load_cfg and save_cfg are imported from db module
 
 def sort_rules_for_list(rules, sort_key, sort_dir):
     # 기본: 요일(가장 이른 요일) → 카테고리 → subfolder
@@ -242,7 +212,7 @@ def index():
         cat_ok=(not selected_cat or selected_cat=="전체" or r.get("category")==selected_cat)
         return day_ok and cat_ok
 
-    filtered=[{**r,"_idx":i} for i,r in enumerate(rules) if rule_match(r)]
+    filtered=[{**r,"_idx":r["id"]} for r in rules if rule_match(r)]
     filtered=sort_rules_for_list(filtered, sort_key, sort_dir)
 
     return render_template("index.html",
@@ -284,9 +254,8 @@ def check_episodes():
             return jsonify({"success": False, "message": "인증 실패"}), 403
         idx = int(request.form.get("idx", "-1"))
         cfg = load_cfg()
-        
-        if 0 <= idx < len(cfg.get("rules", [])):
-            rule = cfg["rules"][idx]
+        rule = next((r for r in cfg.get("rules", []) if r.get("id") == idx), None)
+        if rule is not None:
             category = rule.get("category", "")
             
             if category in ("드라마", "예능"):
@@ -424,9 +393,10 @@ def add():
 @app.route("/delete", methods=["POST"])
 def delete():
     if not authed(request): return abort(403)
-    idx=int(request.form.get("idx","-1")); cfg=load_cfg()
-    if 0<=idx<len(cfg["rules"]):
-        cfg["rules"].pop(idx); save_cfg(cfg)
+    idx=int(request.form.get("idx","-1"))
+    cfg=load_cfg()
+    cfg["rules"] = [r for r in cfg["rules"] if r.get("id") != idx]
+    save_cfg(cfg)
     
     # 현재 모드와 필터 조건 유지
     mode = request.form.get("mode", "").strip()
@@ -455,7 +425,8 @@ def edit():
         ...
     else:
         idx = int(request.form.get("idx","-1"))
-        if 0 <= idx < len(cfg.get("rules", [])):
+        old_rule = next((r for r in cfg.get("rules", []) if r.get("id") == idx), None)
+        if old_rule is not None:
             pat_raw = request.form.get("pattern", "").strip()
             pattern = normalize_pattern(pat_raw)
             sel_days = request.form.getlist("days")
@@ -475,7 +446,6 @@ def edit():
                 new_rule["release"] = release
             else:
                 # 기존 릴리즈 정보 유지 (편집 시)
-                old_rule = cfg["rules"][idx]
                 if "release" in old_rule:
                     new_rule["release"] = old_rule["release"]
             
@@ -488,13 +458,13 @@ def edit():
                     except ValueError:
                         pass
                 # 기존 received_episodes 유지
-                old_rule = cfg["rules"][idx]
                 if "received_episodes" in old_rule:
                     new_rule["received_episodes"] = old_rule["received_episodes"]
                 else:
                     new_rule.setdefault("received_episodes", [])
             
-            cfg["rules"][idx] = new_rule
+            new_rule["id"] = idx  # DB id 보존
+            cfg["rules"] = [new_rule if r.get("id") == idx else r for r in cfg["rules"]]
             save_cfg(cfg)
         
         # 현재 모드와 필터 조건 유지

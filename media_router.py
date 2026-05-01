@@ -3,12 +3,12 @@ from __future__ import annotations
 import os, sys, time, shutil, fnmatch, subprocess, stat, pwd, grp, re
 from pathlib import Path
 from typing import Dict, List, Iterable, Optional
-import yaml, requests
+import requests
+from db import load_cfg, save_cfg_atomic, DATA_DIR
 
 BASE: Path = Path(__file__).resolve().parent
-CONFIG: Path = BASE / "config.yaml"
-LOGDIR: Path = BASE / "logs"
-LOGDIR.mkdir(exist_ok=True)
+LOGDIR: Path = DATA_DIR / "logs"
+LOGDIR.mkdir(parents=True, exist_ok=True)
 LOGFILE: Path = LOGDIR / "media_router.log"
 
 WEEKDAYS: List[str] = ["월", "화", "수", "목", "금", "토", "일"]
@@ -70,43 +70,7 @@ def _ensure_rule_updated_map(rule: Dict) -> None:
     rule["updated_map"] = umap
     # 단일 updated 키는 남겨두되, 더 이상 로직에 사용하지 않음
 
-def load_cfg() -> Dict:
-    with open(CONFIG, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f) or {}
-    if "base_paths" not in cfg:
-        bp = (cfg.get("paths") or {}).get("base_paths")
-        if bp: cfg["base_paths"] = bp
-
-    cfg.setdefault("paths", {})
-    cfg["paths"].setdefault("sources", ["/path/to/download"])
-    cfg["paths"].setdefault("cleanup", {"remove_dirs": ["@eaDir"], "remove_files": ["thumbs.db","Thumbs.db"]})
-
-    cfg.setdefault("base_paths", {
-        "예능": "/path/to/video/예능",
-        "드라마": "/path/to/video/드라마",
-        "다큐": "/path/to/video/다큐",
-        "애니메이션": "/path/to/video/애니메이션",
-    })
-    cfg.setdefault("rules", [])
-    cfg.setdefault("telegram", {"enabled": False, "bot_token": "", "chat_id": ""})
-    cfg.setdefault("ownership", {
-        "apply": True, "user": "plex", "group": "users",
-        "file_mode": 0o664, "dir_mode": 0o775,
-        "setgid_dirs": True, "enforce_inherit": True,
-    })
-
-    for r in cfg["rules"]:
-        if r.get("pattern"):
-            r["pattern"] = normalize_pattern(r["pattern"])
-        _ensure_rule_updated_map(r)
-
-    return cfg
-
-def save_cfg_atomic(cfg: Dict) -> None:
-    tmp = CONFIG.with_suffix(".yaml.tmp")
-    data = yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False)
-    tmp.write_text(data, encoding="utf-8")
-    tmp.replace(CONFIG)
+# load_cfg and save_cfg_atomic are imported from db module
 
 def tg_send(cfg: Dict, text: str) -> None:
     tg = cfg.get("telegram") or {}

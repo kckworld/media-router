@@ -6,6 +6,6 @@ services:
     ports:
       - "5080:5080"
     volumes:
-      - .:/app
+      - ./data:/app/data
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}

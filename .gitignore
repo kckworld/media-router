@@ -1,7 +1,9 @@
 config.yaml
+config.yaml.migrated
 state.yaml
 status.json
 logs/
+data/
 __pycache__/
 *.zip
 .venv/
