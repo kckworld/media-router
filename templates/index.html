@@ -986,19 +986,8 @@
                     {% endif %}
                   </td>
                   <td>
-                    <form class="inline" method="post" action="/delete" onsubmit="return confirm('삭제하시겠습니까?')">
-                      <input type="hidden" name="idx" value="{{ r._idx }}">
-                      <input type="hidden" name="mode" value="{{ mode }}">
-                      <input type="hidden" name="day" value="{{ selected_day }}">
-                      <input type="hidden" name="cat" value="{{ selected_cat }}">
-                      <input type="hidden" name="sort" value="{{ sort_key }}">
-                      <input type="hidden" name="dir" value="{{ sort_dir }}">
-                      <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
-                      <button class="btn danger small" type="submit">삭제</button>
-                    </form>
-                    <details style="margin-top:6px;" {{ 'open' if edit_id == r._idx else '' }}>
-                      <summary class="muted">편집</summary>
-                      <form method="post" action="/edit" style="margin-top:8px;">
+                    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                      <form class="inline" method="post" action="/delete" onsubmit="return confirm('삭제하시겠습니까?')">
                         <input type="hidden" name="idx" value="{{ r._idx }}">
                         <input type="hidden" name="mode" value="{{ mode }}">
                         <input type="hidden" name="day" value="{{ selected_day }}">
@@ -1006,46 +995,61 @@
                         <input type="hidden" name="sort" value="{{ sort_key }}">
                         <input type="hidden" name="dir" value="{{ sort_dir }}">
                         <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
-                        <div class="row">
-                          <div class="field">
-                            <label class="muted">카테고리</label>
-                            <select name="category">
-                              {% for c in categories %}
-                                <option value="{{ c }}" {{ 'selected' if r.category==c else '' }}>{{ c }}</option>
-                              {% endfor %}
-                            </select>
-                          </div>
-                          <div class="field">
-                            <label class="muted">패턴</label>
-                            <input type="text" name="pattern" value="{{ r.pattern }}" placeholder="예: 전현무계획">
-                            <div class="hint">단어만 입력해도 자동으로 <code>*단어*.*</code>로 처리됩니다.</div>
-                          </div>
-                          <div class="field">
-                            <label class="muted">대상 하위 폴더</label>
-                            <input type="text" name="subfolder" value="{{ r.subfolder }}" placeholder="예: 전현무계획 (2025)">
-                          </div>
-                          <div class="field">
-                            <label class="muted">릴리즈</label>
-                            <input type="text" name="release" value="{{ r.release or '' }}" placeholder="예: 1080p.WEB-DL.x264">
-                            <div class="hint">원하는 릴리즈 형식을 입력하세요 (선택사항)</div>
-                          </div>
+                        <button class="btn danger small" type="submit">삭제</button>
+                      </form>
+                      <button class="btn small" type="button" onclick="toggleManageEditRow({{ r._idx }})">편집</button>
+                    </div>
+                  </td>
+                </tr>
+                <tr id="manage-edit-row-{{ r._idx }}" style="display:{{ 'table-row' if edit_id == r._idx else 'none' }}; background:#f8fafc;">
+                  <td colspan="6" style="padding:16px; border-top:none;">
+                    <form method="post" action="/edit">
+                      <input type="hidden" name="idx" value="{{ r._idx }}">
+                      <input type="hidden" name="mode" value="{{ mode }}">
+                      <input type="hidden" name="day" value="{{ selected_day }}">
+                      <input type="hidden" name="cat" value="{{ selected_cat }}">
+                      <input type="hidden" name="sort" value="{{ sort_key }}">
+                      <input type="hidden" name="dir" value="{{ sort_dir }}">
+                      <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
+                      <div class="row">
+                        <div class="field">
+                          <label class="muted">카테고리</label>
+                          <select name="category">
+                            {% for c in categories %}
+                              <option value="{{ c }}" {{ 'selected' if r.category==c else '' }}>{{ c }}</option>
+                            {% endfor %}
+                          </select>
                         </div>
                         <div class="field">
-                          <label class="muted">요일</label>
-                          <div class="grid">
-                            {% for d in weekdays %}
-                              <label class="daybox"><input type="checkbox" name="days" value="{{ d }}" {{ 'checked' if r.days and d in r.days else '' }}> {{ d }}</label>
-                            {% endfor %}
-                          </div>
+                          <label class="muted">패턴</label>
+                          <input type="text" name="pattern" value="{{ r.pattern }}" placeholder="예: 전현무계획">
+                          <div class="hint">단어만 입력해도 자동으로 <code>*단어*.*</code>로 처리됩니다.</div>
                         </div>
-                        <div class="field edit-episodes-field-{{ r._idx }}" style="display:{{ 'block' if r.category == '드라마' else 'none' }};">
-                          <label class="muted">전체 에피소드 수 (드라마만)</label>
-                          <input type="number" name="total_episodes" min="1" value="{{ r.total_episodes or '' }}" placeholder="예: 16">
-                          <div class="hint">드라마 등록 시 전체 에피소드 수를 입력하세요.</div>
+                        <div class="field">
+                          <label class="muted">대상 하위 폴더</label>
+                          <input type="text" name="subfolder" value="{{ r.subfolder }}" placeholder="예: 전현무계획 (2025)">
                         </div>
-                        <button class="btn primary small" type="submit">저장</button>
-                      </form>
-                    </details>
+                        <div class="field">
+                          <label class="muted">릴리즈</label>
+                          <input type="text" name="release" value="{{ r.release or '' }}" placeholder="예: 1080p.WEB-DL.x264">
+                          <div class="hint">원하는 릴리즈 형식을 입력하세요 (선택사항)</div>
+                        </div>
+                      </div>
+                      <div class="field">
+                        <label class="muted">요일</label>
+                        <div class="grid">
+                          {% for d in weekdays %}
+                            <label class="daybox"><input type="checkbox" name="days" value="{{ d }}" {{ 'checked' if r.days and d in r.days else '' }}> {{ d }}</label>
+                          {% endfor %}
+                        </div>
+                      </div>
+                      <div class="field edit-episodes-field-{{ r._idx }}" style="display:{{ 'block' if r.category == '드라마' else 'none' }};">
+                        <label class="muted">전체 에피소드 수 (드라마만)</label>
+                        <input type="number" name="total_episodes" min="1" value="{{ r.total_episodes or '' }}" placeholder="예: 16">
+                        <div class="hint">드라마 등록 시 전체 에피소드 수를 입력하세요.</div>
+                      </div>
+                      <button class="btn primary small" type="submit">저장</button>
+                    </form>
                   </td>
                 </tr>
               {% endfor %}
@@ -1165,6 +1169,19 @@
         alert('삭제 중 오류가 발생했습니다: ' + error);
         location.reload();
       });
+    }
+
+    // 전체관리 테이블: 편집 행 토글
+    function toggleManageEditRow(idx) {
+      var row = document.getElementById('manage-edit-row-' + idx);
+      if (!row) {
+        return;
+      }
+      var isOpen = row.style.display === 'table-row';
+      document.querySelectorAll('tr[id^="manage-edit-row-"]').forEach(function(r) {
+        r.style.display = 'none';
+      });
+      row.style.display = isOpen ? 'none' : 'table-row';
     }
 
     // 체크모드에서 전체관리 편집으로 이동
