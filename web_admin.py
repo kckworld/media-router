@@ -146,6 +146,11 @@ def index():
     selected_day = request.args.get("day","").strip()
     selected_cat = request.args.get("cat","").strip()
     hide_no_days = request.args.get("hide_no_days", "1").strip()  # 기본값: 숨김
+    edit_id_raw = request.args.get("edit_id", "").strip()
+    try:
+        edit_id = int(edit_id_raw) if edit_id_raw else None
+    except ValueError:
+        edit_id = None
     rules = cfg.get("rules", [])
     
     # 전체관리 모드 기본값 설정
@@ -174,7 +179,7 @@ def index():
                     item = dict(r)
                     item["rkday"] = f"{rule_key(r)}|{d}"
                     item["day"] = d
-                    item["_idx"] = i  # 원본 규칙의 인덱스 (삭제 기능용)
+                    item["_idx"] = r.get("id", i)  # DB id 우선 사용 (점검/삭제 정확도 보장)
                     item["next_episode"] = get_next_episode(r)  # 다음 에피소드 번호
                     # 릴리즈 정보도 포함 (dict(r)로 복사되지만 명시적으로 확인)
                     if "release" in r:
@@ -203,7 +208,7 @@ def index():
             selected_day=selected_ui, selected_cat=selected_cat,
             rules=entries, mode="check",
             today_name=today_name, yest_name=yest_name, two_days_ago_name=two_days_ago_name, categories=CATEGORIES,
-            sort_key=sort_key, sort_dir=sort_dir)
+            sort_key=sort_key, sort_dir=sort_dir, edit_id=edit_id)
 
     # 전체 관리: 필터링 + 정렬
     def rule_match(r):
@@ -226,7 +231,7 @@ def index():
         selected_day=selected_day, selected_cat=selected_cat, hide_no_days=hide_no_days,
         rules=filtered, mode="",
         today_name=today_name, yest_name=yest_name, two_days_ago_name=two_days_ago_name, categories=CATEGORIES,
-        sort_key=sort_key, sort_dir=sort_dir)
+        sort_key=sort_key, sort_dir=sort_dir, edit_id=edit_id)
 
 @app.route("/check", methods=["POST"])
 def check_action():

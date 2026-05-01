@@ -537,6 +537,24 @@
       margin-bottom: 4px;
       font-size: 14px;
     }
+
+    .card-line-main {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .card-line-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
     
     details {
       margin-top: 8px;
@@ -595,6 +613,20 @@
       
       .card-item {
         padding: 14px;
+        align-items: flex-start;
+      }
+
+      .card-body {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .card-line-main {
+        font-size: 13px;
+      }
+
+      .card-line-actions .btn {
+        width: auto;
       }
       
       .filter-group {
@@ -733,12 +765,15 @@
           {% else %}
             <div style="display:grid; gap:6px;">
               {% for r in rules %}
-                <div class="card-item" style="align-items:center;">
+                <div class="card-item">
                   <input class="card-check" type="checkbox" name="rkday" value="{{ r.rkday }}">
                   <div class="card-body" style="flex:1;">
-                    <div class="card-title">
+                    <div class="card-line-main">
                       <span class="badge{% if mode == 'check' %}{% if r.day == two_days_ago_name %} day-two-days-ago{% elif r.day == yest_name %} day-yesterday{% elif r.day == today_name %} day-today{% endif %}{% endif %}">{{ r.day }}</span>
-                      {{ r.category }} / <a href="#" onclick="searchNamu('{{ r.subfolder }}'); return false;" class="subfolder-link">{{ r.subfolder }}</a>
+                      <span>{{ r.category }}</span>
+                      <code>{{ r.pattern }}</code>
+                      <span>/</span>
+                      <a href="#" onclick="searchNamu('{{ r.subfolder }}'); return false;" class="subfolder-link">{{ r.subfolder }}</a>
                       {% if r.release %}
                         <span class="pill" style="background:linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%); border-color:#818cf8; margin-left:6px; color:#4338ca; box-shadow:0 2px 4px rgba(129, 140, 248, 0.2);">{{ r.release }}</span>
                       {% endif %}
@@ -746,13 +781,14 @@
                         <span class="pill" style="background:linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-color:#f59e0b; margin-left:6px; color:#92400e; box-shadow:0 2px 4px rgba(245, 158, 11, 0.2);">다음: E{{ r.next_episode }}</span>
                       {% endif %}
                     </div>
-                  </div>
-                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:nowrap;">
-                    {% if r.category == '드라마' or r.category == '예능' %}
-                    <button class="btn small" type="button" onclick="checkEpisodes({{ r._idx }}, this)" style="background:#10b981; color:#fff; border-color:#10b981; white-space:nowrap;">에피소드 점검</button>
-                    {% endif %}
-                    <button class="btn small" type="button" onclick="searchNaverGulbang('{{ r.subfolder }}')" style="background:#f59e0b; color:#fff; border-color:#f59e0b; white-space:nowrap;">결방 체크</button>
-                    <button class="btn danger small" type="button" onclick="deleteRule({{ r._idx }}, '{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">삭제</button>
+                    <div class="card-line-actions">
+                      {% if r.category == '드라마' or r.category == '예능' %}
+                      <button class="btn small" type="button" onclick="checkEpisodes({{ r._idx }}, this)" style="background:#10b981; color:#fff; border-color:#10b981; white-space:nowrap;">에피소드 점검</button>
+                      {% endif %}
+                      <button class="btn small" type="button" onclick="searchNaverGulbang('{{ r.subfolder }}')" style="background:#f59e0b; color:#fff; border-color:#f59e0b; white-space:nowrap;">결방 체크</button>
+                      <button class="btn small" type="button" onclick="goToEdit({{ r._idx }})" style="background:#3b82f6; color:#fff; border-color:#3b82f6; white-space:nowrap;">편집</button>
+                      <button class="btn danger small" type="button" onclick="deleteRule({{ r._idx }}, '{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">삭제</button>
+                    </div>
                   </div>
                 </div>
               {% endfor %}
@@ -782,7 +818,7 @@
                 <tr><td colspan="6" class="muted">표시할 항목이 없습니다.</td></tr>
               {% else %}
                 {% for r in rules %}
-                  <tr>
+                  <tr id="rule-{{ r._idx }}">
                     <td><input type="checkbox" name="rkday" value="{{ r.rkday }}" style="transform: scale(1.4); cursor: pointer; width: 18px; height: 18px;"></td>
                     <td><span class="badge{% if mode == 'check' %}{% if r.day == two_days_ago_name %} day-two-days-ago{% elif r.day == yest_name %} day-yesterday{% elif r.day == today_name %} day-today{% endif %}{% endif %}">{{ r.day }}</span></td>
                     <td>{{ r.category }}</td>
@@ -802,6 +838,7 @@
                         <button class="btn small" type="button" onclick="checkEpisodes({{ r._idx }}, this)" style="background:#10b981; color:#fff; border-color:#10b981; white-space:nowrap;">에피소드 점검</button>
                         {% endif %}
                         <button class="btn small" type="button" onclick="searchNaverGulbang('{{ r.subfolder }}')" style="background:#f59e0b; color:#fff; border-color:#f59e0b; white-space:nowrap;">결방 체크</button>
+                        <button class="btn small" type="button" onclick="goToEdit({{ r._idx }})" style="background:#3b82f6; color:#fff; border-color:#3b82f6; white-space:nowrap;">편집</button>
                         <button class="btn danger small" type="button" onclick="deleteRule({{ r._idx }}, '{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">삭제</button>
                       </div>
                     </td>
@@ -959,7 +996,7 @@
                       <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
                       <button class="btn danger small" type="submit">삭제</button>
                     </form>
-                    <details style="margin-top:6px;">
+                    <details style="margin-top:6px;" {{ 'open' if edit_id == r._idx else '' }}>
                       <summary class="muted">편집</summary>
                       <form method="post" action="/edit" style="margin-top:8px;">
                         <input type="hidden" name="idx" value="{{ r._idx }}">
@@ -1128,6 +1165,12 @@
         alert('삭제 중 오류가 발생했습니다: ' + error);
         location.reload();
       });
+    }
+
+    // 체크모드에서 전체관리 편집으로 이동
+    function goToEdit(idx) {
+      var url = '/?mode=&day=전체&cat=전체&edit_id=' + encodeURIComponent(idx) + '#rule-' + encodeURIComponent(idx);
+      window.location.href = url;
     }
     
 
