@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 import os, sys, time, shutil, fnmatch, subprocess, stat, pwd, grp, re
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Iterable, Optional
+from zoneinfo import ZoneInfo
 import requests
 from db import load_cfg, save_cfg_atomic, DATA_DIR
 
@@ -12,6 +14,11 @@ LOGDIR.mkdir(parents=True, exist_ok=True)
 LOGFILE: Path = LOGDIR / "media_router.log"
 
 WEEKDAYS: List[str] = ["월", "화", "수", "목", "금", "토", "일"]
+APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Seoul"))
+
+
+def current_localtime() -> datetime:
+    return datetime.now(APP_TZ)
 
 def log(msg: str) -> None:
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -165,9 +172,9 @@ def safe_move_with_ownership(src: Path, dst_dir: Path,
 
 def reset_updated_for_today(cfg: Dict) -> bool:
     """자정~1시: 오늘 요일만 N으로 리셋 (요일별 독립 저장)"""
-    lt = time.localtime()
-    if 0 <= lt.tm_hour < 1:
-        today = WEEKDAYS[lt.tm_wday]
+    now = current_localtime()
+    if 0 <= now.hour < 1:
+        today = WEEKDAYS[now.weekday()]
         changed = False
         for r in cfg.get("rules", []):
             days = r.get("days") or []
@@ -215,7 +222,7 @@ def main() -> None:
     do_acl = own.get("enforce_inherit", True)
 
     moved_count, changed = 0, False
-    today = WEEKDAYS[time.localtime().tm_wday]
+    today = WEEKDAYS[current_localtime().weekday()]
 
     for src_root in sources:
         if not src_root.exists():

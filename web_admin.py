@@ -2,7 +2,8 @@
 from pathlib import Path
 import os, hashlib, re, subprocess
 from flask import Flask, request, redirect, render_template, abort, make_response, jsonify
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from db import load_cfg, save_cfg
 
 BASE = Path(__file__).resolve().parent
@@ -13,6 +14,11 @@ app = Flask(__name__, template_folder=str(BASE / "templates"))
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 CATEGORIES = ["예능", "다큐", "드라마", "애니메이션"]
 DAY_ORDER = {d: i for i, d in enumerate(WEEKDAYS)}
+APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Seoul"))
+
+
+def current_weekday() -> int:
+    return datetime.now(APP_TZ).weekday()
 
 def authed(req):
     return True  # 비밀번호 인증 비활성화
@@ -134,7 +140,7 @@ def index():
     sort_dir = request.args.get("dir", "asc").strip()
     if sort_dir not in ("asc","desc"): sort_dir = "asc"
 
-    w_today = date.today().weekday()
+    w_today = current_weekday()
     today_name, yest_name = WEEKDAYS[w_today], WEEKDAYS[(w_today-1)%7]
     two_days_ago_name = WEEKDAYS[(w_today-2)%7]
     selected_day = request.args.get("day","").strip()
