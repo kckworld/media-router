@@ -499,6 +499,50 @@ def delete():
     redirect_url = "/" + ("?" + "&".join(params) if params else "")
     return redirect(redirect_url)
 
+@app.route("/settings", methods=["GET", "POST"])
+def settings():
+    if not authed(request): return abort(403)
+    cfg = load_cfg()
+    saved = False
+    if request.method == "POST":
+        # telegram
+        cfg["telegram"] = {
+            "bot_token": request.form.get("bot_token", "").strip(),
+            "chat_id": request.form.get("chat_id", "").strip(),
+            "enabled": request.form.get("tg_enabled") == "1",
+        }
+        # paths.sources
+        sources_raw = request.form.get("sources", "")
+        sources = [s.strip() for s in sources_raw.splitlines() if s.strip()]
+        cfg.setdefault("paths", {})
+        cfg["paths"]["sources"] = sources
+        # base_paths
+        base_paths = {}
+        for cat in CATEGORIES:
+            v = request.form.get(f"base_{cat}", "").strip()
+            if v:
+                base_paths[cat] = v
+        cfg["base_paths"] = base_paths
+        # ownership
+        cfg["ownership"] = {
+            "apply": request.form.get("own_apply") == "1",
+            "user": request.form.get("own_user", "").strip(),
+            "group": request.form.get("own_group", "").strip(),
+            "file_mode": int(request.form.get("own_file_mode", "664")),
+            "dir_mode": int(request.form.get("own_dir_mode", "775")),
+            "setgid_dirs": request.form.get("own_setgid") == "1",
+            "enforce_inherit": request.form.get("own_enforce") == "1",
+        }
+        save_cfg(cfg)
+        saved = True
+    return render_template("index.html",
+        authed=authed(request), cfg=cfg, weekdays=WEEKDAYS,
+        selected_day="", selected_cat="", hide_no_days="1",
+        rules=[], mode="settings",
+        today_name=WEEKDAYS[current_weekday()], yest_name=WEEKDAYS[(current_weekday()-1)%7],
+        two_days_ago_name=WEEKDAYS[(current_weekday()-2)%7], categories=CATEGORIES,
+        sort_key="default", sort_dir="asc", edit_id=None, saved=saved)
+
 @app.route("/edit", methods=["GET","POST"])
 def edit():
     if not authed(request): return abort(403)
