@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
-import os, hashlib, re, subprocess
+import os, hashlib, re
 from flask import Flask, request, redirect, render_template, abort, make_response, jsonify
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -480,6 +480,14 @@ def edit():
         sort = request.form.get("sort", "default").strip()
         sort_dir = request.form.get("dir", "asc").strip()
         hide_no_days = request.form.get("hide_no_days", "1").strip()
+
+        # 편집 결과가 현재 필터에서 사라지는 경우에는 필터를 완화해 저장 직후에도 보이게 한다.
+        if old_rule is not None and mode != "check":
+            new_days = new_rule.get("days") or []
+            if day and day != "전체" and day not in new_days:
+                day = new_days[0] if len(new_days) == 1 else "전체"
+            if cat and cat != "전체" and cat != new_rule.get("category"):
+                cat = new_rule.get("category") or "전체"
         
         params = []
         # mode는 항상 추가 (빈 문자열이어도 전체 관리 모드로 감)
@@ -492,26 +500,6 @@ def edit():
         
         redirect_url = "/" + ("?" + "&".join(params) if params else "")
         return redirect(redirect_url)
-
-@app.route("/restart", methods=["POST"])
-def restart():
-    if not authed(request):
-        return jsonify({"success": False, "message": "인증 실패"}), 403
-    try:
-        script_path = BASE / "restart_web_admin.sh"
-        if not script_path.exists():
-            return jsonify({"success": False, "message": "재시작 스크립트를 찾을 수 없습니다."}), 404
-        
-        # 백그라운드로 스크립트 실행
-        subprocess.Popen(
-            ["bash", str(script_path)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            cwd=str(BASE)
-        )
-        return jsonify({"success": True, "message": "재시작 중입니다. 잠시 후 페이지를 새로고침하세요."})
-    except Exception as e:
-        return jsonify({"success": False, "message": f"재시작 실패: {str(e)}"}), 500
 
 if __name__=="__main__":
     app.run(host="0.0.0.0", port=5080)

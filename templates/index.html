@@ -646,11 +646,7 @@
       <h1>Media Router Web Admin</h1>
       <div class="sub">체크모드(그저께+어제+오늘) / 전체 관리</div>
     </div>
-    {% if mode != 'check' %}
-    <div class="header-actions">
-      <button type="button" class="btn small" onclick="restartServer()">서버 재시작</button>
-    </div>
-    {% endif %}
+
   </header>
 
   <main>
@@ -742,7 +738,7 @@
                   <div class="card-body" style="flex:1;">
                     <div class="card-title">
                       <span class="badge{% if mode == 'check' %}{% if r.day == two_days_ago_name %} day-two-days-ago{% elif r.day == yest_name %} day-yesterday{% elif r.day == today_name %} day-today{% endif %}{% endif %}">{{ r.day }}</span>
-                      {{ r.category }} / <a href="#" onclick="searchNaver('{{ r.subfolder }}'); return false;" class="subfolder-link">{{ r.subfolder }}</a>
+                      {{ r.category }} / <a href="#" onclick="searchNamu('{{ r.subfolder }}'); return false;" class="subfolder-link">{{ r.subfolder }}</a>
                       {% if r.release %}
                         <span class="pill" style="background:linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%); border-color:#818cf8; margin-left:6px; color:#4338ca; box-shadow:0 2px 4px rgba(129, 140, 248, 0.2);">{{ r.release }}</span>
                       {% endif %}
@@ -755,6 +751,7 @@
                     {% if r.category == '드라마' or r.category == '예능' %}
                     <button class="btn small" type="button" onclick="checkEpisodes({{ r._idx }}, this)" style="background:#10b981; color:#fff; border-color:#10b981; white-space:nowrap;">에피소드 점검</button>
                     {% endif %}
+                    <button class="btn small" type="button" onclick="searchNaverGulbang('{{ r.subfolder }}')" style="background:#f59e0b; color:#fff; border-color:#f59e0b; white-space:nowrap;">결방 체크</button>
                     <button class="btn danger small" type="button" onclick="deleteRule({{ r._idx }}, '{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">삭제</button>
                   </div>
                 </div>
@@ -791,7 +788,7 @@
                     <td>{{ r.category }}</td>
                     <td><code>{{ r.pattern }}</code></td>
                     <td>
-                      <a href="#" onclick="searchNaver('{{ r.subfolder }}'); return false;" class="subfolder-link">{{ r.subfolder }}</a>
+                      <a href="#" onclick="searchNamu('{{ r.subfolder }}'); return false;" class="subfolder-link">{{ r.subfolder }}</a>
                       {% if r.release %}
                         <span class="pill" style="background:linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%); border-color:#818cf8; margin-left:6px; color:#4338ca; box-shadow:0 2px 4px rgba(129, 140, 248, 0.2);">{{ r.release }}</span>
                       {% endif %}
@@ -804,6 +801,7 @@
                         {% if r.category == '드라마' or r.category == '예능' %}
                         <button class="btn small" type="button" onclick="checkEpisodes({{ r._idx }}, this)" style="background:#10b981; color:#fff; border-color:#10b981; white-space:nowrap;">에피소드 점검</button>
                         {% endif %}
+                        <button class="btn small" type="button" onclick="searchNaverGulbang('{{ r.subfolder }}')" style="background:#f59e0b; color:#fff; border-color:#f59e0b; white-space:nowrap;">결방 체크</button>
                         <button class="btn danger small" type="button" onclick="deleteRule({{ r._idx }}, '{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">삭제</button>
                       </div>
                     </td>
@@ -1085,13 +1083,17 @@
       });
     }
     
-    // 네이버 검색 함수 (결방 검색)
-    function searchNaver(subfolder) {
-      // 괄호와 연도 제거 (예: "경도를 기다리며 (2025)" -> "경도를 기다리며")
+    // 나무위키 검색 함수
+    function searchNamu(subfolder) {
       var cleanName = subfolder.replace(/\s*\([^)]*\)\s*$/, '').trim();
-      // "결방" 추가
+      var searchUrl = 'https://namu.wiki/w/' + encodeURIComponent(cleanName);
+      window.open(searchUrl, '_blank');
+    }
+
+    // 네이버 결방 검색 함수
+    function searchNaverGulbang(subfolder) {
+      var cleanName = subfolder.replace(/\s*\([^)]*\)\s*$/, '').trim();
       var searchQuery = cleanName + ' 결방';
-      // 네이버 검색 URL 생성
       var searchUrl = 'https://search.naver.com/search.naver?query=' + encodeURIComponent(searchQuery);
       // 새 탭에서 열기
       window.open(searchUrl, '_blank');
@@ -1128,33 +1130,7 @@
       });
     }
     
-    // 서버 재시작 함수
-    function restartServer() {
-      if (!confirm('서버를 재시작하시겠습니까? 재시작 중에는 잠시 접속이 불가능할 수 있습니다.')) {
-        return;
-      }
-      
-      fetch('/restart', {
-        method: 'POST'
-      })
-      .then(function(response) {
-        return response.json();
-      })
-      .then(function(data) {
-        if (data.success) {
-          alert(data.message);
-          // 3초 후 자동 새로고침
-          setTimeout(function() {
-            location.reload();
-          }, 3000);
-        } else {
-          alert('재시작 실패: ' + data.message);
-        }
-      })
-      .catch(function(error) {
-        alert('재시작 중 오류가 발생했습니다: ' + error);
-      });
-    }
+
   </script>
 </body>
 </html>
