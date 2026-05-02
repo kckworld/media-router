@@ -60,6 +60,10 @@ def extract_episode_number(filename: str):
     
     return None
 
+def sanitize_filename_for_plex(filename: str) -> str:
+    """Plex TV 스캐너가 인식 못하는 토큰(예: .END) 제거"""
+    return re.sub(r'(?i)\.END(?=\.[^.]+$)', '', filename)
+
 def _ensure_rule_updated_map(rule: Dict) -> None:
     """하위호환: 단일 updated → 요일별 updated_map으로 승격"""
     days = rule.get("days") or []
@@ -283,6 +287,18 @@ def main() -> None:
                         continue
                     except ValueError:
                         pass
+
+                    # 드라마 파일명에 .END 같은 꼬리 토큰이 있으면 Plex 스캔 호환 형태로 정리
+                    if category == "드라마":
+                        sanitized = sanitize_filename_for_plex(f.name)
+                        if sanitized != f.name:
+                            new_src = f.with_name(sanitized)
+                            try:
+                                f.rename(new_src)
+                                log(f"RENAMED_FOR_PLEX: {f.name} -> {sanitized}")
+                                f = new_src
+                            except Exception as e:
+                                log(f"Rename fail: {f} -> {new_src} ({e})")
 
                     if apply_own:
                         dst = safe_move_with_ownership(f, target_dir, uid, gid, file_mode, dir_mode, setgid_dirs, do_acl, acl_entries)
