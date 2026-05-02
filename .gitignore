@@ -9,7 +9,6 @@ __pycache__/
 .venv/
 *.code-workspace
 *.bak
-run_all.sh
 media_cron.sh
 restart_web_admin.sh
 RESTART_GUIDE.md
