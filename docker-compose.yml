@@ -3,14 +3,10 @@ services:
     image: kck9010/media-router:latest
     container_name: media_router
     restart: unless-stopped
-    ports:
-      - "5080:5080"
+    network_mode: host
     volumes:
       - ./data:/app/data
       - /volume1/video:/volume1/video:ro
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
