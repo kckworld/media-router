@@ -166,8 +166,12 @@ def apply_extra_acl(path: Path, acl_entries: List[Dict]) -> None:
                 r = "r" if "r" in perms else "-"
                 w = "w" if "w" in perms else "-"
                 x = "x" if "x" in perms else "-"
-                perm_str = f"{r}{w}{x}pdDaARWcCo" if w == "w" else f"{r}-{x}---aAR-c--"
-                subprocess.run([synoacl, "-add", str(path), f"{t}:{name}:allow:{perm_str}:---n"], check=False)
+                # synoacltool 13자 권한 문자열: rwxpdDaARWcCo
+                if w == "w":
+                    perm_str = f"{r}{w}{x}p--aARWc--"  # read+write+traverse+append+attrs
+                else:
+                    perm_str = f"{r}-{x}---a-R-c--"    # read+traverse+read attrs
+                subprocess.run([synoacl, "-add", str(path), f"{t}:{name}:allow:{perm_str}:fd--"], check=False)
         except Exception as e:
             log(f"ACL add fail: {path} ({name}) - {e}")
 
