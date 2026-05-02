@@ -13,10 +13,26 @@ PASSWORD = os.getenv("MEDIA_ADMIN_PASSWORD", "")
 app = Flask(__name__, template_folder=str(BASE / "templates"))
 
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
-CATEGORIES = ["예능", "다큐", "드라마", "애니메이션"]
+CATEGORIES = ["드라마", "예능", "애니메이션", "다큐"]
 DAY_ORDER = {d: i for i, d in enumerate(WEEKDAYS)}
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Seoul"))
-TMDB_API_KEY = os.getenv("TMDB_API_KEY", "").strip()
+
+# TMDB API KEY 초기화 함수
+def get_tmdb_api_key():
+    """환경변수 또는 설정에서 TMDB API 키 가져오기"""
+    # 우선 환경변수 확인
+    env_key = os.getenv("TMDB_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    # 설정에서 확인
+    try:
+        cfg = load_cfg()
+        return cfg.get("tmdb_api_key", "").strip()
+    except:
+        return ""
+
+# 초기 값 (나중에 동적으로 업데이트됨)
+TMDB_API_KEY = get_tmdb_api_key()
 
 
 def current_weekday() -> int:
@@ -48,7 +64,9 @@ def split_title_and_year(name: str) -> tuple[str, int | None]:
 
 
 def tmdb_auto_total_episodes(subfolder: str) -> int | None:
-    if not TMDB_API_KEY:
+    api_key = get_tmdb_api_key()
+    
+    if not api_key:
         return None
 
     title, year = split_title_and_year(subfolder)
@@ -57,7 +75,7 @@ def tmdb_auto_total_episodes(subfolder: str) -> int | None:
 
     try:
         params = {
-            "api_key": TMDB_API_KEY,
+            "api_key": api_key,
             "query": title,
             "language": "ko-KR",
         }
@@ -87,7 +105,7 @@ def tmdb_auto_total_episodes(subfolder: str) -> int | None:
 
         detail = requests.get(
             f"https://api.themoviedb.org/3/tv/{tv_id}",
-            params={"api_key": TMDB_API_KEY, "language": "ko-KR"},
+            params={"api_key": api_key, "language": "ko-KR"},
             timeout=8,
         )
         if detail.status_code != 200:
@@ -100,6 +118,83 @@ def tmdb_auto_total_episodes(subfolder: str) -> int | None:
         return None
 
     return None
+
+def tmdb_search_info(query: str) -> dict:
+    """TMDB에서 드라마 정보 검색"""
+    # 최신 TMDB API 키 가져오기
+    api_key = get_tmdb_api_key()
+    
+    if not api_key or not query:
+        return {"success": False, "message": "TMDB API KEY가 없습니다. 설정 페이지에서 입력하세요."}
+    
+    query = query.strip()
+    if not query:
+        return {"success": False, "message": "검색어를 입력하세요."}
+    
+    try:
+        # TMDB 검색
+        params = {
+            "api_key": api_key,
+            "query": query,
+            "language": "ko-KR",
+        }
+        
+        res = requests.get("https://api.themoviedb.org/3/search/tv", params=params, timeout=8)
+        if res.status_code != 200:
+            return {"success": False, "message": "TMDB 검색 실패"}
+        
+        results = res.json().get("results", [])
+        if not results:
+            return {"success": False, "message": "검색 결과가 없습니다."}
+        
+        # 첫 번째 결과 사용
+        show = results[0]
+        tv_id = show.get("id")
+        ko_name = show.get("name", "")
+        origin_name = show.get("original_name", "")
+        air_date = show.get("first_air_date", "")
+        
+        # 년도 추출
+        year = None
+        if air_date:
+            year = int(air_date.split("-")[0])
+        
+        # 폴더명 생성 (title (year) 형식)
+        folder_name = ko_name if ko_name else origin_name
+        if year:
+            folder_name = f"{folder_name} ({year})"
+        
+        # 상세 정보 조회
+        detail_res = requests.get(
+            f"https://api.themoviedb.org/3/tv/{tv_id}",
+            params={"api_key": api_key, "language": "ko-KR"},
+            timeout=8,
+        )
+        
+        total_episodes = None
+        days = []
+        
+        if detail_res.status_code == 200:
+            detail = detail_res.json()
+            total_episodes = detail.get("number_of_episodes")
+            
+            # 방송 요일 정보 추출 (가능한 경우)
+            networks = detail.get("networks", [])
+            # networks에는 방송 요일 정보가 없으므로, air_date와 episode_run_time 등으로 추정만 가능
+            # 정확한 요일 정보는 TMDB에서 직접 제공하지 않으므로 사용자가 수정하도록
+        
+        return {
+            "success": True,
+            "title": ko_name or origin_name,
+            "year": year,
+            "folder_name": folder_name,
+            "total_episodes": total_episodes,
+            "aired_date": air_date,
+            "original_name": origin_name,
+        }
+    
+    except Exception as e:
+        return {"success": False, "message": f"오류: {str(e)}"}
 
 def rule_key(rule):
     raw = f"{(rule.get('category') or '').strip()}|" \
@@ -505,6 +600,13 @@ def settings():
     cfg = load_cfg()
     saved = False
     if request.method == "POST":
+        # TMDB API Key
+        tmdb_key = request.form.get("tmdb_api_key", "").strip()
+        if tmdb_key:
+            cfg["tmdb_api_key"] = tmdb_key
+        elif "tmdb_api_key" in cfg:
+            del cfg["tmdb_api_key"]
+        
         # telegram
         cfg["telegram"] = {
             "bot_token": request.form.get("bot_token", "").strip(),
@@ -620,6 +722,15 @@ def edit():
         
         redirect_url = "/" + ("?" + "&".join(params) if params else "")
         return redirect(redirect_url)
+
+@app.route("/search_tmdb", methods=["POST"])
+def search_tmdb():
+    if not authed(request):
+        return jsonify({"success": False, "message": "인증 실패"}), 403
+    
+    query = request.form.get("q", "").strip()
+    result = tmdb_search_info(query)
+    return jsonify(result)
 
 if __name__=="__main__":
     app.run(host="0.0.0.0", port=5080)

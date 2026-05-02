@@ -182,7 +182,7 @@ def save_cfg(cfg: Dict) -> None:
     c = _conn()
     try:
         with c:
-            for key in ("paths", "base_paths", "telegram", "ownership"):
+            for key in ("paths", "base_paths", "telegram", "ownership", "tmdb_api_key"):
                 if key in cfg:
                     c.execute(
                         "INSERT OR REPLACE INTO config (key, value) VALUES (?,?)",
