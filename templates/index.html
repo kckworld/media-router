@@ -70,6 +70,7 @@
       display: flex;
       gap: 12px;
       align-items: center;
+      margin-left: auto;
     }
     
     header h1 {
@@ -98,6 +99,40 @@
     header .btn:hover {
       background: rgba(255, 255, 255, 0.3);
       border-color: rgba(255, 255, 255, 0.4);
+    }
+    
+    .mode-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid var(--line);
+      position: sticky;
+      top: 72px;
+      z-index: 50;
+      background: var(--bg-solid);
+      margin: 0 0 24px 0;
+    }
+    
+    .mode-tabs a {
+      padding: 14px 24px;
+      text-decoration: none;
+      color: var(--muted);
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      font-weight: 500;
+      font-size: 14px;
+      transition: all 0.25s ease;
+      display: inline-block;
+      cursor: pointer;
+    }
+    
+    .mode-tabs a:hover {
+      color: var(--accent);
+    }
+    
+    .mode-tabs a.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      font-weight: 700;
     }
     
     main {
@@ -676,7 +711,6 @@
   <header>
     <div>
       <h1>Media Router Web Admin</h1>
-      <div class="sub">체크모드(그저께+어제+오늘) / 전체 관리</div>
     </div>
     <div class="header-actions">
       <a class="btn" href="/settings" style="{{ 'background:rgba(255,255,255,0.4)' if mode == 'settings' else '' }}">⚙ 설정</a>
@@ -685,6 +719,14 @@
   </header>
 
   <main>
+
+    <!-- 모드 전환 탭 -->
+    {% if mode != 'settings' %}
+    <div class="mode-tabs">
+      <a href="/?mode=check" class="{{ 'active' if mode == 'check' else '' }}">체크모드 (그저께+어제+오늘)</a>
+      <a href="/?mode=" class="{{ 'active' if mode != 'check' else '' }}">전체 관리</a>
+    </div>
+    {% endif %}
 
     {% if not authed %}
       <div class="card">
@@ -701,30 +743,40 @@
     {% endif %}
 
     <!-- 상단 컨트롤 -->
-    {% if mode != 'settings' %}
+    {% if mode != 'settings' and mode == 'check' %}
     <div class="row card">
       <div class="row filters">
         <form class="filter-form" method="get" action="/">
-          <input type="hidden" name="mode" value="{{ mode }}">
-          {% if mode != 'check' %}
-          <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
-          {% endif %}
+          <input type="hidden" name="mode" value="check">
           <div class="filter-group">
             <label class="muted">요일</label>
             <select name="day" onchange="this.form.submit()">
-              {% if mode == 'check' %}
-                <option value="__three__" {{ 'selected' if selected_day == '__three__' else '' }}>그저께+어제+오늘</option>
-              {% endif %}
+              <option value="__three__" {{ 'selected' if selected_day == '__three__' else '' }}>그저께+어제+오늘</option>
               {% for d in weekdays %}
                 <option value="{{ d }}" {{ 'selected' if selected_day == d else '' }}>{{ d }}</option>
               {% endfor %}
-              {% if mode != 'check' %}
-                <option value="전체" {{ 'selected' if selected_day == '전체' else '' }}>전체</option>
-              {% endif %}
+            </select>
+          </div>
+          <noscript><button class="btn small" type="submit">적용</button></noscript>
+        </form>
+      </div>
+    </div>
+    {% elif mode != 'settings' %}
+    <div class="row card">
+      <div class="row filters">
+        <form class="filter-form" method="get" action="/">
+          <input type="hidden" name="mode" value="">
+          <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
+          <div class="filter-group">
+            <label class="muted">요일</label>
+            <select name="day" onchange="this.form.submit()">
+              {% for d in weekdays %}
+                <option value="{{ d }}" {{ 'selected' if selected_day == d else '' }}>{{ d }}</option>
+              {% endfor %}
+              <option value="전체" {{ 'selected' if selected_day == '전체' else '' }}>전체</option>
             </select>
           </div>
 
-          {% if mode != 'check' %}
           <div class="filter-group">
             <label class="muted">카테고리</label>
             <select name="cat" onchange="this.form.submit()">
@@ -740,21 +792,12 @@
               {{ '표시' if hide_no_days == '1' else '숨김' }}
             </a>
           </div>
-          {% endif %}
 
           <noscript><button class="btn small" type="submit">적용</button></noscript>
         </form>
-
-        <div class="right">
-          {% if mode == 'check' %}
-            <a class="btn" href="/?mode=">전체 관리로</a>
-          {% else %}
-            <a class="btn" href="/?mode=check">체크모드로</a>
-          {% endif %}
-        </div>
       </div>
     </div>
-    {% endif %}{# end if mode != settings #}
+    {% endif %}{# end if mode controls #}
 
     <div class="spacer"></div>
 
@@ -792,7 +835,6 @@
                       {% endif %}
                       <button class="btn small" type="button" onclick="searchNaverGulbang('{{ r.subfolder }}')" style="background:#f59e0b; color:#fff; border-color:#f59e0b; white-space:nowrap;">결방 체크</button>
                       <button class="btn small" type="button" onclick="goToEdit({{ r._idx }})" style="background:#3b82f6; color:#fff; border-color:#3b82f6; white-space:nowrap;">편집</button>
-                      <button class="btn danger small" type="button" onclick="deleteRule({{ r._idx }}, '{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">삭제</button>
                     </div>
                   </div>
                 </div>
@@ -800,6 +842,7 @@
             </div>
             <div class="row" style="margin-top:10px;">
               <button class="btn primary" type="submit">선택 항목 체크 처리</button>
+              <button class="btn danger" type="button" onclick="deleteSelectedRules('{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">선택 항목 삭제</button>
               <span class="hint">선택한 항목만 해당 요일이 Y로 변경됩니다.</span>
             </div>
           {% endif %}
@@ -844,7 +887,6 @@
                         {% endif %}
                         <button class="btn small" type="button" onclick="searchNaverGulbang('{{ r.subfolder }}')" style="background:#f59e0b; color:#fff; border-color:#f59e0b; white-space:nowrap;">결방 체크</button>
                         <button class="btn small" type="button" onclick="goToEdit({{ r._idx }})" style="background:#3b82f6; color:#fff; border-color:#3b82f6; white-space:nowrap;">편집</button>
-                        <button class="btn danger small" type="button" onclick="deleteRule({{ r._idx }}, '{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">삭제</button>
                       </div>
                     </td>
                   </tr>
@@ -856,6 +898,7 @@
         <!-- 데스크톱 테이블 하단 저장 버튼 (테이블 뷰에서만 보이도록) -->
         <div class="row table-wrapper" style="margin-top:10px;">
           <button class="btn primary" type="submit">선택 항목 체크 처리</button>
+          <button class="btn danger" type="button" onclick="deleteSelectedRules('{{ selected_day }}', '{{ selected_cat }}', '{{ sort_key }}', '{{ sort_dir }}')" style="white-space:nowrap;">선택 항목 삭제</button>
           <span class="hint">선택한 항목만 해당 요일이 Y로 변경됩니다.</span>
         </div>
 
@@ -1149,7 +1192,7 @@
     </div>
     {% endif %}
 
-    <div class="spacer"></div>
+    <div class="spacer" style="height: 8px;"></div>
     <div style="text-align:center; padding:16px; background:linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius:12px; border:1px solid var(--line);">
       <span class="muted" style="font-size:13px;">그저께: <strong style="color:var(--purple);">{{ two_days_ago_name }}</strong></span>
       <span style="margin:0 12px; color:var(--line);">|</span>
@@ -1217,6 +1260,10 @@
     // 나무위키 검색 함수
     function searchNamu(subfolder) {
       var cleanName = subfolder.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      // "/" 문자가 있으면 최상위 폴더명만 추출 (예: "유미의 세포들/Season03" -> "유미의 세포들")
+      if (cleanName.indexOf('/') !== -1) {
+        cleanName = cleanName.split('/')[0].trim();
+      }
       var searchUrl = 'https://namu.wiki/w/' + encodeURIComponent(cleanName);
       window.open(searchUrl, '_blank');
     }
@@ -1254,6 +1301,65 @@
         } else {
           location.reload();
         }
+      })
+      .catch(function(error) {
+        alert('삭제 중 오류가 발생했습니다: ' + error);
+        location.reload();
+      });
+    }
+
+    // 선택 항목 일괄 삭제 함수
+    function deleteSelectedRules(day, cat, sort, dir) {
+      var checkboxes = document.querySelectorAll('input[name="rkday"]:checked');
+      if (checkboxes.length === 0) {
+        alert('삭제할 항목을 선택하세요.');
+        return;
+      }
+      
+      if (!confirm('선택한 ' + checkboxes.length + '개 항목을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) {
+        return;
+      }
+      
+      var indices = [];
+      checkboxes.forEach(function(checkbox) {
+        // rkday 값에서 rule_key 추출 (format: "rulekey|dayname")
+        var rkday = checkbox.value;
+        // 해당하는 행의 데이터를 찾아 idx 추출
+        var row = checkbox.closest('.card-item') || checkbox.closest('tr');
+        if (row && row.hasAttribute('id') && row.id.startsWith('rule-')) {
+          var idx = row.id.replace('rule-', '');
+          if (indices.indexOf(idx) === -1) {
+            indices.push(idx);
+          }
+        }
+      });
+      
+      // 각 항목을 개별적으로 삭제
+      deleteMultipleRules(indices, day, cat, sort, dir, 0);
+    }
+
+    // 여러 규칙을 순차적으로 삭제
+    function deleteMultipleRules(indices, day, cat, sort, dir, current) {
+      if (current >= indices.length) {
+        location.reload();
+        return;
+      }
+      
+      var idx = indices[current];
+      var formData = new FormData();
+      formData.append('idx', idx);
+      formData.append('mode', 'check');
+      formData.append('day', day);
+      formData.append('cat', cat);
+      formData.append('sort', sort);
+      formData.append('dir', dir);
+      
+      fetch('/delete', {
+        method: 'POST',
+        body: formData
+      })
+      .then(function(response) {
+        deleteMultipleRules(indices, day, cat, sort, dir, current + 1);
       })
       .catch(function(error) {
         alert('삭제 중 오류가 발생했습니다: ' + error);
