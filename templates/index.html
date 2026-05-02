@@ -1206,11 +1206,11 @@
         <div class="row" style="align-items:flex-start;">
           <div class="field" style="flex:1;">
             <label class="muted">Bot Token</label>
-            <input type="text" name="bot_token" value="{{ cfg.telegram.bot_token if cfg.telegram else '' }}" placeholder="176412162:AAE...">
+            <input type="password" name="bot_token" value="" autocomplete="new-password" placeholder="{{ '저장된 값 있음 (변경 시에만 입력)' if cfg.telegram and cfg.telegram.bot_token else '텔레그램 Bot Token 입력' }}">
           </div>
           <div class="field" style="flex:1;">
             <label class="muted">Chat ID</label>
-            <input type="text" name="chat_id" value="{{ cfg.telegram.chat_id if cfg.telegram else '' }}" placeholder="42397022">
+            <input type="password" name="chat_id" value="" autocomplete="new-password" placeholder="{{ '저장된 값 있음 (변경 시에만 입력)' if cfg.telegram and cfg.telegram.chat_id else '텔레그램 Chat ID 입력' }}">
           </div>
           <div class="field" style="flex:0 0 auto;">
             <label class="muted">알림 활성화</label>

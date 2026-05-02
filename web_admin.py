@@ -616,10 +616,13 @@ def settings():
         elif clear_tmdb_key and "tmdb_api_key" in cfg:
             del cfg["tmdb_api_key"]
         
-        # telegram
+        # telegram (빈 값이면 기존 저장값 유지)
+        old_telegram = cfg.get("telegram") or {}
+        bot_token_input = request.form.get("bot_token", "").strip()
+        chat_id_input = request.form.get("chat_id", "").strip()
         cfg["telegram"] = {
-            "bot_token": request.form.get("bot_token", "").strip(),
-            "chat_id": request.form.get("chat_id", "").strip(),
+            "bot_token": bot_token_input if bot_token_input else old_telegram.get("bot_token", ""),
+            "chat_id": chat_id_input if chat_id_input else old_telegram.get("chat_id", ""),
             "enabled": request.form.get("tg_enabled") == "1",
         }
         # paths.sources
