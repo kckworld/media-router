@@ -1193,8 +1193,12 @@
         <div class="row" style="align-items:flex-start;">
           <div class="field" style="flex:1;">
             <label class="muted">TMDB API Key</label>
-            <input type="text" name="tmdb_api_key" value="{{ cfg.tmdb_api_key if cfg.tmdb_api_key else '' }}" placeholder="73445fd19d08aaaf03ee24076f4d6768">
-            <div class="hint">TMDB API 키를 입력하면 규칙 추가 시 드라마 정보를 자동으로 검색할 수 있습니다. <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--accent);">TMDB 설정에서 API 키 확인</a></div>
+            <input type="password" name="tmdb_api_key" value="" autocomplete="new-password" placeholder="{{ '저장된 키 있음 (변경 시에만 입력)' if cfg.tmdb_api_key else 'TMDB API 키 입력' }}">
+            <label style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; color:var(--muted);">
+              <input type="checkbox" name="clear_tmdb_key" value="1" style="width:16px; height:16px;">
+              저장된 TMDB API 키 삭제
+            </label>
+            <div class="hint">보안상 기존 키는 화면에 표시되지 않습니다. 변경할 때만 새 키를 입력하세요. <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--accent);">TMDB 설정에서 API 키 확인</a></div>
           </div>
         </div>
 

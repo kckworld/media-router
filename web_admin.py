@@ -610,9 +610,10 @@ def settings():
     if request.method == "POST":
         # TMDB API Key
         tmdb_key = request.form.get("tmdb_api_key", "").strip()
+        clear_tmdb_key = request.form.get("clear_tmdb_key") == "1"
         if tmdb_key:
             cfg["tmdb_api_key"] = tmdb_key
-        elif "tmdb_api_key" in cfg:
+        elif clear_tmdb_key and "tmdb_api_key" in cfg:
             del cfg["tmdb_api_key"]
         
         # telegram
