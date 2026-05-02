@@ -140,8 +140,10 @@ def tmdb_search_info(query: str) -> dict:
         }
         
         res = requests.get("https://api.themoviedb.org/3/search/tv", params=params, timeout=8)
+        if res.status_code == 401:
+            return {"success": False, "message": "TMDB API 키가 유효하지 않습니다. 설정에서 키를 확인해주세요."}
         if res.status_code != 200:
-            return {"success": False, "message": "TMDB 검색 실패"}
+            return {"success": False, "message": f"TMDB 검색 실패 (HTTP {res.status_code})"}
         
         results = res.json().get("results", [])
         if not results:
@@ -193,8 +195,14 @@ def tmdb_search_info(query: str) -> dict:
             "original_name": origin_name,
         }
     
-    except Exception as e:
-        return {"success": False, "message": f"오류: {str(e)}"}
+    except requests.exceptions.Timeout:
+        return {"success": False, "message": "TMDB 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요."}
+    except requests.exceptions.ConnectionError:
+        return {"success": False, "message": "TMDB 서버에 연결할 수 없습니다. 인터넷/DNS 상태를 확인해주세요."}
+    except requests.exceptions.RequestException:
+        return {"success": False, "message": "TMDB 요청 중 네트워크 오류가 발생했습니다."}
+    except Exception:
+        return {"success": False, "message": "TMDB 처리 중 오류가 발생했습니다."}
 
 def rule_key(rule):
     raw = f"{(rule.get('category') or '').strip()}|" \

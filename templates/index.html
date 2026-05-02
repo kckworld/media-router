@@ -713,7 +713,11 @@
       <h1>Media Router Web Admin</h1>
     </div>
     <div class="header-actions">
+      {% if mode == 'settings' %}
+      <a class="btn" href="/?mode=">나가기</a>
+      {% else %}
       <a class="btn" href="/settings" style="{{ 'background:rgba(255,255,255,0.4)' if mode == 'settings' else '' }}">⚙ 설정</a>
+      {% endif %}
     </div>
 
   </header>
@@ -721,12 +725,11 @@
   <main>
 
     <!-- 모드 전환 탭 -->
-    {% if mode != 'settings' %}
     <div class="mode-tabs">
       <a href="/?mode=check" class="{{ 'active' if mode == 'check' else '' }}">체크모드 (그저께+어제+오늘)</a>
-      <a href="/?mode=" class="{{ 'active' if mode != 'check' else '' }}">전체 관리</a>
+      <a href="/?mode=" class="{{ 'active' if mode != 'check' and mode != 'settings' else '' }}">전체 관리</a>
+      <a href="/settings" class="{{ 'active' if mode == 'settings' else '' }}">설정</a>
     </div>
-    {% endif %}
 
     {% if not authed %}
       <div class="card">
@@ -904,7 +907,7 @@
 
       </form>
 
-    {% else %}
+    {% elif mode != 'settings' %}
       <!-- 전체 관리: 규칙 추가 -->
       <div class="card">
         <div class="section-title">규칙 추가</div>
@@ -1266,7 +1269,7 @@
 
         <div style="margin-top:24px;">
           <button class="btn primary" type="submit">저장</button>
-          <a class="btn" href="/" style="margin-left:8px;">취소</a>
+          <a class="btn" href="/?mode=" style="margin-left:8px;">나가기</a>
         </div>
       </form>
     </div>
