@@ -146,17 +146,45 @@ def syno_enforce_inherit(target: Path) -> None:
         try: subprocess.run([tool, "-enforce-inherit", str(target)], check=False)
         except Exception as e: log(f"ACL enforce fail: {target} - {e}")
 
+def apply_extra_acl(path: Path, acl_entries: List[Dict]) -> None:
+    """추가 ACL 권한 설정 (setfacl 우선, 없으면 synoacltool 사용)"""
+    if not acl_entries:
+        return
+    setfacl = shutil.which("setfacl")
+    synoacl = shutil.which("synoacltool")
+    for entry in acl_entries:
+        t = entry.get("type", "user")   # user / group
+        name = entry.get("name", "")
+        perms = entry.get("permissions", "rw")  # r, w, x 조합
+        if not name:
+            continue
+        try:
+            if setfacl:
+                flag = "u" if t == "user" else "g"
+                subprocess.run([setfacl, "-m", f"{flag}:{name}:{perms}", str(path)], check=False)
+            elif synoacl:
+                r = "r" if "r" in perms else "-"
+                w = "w" if "w" in perms else "-"
+                x = "x" if "x" in perms else "-"
+                perm_str = f"{r}{w}{x}pdDaARWcCo" if w == "w" else f"{r}-{x}---aAR-c--"
+                subprocess.run([synoacl, "-add", str(path), f"{t}:{name}:allow:{perm_str}:---n"], check=False)
+        except Exception as e:
+            log(f"ACL add fail: {path} ({name}) - {e}")
+
 def ensure_dir_with_ownership(p: Path, uid: int, gid: int,
-                              dir_mode: int, setgid_dirs: bool, do_acl: bool) -> None:
+                              dir_mode: int, setgid_dirs: bool, do_acl: bool,
+                              acl_entries: Optional[List[Dict]] = None) -> None:
     if not p.exists(): p.mkdir(parents=True, exist_ok=True)
     apply_ownership_and_mode(p, True, uid, gid, 0o664, dir_mode, setgid_dirs)
     if do_acl: syno_enforce_inherit(p)
+    apply_extra_acl(p, acl_entries or [])
 
 def safe_move_with_ownership(src: Path, dst_dir: Path,
                              uid: int, gid: int,
                              file_mode: int, dir_mode: int,
-                             setgid_dirs: bool, do_acl: bool) -> Path:
-    ensure_dir_with_ownership(dst_dir, uid, gid, dir_mode, setgid_dirs, do_acl)
+                             setgid_dirs: bool, do_acl: bool,
+                             acl_entries: Optional[List[Dict]] = None) -> Path:
+    ensure_dir_with_ownership(dst_dir, uid, gid, dir_mode, setgid_dirs, do_acl, acl_entries)
     dst = dst_dir / src.name
     if dst.exists():
         stem, suf, i = dst.stem, dst.suffix, 1
@@ -168,6 +196,7 @@ def safe_move_with_ownership(src: Path, dst_dir: Path,
     shutil.move(str(src), str(dst))
     apply_ownership_and_mode(dst, False, uid, gid, file_mode, dir_mode, setgid_dirs)
     if do_acl: syno_enforce_inherit(dst)
+    apply_extra_acl(dst, acl_entries or [])
     return dst
 
 def reset_updated_for_today(cfg: Dict) -> bool:
@@ -220,6 +249,7 @@ def main() -> None:
     dir_mode = parse_mode(own["dir_mode"], 0o775)
     setgid_dirs = own.get("setgid_dirs", True)
     do_acl = own.get("enforce_inherit", True)
+    acl_entries = own.get("extra_acl") or []
 
     moved_count, changed = 0, False
     today = WEEKDAYS[current_localtime().weekday()]
@@ -251,7 +281,7 @@ def main() -> None:
                         pass
 
                     if apply_own:
-                        dst = safe_move_with_ownership(f, target_dir, uid, gid, file_mode, dir_mode, setgid_dirs, do_acl)
+                        dst = safe_move_with_ownership(f, target_dir, uid, gid, file_mode, dir_mode, setgid_dirs, do_acl, acl_entries)
                     else:
                         target_dir.mkdir(parents=True, exist_ok=True)
                         dst = target_dir / f.name

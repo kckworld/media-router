@@ -47,3 +47,7 @@ ownership:
   dir_mode: 775
   setgid_dirs: true
   enforce_inherit: false
+  extra_acl:
+    - type: user
+      name: PlexMediaServer
+      permissions: rw
