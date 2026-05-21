@@ -39,7 +39,13 @@ def current_weekday() -> int:
     return datetime.now(APP_TZ).weekday()
 
 def authed(req):
-    return True  # 비밀번호 인증 비활성화
+    if not PASSWORD:
+        return True
+    if req.path == "/health":
+        return True
+    if req.cookies.get("media_admin", "") == f"ok:{PASSWORD}":
+        return True
+    return redirect("/login")
 
 def normalize_pattern(p: str) -> str:
     if not p: return p
@@ -304,6 +310,10 @@ def health(): return "ok", 200
 
 @app.route("/", methods=["GET"])
 def index():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+
     cfg = load_cfg()
     mode = request.args.get("mode", "check").strip()
     sort_key = request.args.get("sort", "default").strip()
@@ -374,7 +384,7 @@ def index():
             return (day_order, (x.get("category") or ""), (x.get("subfolder") or ""))
         entries = sorted(entries, key=check_key)
         return render_template("index.html",
-            authed=authed(request), cfg=cfg, weekdays=WEEKDAYS,
+            authed=True, cfg=cfg, weekdays=WEEKDAYS,
             selected_day=selected_ui, selected_cat=selected_cat,
             rules=entries, mode="check",
             today_name=today_name, yest_name=yest_name, two_days_ago_name=two_days_ago_name, categories=CATEGORIES,
@@ -397,7 +407,7 @@ def index():
     filtered=sort_rules_for_list(filtered, sort_key, sort_dir)
 
     return render_template("index.html",
-        authed=authed(request), cfg=cfg, weekdays=WEEKDAYS,
+        authed=True, cfg=cfg, weekdays=WEEKDAYS,
         selected_day=selected_day, selected_cat=selected_cat, hide_no_days=hide_no_days,
         rules=filtered, mode="",
         today_name=today_name, yest_name=yest_name, two_days_ago_name=two_days_ago_name, categories=CATEGORIES,
@@ -405,8 +415,9 @@ def index():
 
 @app.route("/check", methods=["POST"])
 def check_action():
-    if not authed(request): 
-        return jsonify({"error": "인증 실패"}), 403
+    auth = authed(request)
+    if auth is not True:
+        return auth
     try:
         keys = set(request.form.getlist("rkday"))
         cfg = load_cfg()
@@ -431,8 +442,9 @@ def check_action():
 @app.route("/check_episodes", methods=["POST"])
 def check_episodes():
     try:
-        if not authed(request): 
-            return jsonify({"success": False, "message": "인증 실패"}), 403
+        auth = authed(request)
+        if auth is not True:
+            return auth
         idx = int(request.form.get("idx", "-1"))
         cfg = load_cfg()
         rule = next((r for r in cfg.get("rules", []) if r.get("id") == idx), None)
@@ -506,18 +518,28 @@ def check_episodes():
             "message": f"에러가 발생했습니다: {str(e)}"
         }), 500
 
+@app.route("/login", methods=["GET"])
+def login_page():
+    return render_template("login.html", has_password=bool(PASSWORD), error=request.args.get("error") == "1")
+
 @app.route("/login", methods=["POST"])
 def login():
     pw=request.form.get("pw","")
-    if PASSWORD and pw==PASSWORD:
+    remember = request.form.get("remember") == "1"
+    if not PASSWORD:
+        return redirect("/")
+    if pw == PASSWORD:
         resp=make_response(redirect("/"))
-        resp.set_cookie("media_admin","ok:"+PASSWORD,max_age=12*3600,httponly=True,samesite="Lax",secure=True)
+        max_age = 30 * 24 * 3600 if remember else 12 * 3600
+        resp.set_cookie("media_admin","ok:"+PASSWORD,max_age=max_age,httponly=True,samesite="Lax",secure=request.is_secure)
         return resp
-    return abort(403)
+    return redirect("/login?error=1")
 
 @app.route("/add", methods=["POST"])
 def add():
-    if not authed(request): return abort(403)
+    auth = authed(request)
+    if auth is not True:
+        return auth
     cfg = load_cfg()
     pat_raw = request.form.get("pattern", "").strip()
     pattern = normalize_pattern(pat_raw)
@@ -577,7 +599,9 @@ def add():
 
 @app.route("/delete", methods=["POST"])
 def delete():
-    if not authed(request): return abort(403)
+    auth = authed(request)
+    if auth is not True:
+        return auth
     idx=int(request.form.get("idx","-1"))
     cfg=load_cfg()
     cfg["rules"] = [r for r in cfg["rules"] if r.get("id") != idx]
@@ -604,7 +628,9 @@ def delete():
 
 @app.route("/settings", methods=["GET", "POST"])
 def settings():
-    if not authed(request): return abort(403)
+    auth = authed(request)
+    if auth is not True:
+        return auth
     cfg = load_cfg()
     saved = False
     if request.method == "POST":
@@ -650,7 +676,7 @@ def settings():
         save_cfg(cfg)
         saved = True
     return render_template("index.html",
-        authed=authed(request), cfg=cfg, weekdays=WEEKDAYS,
+        authed=True, cfg=cfg, weekdays=WEEKDAYS,
         selected_day="", selected_cat="", hide_no_days="1",
         rules=[], mode="settings",
         today_name=WEEKDAYS[current_weekday()], yest_name=WEEKDAYS[(current_weekday()-1)%7],
@@ -659,7 +685,9 @@ def settings():
 
 @app.route("/edit", methods=["GET","POST"])
 def edit():
-    if not authed(request): return abort(403)
+    auth = authed(request)
+    if auth is not True:
+        return auth
     cfg = load_cfg()
     if request.method == "GET":
         ...
@@ -737,8 +765,9 @@ def edit():
 
 @app.route("/search_tmdb", methods=["POST"])
 def search_tmdb():
-    if not authed(request):
-        return jsonify({"success": False, "message": "인증 실패"}), 403
+    auth = authed(request)
+    if auth is not True:
+        return auth
     
     query = request.form.get("q", "").strip()
     result = tmdb_search_info(query)
