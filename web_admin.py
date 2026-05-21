@@ -543,6 +543,10 @@ def add():
     cfg = load_cfg()
     pat_raw = request.form.get("pattern", "").strip()
     pattern = normalize_pattern(pat_raw)
+    pat2_raw = request.form.get("pattern2", "").strip()
+    pattern2 = normalize_pattern(pat2_raw) if pat2_raw else None
+    exclude_raw = request.form.get("exclude_pattern", "").strip()
+    exclude_pattern = normalize_pattern(exclude_raw) if exclude_raw else None
     sel_days = request.form.getlist("days")
 
     rule = {
@@ -553,6 +557,11 @@ def add():
         "updated": "N",
         "updated_map": {d: "N" for d in sel_days if d in WEEKDAYS},
     }
+    
+    if pattern2:
+        rule["pattern2"] = pattern2
+    if exclude_pattern:
+        rule["exclude_pattern"] = exclude_pattern
     
     # 릴리즈 정보 추가 (선택사항)
     release = request.form.get("release", "").strip()
@@ -697,6 +706,10 @@ def edit():
         if old_rule is not None:
             pat_raw = request.form.get("pattern", "").strip()
             pattern = normalize_pattern(pat_raw)
+            pat2_raw = request.form.get("pattern2", "").strip()
+            pattern2 = normalize_pattern(pat2_raw) if pat2_raw else None
+            exclude_raw = request.form.get("exclude_pattern", "").strip()
+            exclude_pattern = normalize_pattern(exclude_raw) if exclude_raw else None
             sel_days = request.form.getlist("days")
 
             new_rule = {
@@ -707,6 +720,11 @@ def edit():
                 "updated": "N",
                 "updated_map": {d: "N" for d in sel_days if d in WEEKDAYS},
             }
+            
+            if pattern2:
+                new_rule["pattern2"] = pattern2
+            if exclude_pattern:
+                new_rule["exclude_pattern"] = exclude_pattern
             
             # 릴리즈 정보 추가 (선택사항)
             release = request.form.get("release", "").strip()

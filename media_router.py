@@ -107,10 +107,17 @@ def clean_source(root: Path, cleanup_cfg: Dict) -> None:
                 try: p.unlink(); log(f"Removed file: {p}")
                 except Exception as e: log(f"Remove file fail: {p} - {e}")
 
-def find_matches(source_dir: Path, pattern: str) -> Iterable[Path]:
+def find_matches(source_dir: Path, pattern: str, pattern2: str = None, exclude_pattern: str = None) -> Iterable[Path]:
     for p in source_dir.rglob("*"):
-        if p.is_file() and fnmatch.fnmatch(p.name, pattern):
-            yield p
+        if not p.is_file():
+            continue
+        if not fnmatch.fnmatch(p.name, pattern):
+            continue
+        if pattern2 and not fnmatch.fnmatch(p.name, pattern2):
+            continue
+        if exclude_pattern and fnmatch.fnmatch(p.name, exclude_pattern):
+            continue
+        yield p
 
 def parse_mode(val, default: int) -> int:
     if val is None: return default
@@ -271,6 +278,8 @@ def main() -> None:
         for r in rules:
             category = (r.get("category") or "").strip()
             pattern  = (r.get("pattern")  or "").strip()
+            pattern2 = (r.get("pattern2") or "").strip() or None
+            exclude_pattern = (r.get("exclude_pattern") or "").strip() or None
             sub      = (r.get("subfolder") or "").strip()
             if not (category and pattern and sub):
                 continue
@@ -280,7 +289,7 @@ def main() -> None:
                 continue
             target_dir = Path(base_dir) / sub
 
-            for f in find_matches(src_root, pattern):
+            for f in find_matches(src_root, pattern, pattern2, exclude_pattern):
                 try:
                     try:
                         f.relative_to(target_dir)

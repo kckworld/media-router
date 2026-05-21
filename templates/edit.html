@@ -23,10 +23,16 @@
     </select>
 
     <label>Pattern</label>
-    <input type="text" name="pattern" value="{{ rule.pattern or '' }}">
+    <input type="text" name="pattern" value="{{ rule.pattern or '' }}" placeholder="기본 패턴 (필수)" required>
+
+    <label>Pattern2 (선택사항)</label>
+    <input type="text" name="pattern2" value="{{ rule.pattern2 or '' }}" placeholder="두 번째 포함 패턴 (선택)">
+
+    <label>Exclude Pattern (선택사항)</label>
+    <input type="text" name="exclude_pattern" value="{{ rule.exclude_pattern or '' }}" placeholder="제외 패턴 (선택)">
 
     <label>Subfolder</label>
-    <input type="text" name="subfolder" value="{{ rule.subfolder or '' }}">
+    <input type="text" name="subfolder" value="{{ rule.subfolder or '' }}" required>
 
     <fieldset style="margin-top:8px">
       <legend>요일(선택하지 않으면 전체 요일)</legend>

@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS rules (
     position          INTEGER NOT NULL DEFAULT 0,
     category          TEXT    NOT NULL DEFAULT '',
     pattern           TEXT    NOT NULL DEFAULT '',
+    pattern2          TEXT,
+    exclude_pattern   TEXT,
     subfolder         TEXT    NOT NULL DEFAULT '',
     days              TEXT    NOT NULL DEFAULT '[]',
     updated           TEXT    NOT NULL DEFAULT 'N',
@@ -51,6 +53,8 @@ def init_db() -> None:
     try:
         c.executescript(_SCHEMA)
         c.commit()
+        # 기존 DB에 pattern2, exclude_pattern 컬럼 추가 (마이그레이션)
+        _migrate_add_pattern2_exclude(c)
         row_count = c.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
         cfg_count = c.execute("SELECT COUNT(*) FROM config").fetchone()[0]
         if row_count == 0 and cfg_count == 0:
@@ -58,6 +62,21 @@ def init_db() -> None:
     finally:
         c.close()
     _initialized = True
+
+
+def _migrate_add_pattern2_exclude(c: sqlite3.Connection) -> None:
+    """Add pattern2 and exclude_pattern columns if they don't exist."""
+    try:
+        # Check if columns already exist
+        cols = [col[1] for col in c.execute("PRAGMA table_info(rules)")]
+        if "pattern2" not in cols:
+            c.execute("ALTER TABLE rules ADD COLUMN pattern2 TEXT")
+        if "exclude_pattern" not in cols:
+            c.execute("ALTER TABLE rules ADD COLUMN exclude_pattern TEXT")
+        c.commit()
+    except Exception as e:
+        print(f"[db] Column migration warning: {e}")
+        c.rollback()
 
 
 def _try_migrate(c: sqlite3.Connection) -> None:
@@ -160,6 +179,10 @@ def load_cfg() -> Dict:
                 "updated": row["updated"],
                 "updated_map": json.loads(row["updated_map"] or "{}"),
             }
+            if row["pattern2"]:
+                r["pattern2"] = row["pattern2"]
+            if row["exclude_pattern"]:
+                r["exclude_pattern"] = row["exclude_pattern"]
             if row["total_episodes"] is not None:
                 r["total_episodes"] = row["total_episodes"]
             if row["received_episodes"] is not None:
@@ -206,8 +229,8 @@ def save_cfg(cfg: Dict) -> None:
                 if rule_id and rule_id in existing_ids:
                     c.execute(
                         """UPDATE rules SET
-                               position=?, category=?, pattern=?, subfolder=?,
-                               days=?, updated=?, updated_map=?,
+                               position=?, category=?, pattern=?, pattern2=?, exclude_pattern=?,
+                               subfolder=?, days=?, updated=?, updated_map=?,
                                total_episodes=?, received_episodes=?,
                                last_episode=?, release=?
                            WHERE id=?""",
@@ -215,6 +238,8 @@ def save_cfg(cfg: Dict) -> None:
                             pos,
                             r.get("category", ""),
                             r.get("pattern", ""),
+                            r.get("pattern2"),
+                            r.get("exclude_pattern"),
                             r.get("subfolder", ""),
                             json.dumps(r.get("days", [])),
                             r.get("updated", "N"),
@@ -229,14 +254,16 @@ def save_cfg(cfg: Dict) -> None:
                 else:
                     c.execute(
                         """INSERT INTO rules
-                               (position, category, pattern, subfolder, days,
-                                updated, updated_map, total_episodes, received_episodes,
-                                last_episode, release)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                               (position, category, pattern, pattern2, exclude_pattern,
+                                subfolder, days, updated, updated_map, total_episodes,
+                                received_episodes, last_episode, release)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             pos,
                             r.get("category", ""),
                             r.get("pattern", ""),
+                            r.get("pattern2"),
+                            r.get("exclude_pattern"),
                             r.get("subfolder", ""),
                             json.dumps(r.get("days", [])),
                             r.get("updated", "N"),
