@@ -15,6 +15,7 @@ LOGFILE: Path = LOGDIR / "media_router.log"
 
 WEEKDAYS: List[str] = ["월", "화", "수", "목", "금", "토", "일"]
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Seoul"))
+VIDEO_EXTENSIONS: set = {'.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.webm', '.ts', '.m2ts', '.mts', '.m4v', '.3gp', '.ogv', '.asf', '.divx', '.vob', '.f4v', '.mpg', '.mpeg', '.m2v'}
 
 
 def current_localtime() -> datetime:
@@ -378,6 +379,27 @@ def main() -> None:
 
     if changed:
         save_cfg_atomic(cfg)
+    
+    # 남은 비디오 파일 검사 및 텔레그램 전송
+    remaining_videos = []
+    for src_root in sources:
+        if not src_root.exists():
+            continue
+        for video_file in src_root.rglob("*"):
+            if video_file.is_file() and video_file.suffix.lower() in VIDEO_EXTENSIONS:
+                remaining_videos.append(video_file)
+    
+    if remaining_videos:
+        if len(remaining_videos) <= 20:
+            msg_lines = [f"🎥 원본 폴더에 남은 동영상 파일 ({len(remaining_videos)}개):"] + [f"• {f.name}" for f in remaining_videos]
+        else:
+            msg_lines = [f"🎥 원본 폴더에 남은 동영상 파일 ({len(remaining_videos)}개):"]
+            for f in remaining_videos[:10]:
+                msg_lines.append(f"• {f.name}")
+            msg_lines.append(f"... 외 {len(remaining_videos) - 10}개")
+        tg_send(cfg, "\n".join(msg_lines))
+        log(f"Found {len(remaining_videos)} remaining video files in source folders")
+    
     log(f"Done. moved={moved_count}")
 
 if __name__ == "__main__":
