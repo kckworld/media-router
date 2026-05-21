@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS rules (
     position          INTEGER NOT NULL DEFAULT 0,
     category          TEXT    NOT NULL DEFAULT '',
     pattern           TEXT    NOT NULL DEFAULT '',
+    pattern_or        TEXT,
     pattern2          TEXT,
+    pattern2_or       TEXT,
     exclude_pattern   TEXT,
     subfolder         TEXT    NOT NULL DEFAULT '',
     days              TEXT    NOT NULL DEFAULT '[]',
@@ -65,12 +67,16 @@ def init_db() -> None:
 
 
 def _migrate_add_pattern2_exclude(c: sqlite3.Connection) -> None:
-    """Add pattern2 and exclude_pattern columns if they don't exist."""
+    """Add pattern_or, pattern2, pattern2_or, exclude_pattern columns if they don't exist."""
     try:
         # Check if columns already exist
         cols = [col[1] for col in c.execute("PRAGMA table_info(rules)")]
+        if "pattern_or" not in cols:
+            c.execute("ALTER TABLE rules ADD COLUMN pattern_or TEXT")
         if "pattern2" not in cols:
             c.execute("ALTER TABLE rules ADD COLUMN pattern2 TEXT")
+        if "pattern2_or" not in cols:
+            c.execute("ALTER TABLE rules ADD COLUMN pattern2_or TEXT")
         if "exclude_pattern" not in cols:
             c.execute("ALTER TABLE rules ADD COLUMN exclude_pattern TEXT")
         c.commit()
@@ -179,8 +185,12 @@ def load_cfg() -> Dict:
                 "updated": row["updated"],
                 "updated_map": json.loads(row["updated_map"] or "{}"),
             }
+            if row["pattern_or"]:
+                r["pattern_or"] = row["pattern_or"]
             if row["pattern2"]:
                 r["pattern2"] = row["pattern2"]
+            if row["pattern2_or"]:
+                r["pattern2_or"] = row["pattern2_or"]
             if row["exclude_pattern"]:
                 r["exclude_pattern"] = row["exclude_pattern"]
             if row["total_episodes"] is not None:
@@ -229,8 +239,8 @@ def save_cfg(cfg: Dict) -> None:
                 if rule_id and rule_id in existing_ids:
                     c.execute(
                         """UPDATE rules SET
-                               position=?, category=?, pattern=?, pattern2=?, exclude_pattern=?,
-                               subfolder=?, days=?, updated=?, updated_map=?,
+                               position=?, category=?, pattern=?, pattern_or=?, pattern2=?, pattern2_or=?,
+                               exclude_pattern=?, subfolder=?, days=?, updated=?, updated_map=?,
                                total_episodes=?, received_episodes=?,
                                last_episode=?, release=?
                            WHERE id=?""",
@@ -238,7 +248,9 @@ def save_cfg(cfg: Dict) -> None:
                             pos,
                             r.get("category", ""),
                             r.get("pattern", ""),
+                            r.get("pattern_or"),
                             r.get("pattern2"),
+                            r.get("pattern2_or"),
                             r.get("exclude_pattern"),
                             r.get("subfolder", ""),
                             json.dumps(r.get("days", [])),
@@ -254,15 +266,17 @@ def save_cfg(cfg: Dict) -> None:
                 else:
                     c.execute(
                         """INSERT INTO rules
-                               (position, category, pattern, pattern2, exclude_pattern,
+                               (position, category, pattern, pattern_or, pattern2, pattern2_or, exclude_pattern,
                                 subfolder, days, updated, updated_map, total_episodes,
                                 received_episodes, last_episode, release)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             pos,
                             r.get("category", ""),
                             r.get("pattern", ""),
+                            r.get("pattern_or"),
                             r.get("pattern2"),
+                            r.get("pattern2_or"),
                             r.get("exclude_pattern"),
                             r.get("subfolder", ""),
                             json.dumps(r.get("days", [])),

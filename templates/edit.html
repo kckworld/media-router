@@ -23,13 +23,19 @@
     </select>
 
     <label>Pattern</label>
-    <input type="text" name="pattern" value="{{ rule.pattern or '' }}" placeholder="기본 패턴 (필수)" required>
+    <input type="text" name="pattern" value="{{ rule.pattern or '' }}" placeholder="나는SOLO | I Am Solo (|로 OR 조건)" required>
+
+    <label>Pattern OR (선택사항)</label>
+    <input type="text" name="pattern_or" value="{{ rule.pattern_or or '' }}" placeholder="추가 포함 패턴">
 
     <label>Pattern2 (선택사항)</label>
-    <input type="text" name="pattern2" value="{{ rule.pattern2 or '' }}" placeholder="두 번째 포함 패턴 (선택)">
+    <input type="text" name="pattern2" value="{{ rule.pattern2 or '' }}" placeholder="두 번째 포함 조건">
+
+    <label>Pattern2 OR (선택사항)</label>
+    <input type="text" name="pattern2_or" value="{{ rule.pattern2_or or '' }}" placeholder="패턴 2의 OR 조건">
 
     <label>Exclude Pattern (선택사항)</label>
-    <input type="text" name="exclude_pattern" value="{{ rule.exclude_pattern or '' }}" placeholder="제외 패턴 (선택)">
+    <input type="text" name="exclude_pattern" value="{{ rule.exclude_pattern or '' }}" placeholder="제외 패턴">
 
     <label>Subfolder</label>
     <input type="text" name="subfolder" value="{{ rule.subfolder or '' }}" required>

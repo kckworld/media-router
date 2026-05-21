@@ -943,19 +943,29 @@
               <div class="hint" style="visibility: hidden; height: 32px;">placeholder</div>
             </div>
             <div class="field" style="flex:1;">
-              <label class="muted">패턴</label>
-              <input type="text" name="pattern" placeholder="예: 트웰브" required>
-              <div class="hint">단어만 입력하면 <code>*단어*.*</code>로 자동 보정됩니다. 와일드카드 직접 사용 가능.</div>
+              <label class="muted">포함 패턴 1 (필수)</label>
+              <input type="text" name="pattern" placeholder="나는SOLO | I Am Solo (|로 OR 조건)" required>
+              <div class="hint">| 기호로 여러 패턴을 OR 조건으로 지정 가능</div>
             </div>
             <div class="field" style="flex:1;">
-              <label class="muted">Pattern2 (선택)</label>
-              <input type="text" name="pattern2" placeholder="두 번째 포함 패턴">
-              <div class="hint">추가 조건 (AND). 비워두면 미사용.</div>
+              <label class="muted">포함 패턴 1-OR (선택)</label>
+              <input type="text" name="pattern_or" placeholder="추가 포함 패턴">
+              <div class="hint">포함 패턴 1의 OR 조건</div>
+            </div>
+            <div class="field" style="flex:1;">
+              <label class="muted">포함 패턴 2 (선택)</label>
+              <input type="text" name="pattern2" placeholder="두 번째 포함 조건 (|로 OR 조건)">
+              <div class="hint">첫 번째 조건과 AND로 결합</div>
+            </div>
+            <div class="field" style="flex:1;">
+              <label class="muted">포함 패턴 2-OR (선택)</label>
+              <input type="text" name="pattern2_or" placeholder="패턴 2의 OR 조건">
+              <div class="hint">패턴2와의 OR 조건</div>
             </div>
             <div class="field" style="flex:1;">
               <label class="muted">제외 패턴 (선택)</label>
-              <input type="text" name="exclude_pattern" placeholder="제외할 패턴">
-              <div class="hint">제외 조건 (NOT). 비워두면 미사용.</div>
+              <input type="text" name="exclude_pattern" placeholder="이 패턴이 있으면 제외 (|로 OR 조건)">
+              <div class="hint">제외할 파일 패턴</div>
             </div>
             <div class="field" style="flex:1;">
               <label class="muted">대상 하위 폴더</label>
@@ -1103,7 +1113,11 @@
                 <tr>
                   <td>{{ r._idx }}</td>
                   <td>{{ r.category }}</td>
-                  <td><code>{{ r.pattern }}</code></td>
+                  <td>
+                    <code>{{ r.pattern }}{% if r.pattern_or %} | {{ r.pattern_or }}{% endif %}</code>
+                    {% if r.pattern2 %}<br/><small style="color:#666;">AND: <code>{{ r.pattern2 }}{% if r.pattern2_or %} | {{ r.pattern2_or }}{% endif %}</code></small>{% endif %}
+                    {% if r.exclude_pattern %}<br/><small style="color:#d9534f;">NOT: <code>{{ r.exclude_pattern }}</code></small>{% endif %}
+                  </td>
                   <td>
                     {{ r.subfolder }}
                     {% if r.release %}
@@ -1154,13 +1168,23 @@
                         </div>
                         <div class="field">
                           <label class="muted">패턴</label>
-                          <input type="text" name="pattern" value="{{ r.pattern }}" placeholder="예: 전현무계획" required>
-                          <div class="hint">단어만 입력해도 자동으로 <code>*단어*.*</code>로 처리됩니다.</div>
+                          <input type="text" name="pattern" value="{{ r.pattern }}" placeholder="나는SOLO | I Am Solo (|로 OR 조건)" required>
+                          <div class="hint">| 기호로 여러 패턴을 OR 조건으로 지정 가능</div>
+                        </div>
+                        <div class="field">
+                          <label class="muted">Pattern OR (선택)</label>
+                          <input type="text" name="pattern_or" value="{{ r.pattern_or or '' }}" placeholder="추가 포함 패턴">
+                          <div class="hint">포함 패턴의 OR 조건</div>
                         </div>
                         <div class="field">
                           <label class="muted">Pattern2 (선택)</label>
-                          <input type="text" name="pattern2" value="{{ r.pattern2 or '' }}" placeholder="두 번째 포함 패턴">
-                          <div class="hint">추가 조건 (AND)</div>
+                          <input type="text" name="pattern2" value="{{ r.pattern2 or '' }}" placeholder="두 번째 포함 조건">
+                          <div class="hint">첫 번째 조건과 AND로 결합</div>
+                        </div>
+                        <div class="field">
+                          <label class="muted">Pattern2 OR (선택)</label>
+                          <input type="text" name="pattern2_or" value="{{ r.pattern2_or or '' }}" placeholder="패턴 2의 OR 조건">
+                          <div class="hint">패턴2와의 OR 조건</div>
                         </div>
                         <div class="field">
                           <label class="muted">제외 패턴 (선택)</label>

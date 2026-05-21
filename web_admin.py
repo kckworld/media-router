@@ -47,18 +47,6 @@ def authed(req):
         return True
     return redirect("/login")
 
-def normalize_pattern(p: str) -> str:
-    if not p: return p
-    p = p.strip().strip('"').strip("'")
-    has_wild = ('*' in p) or ('?' in p)
-    has_ext_dot = '.' in p
-    if not has_wild:
-        return f"*{p}*.*"
-    if not has_ext_dot and not p.endswith(".*"):
-        return p + ".*"
-    return p
-
-
 def split_title_and_year(name: str) -> tuple[str, int | None]:
     cleaned = (name or "").strip()
     m = re.search(r"\((\d{4})\)\s*$", cleaned)
@@ -542,11 +530,15 @@ def add():
         return auth
     cfg = load_cfg()
     pat_raw = request.form.get("pattern", "").strip()
-    pattern = normalize_pattern(pat_raw)
+    pattern = pat_raw
+    pat_or_raw = request.form.get("pattern_or", "").strip()
+    pattern_or = pat_or_raw if pat_or_raw else None
     pat2_raw = request.form.get("pattern2", "").strip()
-    pattern2 = normalize_pattern(pat2_raw) if pat2_raw else None
+    pattern2 = pat2_raw if pat2_raw else None
+    pat2_or_raw = request.form.get("pattern2_or", "").strip()
+    pattern2_or = pat2_or_raw if pat2_or_raw else None
     exclude_raw = request.form.get("exclude_pattern", "").strip()
-    exclude_pattern = normalize_pattern(exclude_raw) if exclude_raw else None
+    exclude_pattern = exclude_raw if exclude_raw else None
     sel_days = request.form.getlist("days")
 
     rule = {
@@ -558,8 +550,12 @@ def add():
         "updated_map": {d: "N" for d in sel_days if d in WEEKDAYS},
     }
     
+    if pattern_or:
+        rule["pattern_or"] = pattern_or
     if pattern2:
         rule["pattern2"] = pattern2
+    if pattern2_or:
+        rule["pattern2_or"] = pattern2_or
     if exclude_pattern:
         rule["exclude_pattern"] = exclude_pattern
     
@@ -705,11 +701,15 @@ def edit():
         old_rule = next((r for r in cfg.get("rules", []) if r.get("id") == idx), None)
         if old_rule is not None:
             pat_raw = request.form.get("pattern", "").strip()
-            pattern = normalize_pattern(pat_raw)
+            pattern = pat_raw
+            pat_or_raw = request.form.get("pattern_or", "").strip()
+            pattern_or = pat_or_raw if pat_or_raw else None
             pat2_raw = request.form.get("pattern2", "").strip()
-            pattern2 = normalize_pattern(pat2_raw) if pat2_raw else None
+            pattern2 = pat2_raw if pat2_raw else None
+            pat2_or_raw = request.form.get("pattern2_or", "").strip()
+            pattern2_or = pat2_or_raw if pat2_or_raw else None
             exclude_raw = request.form.get("exclude_pattern", "").strip()
-            exclude_pattern = normalize_pattern(exclude_raw) if exclude_raw else None
+            exclude_pattern = exclude_raw if exclude_raw else None
             sel_days = request.form.getlist("days")
 
             new_rule = {
@@ -721,8 +721,12 @@ def edit():
                 "updated_map": {d: "N" for d in sel_days if d in WEEKDAYS},
             }
             
+            if pattern_or:
+                new_rule["pattern_or"] = pattern_or
             if pattern2:
                 new_rule["pattern2"] = pattern2
+            if pattern2_or:
+                new_rule["pattern2_or"] = pattern2_or
             if exclude_pattern:
                 new_rule["exclude_pattern"] = exclude_pattern
             

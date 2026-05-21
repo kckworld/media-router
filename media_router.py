@@ -30,17 +30,6 @@ def log(msg: str) -> None:
     except Exception:
         pass
 
-def normalize_pattern(p: str) -> str:
-    if not p: return p
-    p = p.strip().strip('"').strip("'")
-    has_wild = ('*' in p) or ('?' in p)
-    has_ext_dot = '.' in p
-    if not has_wild:
-        return f"*{p}*.*"
-    if not has_ext_dot and not p.endswith(".*"):
-        return p + ".*"
-    return p
-
 def extract_episode_number(filename: str):
     """파일명에서 에피소드 번호 추출 (E01, E1, EP01, S01E05, 01화 등)"""
     # S01E05, S1E5 같은 패턴 (E 뒤 숫자 추출)
@@ -107,16 +96,50 @@ def clean_source(root: Path, cleanup_cfg: Dict) -> None:
                 try: p.unlink(); log(f"Removed file: {p}")
                 except Exception as e: log(f"Remove file fail: {p} - {e}")
 
-def find_matches(source_dir: Path, pattern: str, pattern2: str = None, exclude_pattern: str = None) -> Iterable[Path]:
+def matches_any(filename: str, pattern_str: str) -> bool:
+    """Check if filename matches any pattern separated by |."""
+    if not pattern_str:
+        return False
+    return any(p.strip() in filename for p in pattern_str.split("|") if p.strip())
+
+def find_matches(source_dir: Path, pattern: str, pattern_or: str = None, pattern2: str = None, pattern2_or: str = None, exclude_pattern: str = None) -> Iterable[Path]:
+    """Find files matching the pattern conditions.
+    
+    Conditions:
+    - match1: pattern OR pattern_or
+    - match2: pattern2 OR pattern2_or (required if either is set)
+    - excluded: exclude_pattern (must NOT match)
+    
+    Final match: match1 AND match2 AND NOT excluded
+    """
     for p in source_dir.rglob("*"):
         if not p.is_file():
             continue
-        if not fnmatch.fnmatch(p.name, pattern):
+        
+        filename = p.name
+        
+        # Pattern 1: Required match (pattern or pattern_or)
+        match1 = matches_any(filename, pattern)
+        if pattern_or:
+            match1 = match1 or matches_any(filename, pattern_or)
+        
+        if not match1:
             continue
-        if pattern2 and not fnmatch.fnmatch(p.name, pattern2):
+        
+        # Pattern 2: Optional secondary match (if pattern2 or pattern2_or is set)
+        match2 = True
+        if pattern2 or pattern2_or:
+            match2 = matches_any(filename, pattern2)
+            if pattern2_or:
+                match2 = match2 or matches_any(filename, pattern2_or)
+        
+        if not match2:
             continue
-        if exclude_pattern and fnmatch.fnmatch(p.name, exclude_pattern):
+        
+        # Exclude pattern: Must NOT match
+        if exclude_pattern and matches_any(filename, exclude_pattern):
             continue
+        
         yield p
 
 def parse_mode(val, default: int) -> int:
@@ -278,7 +301,9 @@ def main() -> None:
         for r in rules:
             category = (r.get("category") or "").strip()
             pattern  = (r.get("pattern")  or "").strip()
+            pattern_or = (r.get("pattern_or") or "").strip() or None
             pattern2 = (r.get("pattern2") or "").strip() or None
+            pattern2_or = (r.get("pattern2_or") or "").strip() or None
             exclude_pattern = (r.get("exclude_pattern") or "").strip() or None
             sub      = (r.get("subfolder") or "").strip()
             if not (category and pattern and sub):
@@ -289,7 +314,7 @@ def main() -> None:
                 continue
             target_dir = Path(base_dir) / sub
 
-            for f in find_matches(src_root, pattern, pattern2, exclude_pattern):
+            for f in find_matches(src_root, pattern, pattern_or, pattern2, pattern2_or, exclude_pattern):
                 try:
                     try:
                         f.relative_to(target_dir)
