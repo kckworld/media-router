@@ -323,6 +323,40 @@ def main() -> None:
                     except ValueError:
                         pass
 
+                    # 예능: 동일 파일명이 이미 있으면 작은 파일만 남긴다.
+                    skip_move_keep_existing = False
+                    if category == "예능":
+                        existing_dst = target_dir / f.name
+                        if existing_dst.exists() and existing_dst.is_file():
+                            try:
+                                src_size = f.stat().st_size
+                                dst_size = existing_dst.stat().st_size
+                                if src_size > dst_size:
+                                    # 들어온 파일이 더 크면 들어온 파일 삭제
+                                    f.unlink()
+                                    skip_move_keep_existing = True
+                                    log(f"DUPLICATE_SMALLER_KEPT: kept {existing_dst} ({dst_size}B), removed {f} ({src_size}B)")
+                                elif src_size < dst_size:
+                                    # 기존 파일이 더 크면 기존 파일 삭제 후 들어온 파일 이동
+                                    existing_dst.unlink()
+                                    log(f"DUPLICATE_SMALLER_KEPT: kept incoming {f} ({src_size}B), removed {existing_dst} ({dst_size}B)")
+                                else:
+                                    # 크기가 같으면 기존 파일 유지, 들어온 파일 삭제
+                                    f.unlink()
+                                    skip_move_keep_existing = True
+                                    log(f"DUPLICATE_SAME_SIZE: kept {existing_dst}, removed {f}")
+                            except Exception as e:
+                                log(f"Duplicate size-compare fail: {f} vs {existing_dst} ({e})")
+
+                    if skip_move_keep_existing:
+                        tg_send(cfg, f"중복 정리: {f.name} (더 작은 기존 파일 유지)")
+                        _ensure_rule_updated_map(r)
+                        mark_day = choose_mark_day_by_order(r)
+                        if mark_day and r["updated_map"].get(mark_day) != "Y":
+                            r["updated_map"][mark_day] = "Y"
+                            changed = True
+                        continue
+
                     # 드라마 파일명에 .END 같은 꼬리 토큰이 있으면 Plex 스캔 호환 형태로 정리
                     if category == "드라마":
                         sanitized = sanitize_filename_for_plex(f.name)

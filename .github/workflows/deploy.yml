@@ -49,6 +49,6 @@ jobs:
               StrictHostKeyChecking no
           EOF
 
-      - name: Pull and restart on NAS
+      - name: Pull code and restart on NAS
         run: |
-          ssh ssh.kckworld.com "cd /volume1/docker/media-router && sudo /usr/local/bin/docker compose pull media-router && sudo /usr/local/bin/docker compose up -d media-router"
+          ssh ssh.kckworld.com "cd /volume1/docker/media-router && git fetch origin && git checkout main && git pull --ff-only && sudo /usr/local/bin/docker compose pull media-router && sudo /usr/local/bin/docker compose up -d media-router"
