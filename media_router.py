@@ -23,7 +23,7 @@ def current_localtime() -> datetime:
 
 def log(msg: str) -> None:
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{ts}] {msg}"
+    line = f"[media_router {ts}] {msg}"
     print(line)
     try:
         with LOGFILE.open("a", encoding="utf-8") as f:
