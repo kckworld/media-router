@@ -198,6 +198,13 @@ def tmdb_search_info(query: str) -> dict:
     except Exception:
         return {"success": False, "message": "TMDB 처리 중 오류가 발생했습니다."}
 
+def safe_int(value, default):
+    """빈 문자열/None/숫자가 아닌 값이 와도 죽지 않고 default로 대체"""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
 def rule_key(rule):
     raw = f"{(rule.get('category') or '').strip()}|" \
           f"{(rule.get('pattern') or '').strip()}|" \
@@ -638,55 +645,61 @@ def settings():
         return auth
     cfg = load_cfg()
     saved = False
+    error = None
     if request.method == "POST":
-        # TMDB API Key
-        tmdb_key = request.form.get("tmdb_api_key", "").strip()
-        clear_tmdb_key = request.form.get("clear_tmdb_key") == "1"
-        if tmdb_key:
-            cfg["tmdb_api_key"] = tmdb_key
-        elif clear_tmdb_key and "tmdb_api_key" in cfg:
-            del cfg["tmdb_api_key"]
-        
-        # telegram (빈 값이면 기존 저장값 유지)
-        old_telegram = cfg.get("telegram") or {}
-        bot_token_input = request.form.get("bot_token", "").strip()
-        chat_id_input = request.form.get("chat_id", "").strip()
-        cfg["telegram"] = {
-            "bot_token": bot_token_input if bot_token_input else old_telegram.get("bot_token", ""),
-            "chat_id": chat_id_input if chat_id_input else old_telegram.get("chat_id", ""),
-            "enabled": request.form.get("tg_enabled") == "1",
-        }
-        # paths.sources
-        sources_raw = request.form.get("sources", "")
-        sources = [s.strip() for s in sources_raw.splitlines() if s.strip()]
-        cfg.setdefault("paths", {})
-        cfg["paths"]["sources"] = sources
-        # base_paths
-        base_paths = {}
-        for cat in CATEGORIES:
-            v = request.form.get(f"base_{cat}", "").strip()
-            if v:
-                base_paths[cat] = v
-        cfg["base_paths"] = base_paths
-        # ownership
-        cfg["ownership"] = {
-            "apply": request.form.get("own_apply") == "1",
-            "user": request.form.get("own_user", "").strip(),
-            "group": request.form.get("own_group", "").strip(),
-            "file_mode": int(request.form.get("own_file_mode", "664")),
-            "dir_mode": int(request.form.get("own_dir_mode", "775")),
-            "setgid_dirs": request.form.get("own_setgid") == "1",
-            "enforce_inherit": request.form.get("own_enforce") == "1",
-        }
-        save_cfg(cfg)
-        saved = True
+        try:
+            # TMDB API Key
+            tmdb_key = request.form.get("tmdb_api_key", "").strip()
+            clear_tmdb_key = request.form.get("clear_tmdb_key") == "1"
+            if tmdb_key:
+                cfg["tmdb_api_key"] = tmdb_key
+            elif clear_tmdb_key and "tmdb_api_key" in cfg:
+                del cfg["tmdb_api_key"]
+
+            # telegram (빈 값이면 기존 저장값 유지)
+            old_telegram = cfg.get("telegram") or {}
+            bot_token_input = request.form.get("bot_token", "").strip()
+            chat_id_input = request.form.get("chat_id", "").strip()
+            cfg["telegram"] = {
+                "bot_token": bot_token_input if bot_token_input else old_telegram.get("bot_token", ""),
+                "chat_id": chat_id_input if chat_id_input else old_telegram.get("chat_id", ""),
+                "enabled": request.form.get("tg_enabled") == "1",
+            }
+            # paths.sources
+            sources_raw = request.form.get("sources", "")
+            sources = [s.strip() for s in sources_raw.splitlines() if s.strip()]
+            cfg.setdefault("paths", {})
+            cfg["paths"]["sources"] = sources
+            # base_paths
+            base_paths = {}
+            for cat in CATEGORIES:
+                v = request.form.get(f"base_{cat}", "").strip()
+                if v:
+                    base_paths[cat] = v
+            cfg["base_paths"] = base_paths
+            # ownership (빈 값/비숫자 입력이 와도 기존 값 또는 기본값으로 안전하게 대체)
+            old_ownership = cfg.get("ownership") or {}
+            cfg["ownership"] = {
+                "apply": request.form.get("own_apply") == "1",
+                "user": request.form.get("own_user", "").strip(),
+                "group": request.form.get("own_group", "").strip(),
+                "file_mode": safe_int(request.form.get("own_file_mode"), old_ownership.get("file_mode", 664)),
+                "dir_mode": safe_int(request.form.get("own_dir_mode"), old_ownership.get("dir_mode", 775)),
+                "setgid_dirs": request.form.get("own_setgid") == "1",
+                "enforce_inherit": request.form.get("own_enforce") == "1",
+            }
+            save_cfg(cfg)
+            saved = True
+        except Exception as e:
+            app.logger.exception("설정 저장 중 오류")
+            error = str(e)
     return render_template("index.html",
         authed=True, cfg=cfg, weekdays=WEEKDAYS,
         selected_day="", selected_cat="", hide_no_days="1",
         rules=[], mode="settings",
         today_name=WEEKDAYS[current_weekday()], yest_name=WEEKDAYS[(current_weekday()-1)%7],
         two_days_ago_name=WEEKDAYS[(current_weekday()-2)%7], categories=CATEGORIES,
-        sort_key="default", sort_dir="asc", edit_id=None, saved=saved)
+        sort_key="default", sort_dir="asc", edit_id=None, saved=saved, error=error)
 
 @app.route("/edit", methods=["GET","POST"])
 def edit():

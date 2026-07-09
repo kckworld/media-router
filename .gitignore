@@ -12,3 +12,4 @@ __pycache__/
 media_cron.sh
 restart_web_admin.sh
 RESTART_GUIDE.md
+.env

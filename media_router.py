@@ -116,6 +116,10 @@ def find_matches(source_dir: Path, pattern: str, pattern_or: str = None, pattern
     for p in source_dir.rglob("*"):
         if not p.is_file():
             continue
+
+        INCOMPLETE_EXTENSIONS = {'.!qb', '.part', '.crdownload', '.tmp'}
+        if p.suffix.lower() in INCOMPLETE_EXTENSIONS:
+            continue
         
         filename = p.name
         
@@ -425,9 +429,9 @@ def main() -> None:
     
     if remaining_videos:
         if len(remaining_videos) <= 20:
-            msg_lines = [f"🎥 원본 폴더에 남은 동영상 파일 ({len(remaining_videos)}개):"] + [f"• {f.name}" for f in remaining_videos]
+            msg_lines = [f"다운로드 폴더에 남은 동영상 파일 ({len(remaining_videos)}개):"] + [f"• {f.name}" for f in remaining_videos]
         else:
-            msg_lines = [f"🎥 원본 폴더에 남은 동영상 파일 ({len(remaining_videos)}개):"]
+            msg_lines = [f"다운로드 폴더에 남은 동영상 파일 ({len(remaining_videos)}개):"]
             for f in remaining_videos[:10]:
                 msg_lines.append(f"• {f.name}")
             msg_lines.append(f"... 외 {len(remaining_videos) - 10}개")

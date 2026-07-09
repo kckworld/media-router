@@ -1229,6 +1229,9 @@
       {% if saved %}
         <div style="background:var(--success-light); color:var(--success-hover); border:1px solid #6ee7b7; border-radius:8px; padding:12px 16px; margin-bottom:20px; font-weight:600;">✓ 저장되었습니다.</div>
       {% endif %}
+      {% if error %}
+        <div style="background:var(--danger-light); color:var(--danger-hover); border:1px solid #fca5a5; border-radius:8px; padding:12px 16px; margin-bottom:20px; font-weight:600;">✗ 저장 실패: {{ error }}</div>
+      {% endif %}
       <form method="post" action="/settings">
 
         <h3 style="margin:20px 0 10px; font-size:15px;">🎬 TMDB API 설정</h3>
