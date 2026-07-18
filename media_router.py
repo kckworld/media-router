@@ -105,14 +105,24 @@ def matches_any(filename: str, pattern_str: str) -> bool:
 
 def find_matches(source_dir: Path, pattern: str, pattern_or: str = None, pattern2: str = None, pattern2_or: str = None, exclude_pattern: str = None) -> Iterable[Path]:
     """Find files matching the pattern conditions.
-    
+
     Conditions:
-    - match1: pattern OR pattern_or
-    - match2: pattern2 OR pattern2_or (required if either is set)
-    - excluded: exclude_pattern (must NOT match)
-    
-    Final match: match1 AND match2 AND NOT excluded
+    - group A: pattern AND pattern2 (pattern2 optional)
+    - group B: pattern_or AND pattern2_or (both optional; group inactive if empty)
+    - included: group A OR group B
+    - excluded: exclude_pattern (must NOT match, applies regardless of group)
+
+    Final match: (group A OR group B) AND NOT excluded
     """
+    def and_group_match(filename: str, a: str, b: str) -> bool:
+        if not a and not b:
+            return False
+        if a and not matches_any(filename, a):
+            return False
+        if b and not matches_any(filename, b):
+            return False
+        return True
+
     for p in source_dir.rglob("*"):
         if not p.is_file():
             continue
@@ -120,31 +130,18 @@ def find_matches(source_dir: Path, pattern: str, pattern_or: str = None, pattern
         INCOMPLETE_EXTENSIONS = {'.!qb', '.part', '.crdownload', '.tmp'}
         if p.suffix.lower() in INCOMPLETE_EXTENSIONS:
             continue
-        
+
         filename = p.name
-        
-        # Pattern 1: Required match (pattern or pattern_or)
-        match1 = matches_any(filename, pattern)
-        if pattern_or:
-            match1 = match1 or matches_any(filename, pattern_or)
-        
-        if not match1:
+
+        group_a = and_group_match(filename, pattern, pattern2)
+        group_b = and_group_match(filename, pattern_or, pattern2_or)
+        if not (group_a or group_b):
             continue
-        
-        # Pattern 2: Optional secondary match (if pattern2 or pattern2_or is set)
-        match2 = True
-        if pattern2 or pattern2_or:
-            match2 = matches_any(filename, pattern2)
-            if pattern2_or:
-                match2 = match2 or matches_any(filename, pattern2_or)
-        
-        if not match2:
-            continue
-        
-        # Exclude pattern: Must NOT match
+
+        # Exclude pattern: Must NOT match, applies to the whole result
         if exclude_pattern and matches_any(filename, exclude_pattern):
             continue
-        
+
         yield p
 
 def parse_mode(val, default: int) -> int:

@@ -506,6 +506,42 @@
       color: var(--muted);
       margin-top: 4px;
     }
+
+    /* AND로 묶이는 패턴 두 칸을 하나로 이어붙여 보여줌 */
+    .pattern-and-group {
+      display: flex;
+      width: 100%;
+    }
+
+    .pattern-and-group input[type=text] {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .pattern-and-group input[type=text]:not(:first-child) {
+      border-left: none;
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+    }
+
+    .pattern-and-group input[type=text]:not(:last-child) {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+
+    .pattern-and-group input[type=text]:focus {
+      position: relative;
+      z-index: 1;
+    }
+
+    .pattern-or-divider {
+      align-self: flex-end;
+      padding-bottom: 13px;
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--accent);
+      white-space: nowrap;
+    }
     
     code {
       background: #f3f4f6;
@@ -708,6 +744,7 @@
   </style>
 </head>
 <body>
+  {% macro pattern_display(r) %}<code>{{ r.pattern }}{% if r.pattern2 %} + {{ r.pattern2 }}{% endif %}</code>{% if r.pattern_or %} <span class="muted" style="font-size:0.85em; font-weight:700;">또는</span> <code>{{ r.pattern_or }}{% if r.pattern2_or %} + {{ r.pattern2_or }}{% endif %}</code>{% endif %}{% if r.exclude_pattern %} <span style="background:#fef2f2; color:#ef4444; padding:2px 6px; border-radius:3px; font-size:0.85em; white-space:nowrap;">✕{{ r.exclude_pattern }}</span>{% endif %}{% endmacro %}
   <header>
     <div>
       <h1>Media Router Web Admin</h1>
@@ -822,7 +859,7 @@
                     <div class="card-line-main">
                       <span class="badge{% if mode == 'check' %}{% if r.day == two_days_ago_name %} day-two-days-ago{% elif r.day == yest_name %} day-yesterday{% elif r.day == today_name %} day-today{% endif %}{% endif %}">{{ r.day }}</span>
                       <span>{{ r.category }}</span>
-                      <code>{{ r.pattern }}{% if r.pattern_or %} | {{ r.pattern_or }}{% endif %}</code>{% if r.pattern2 %} <span style="background:#eff6ff; color:#3b82f6; padding:2px 6px; border-radius:3px; font-size:0.85em; white-space:nowrap;">＋{{ r.pattern2 }}{% if r.pattern2_or %} | {{ r.pattern2_or }}{% endif %}</span>{% endif %}{% if r.exclude_pattern %} <span style="background:#fef2f2; color:#ef4444; padding:2px 6px; border-radius:3px; font-size:0.85em; white-space:nowrap;">✕{{ r.exclude_pattern }}</span>{% endif %}
+                      {{ pattern_display(r) }}
                       <span>/</span>
                       <a href="#" onclick="searchNamu('{{ r.subfolder }}'); return false;" class="subfolder-link">{{ r.subfolder }}</a>
                       {% if r.release %}
@@ -873,7 +910,7 @@
                     <td><input type="checkbox" name="rkday" value="{{ r.rkday }}" style="transform: scale(1.4); cursor: pointer; width: 18px; height: 18px;"></td>
                     <td><span class="badge{% if mode == 'check' %}{% if r.day == two_days_ago_name %} day-two-days-ago{% elif r.day == yest_name %} day-yesterday{% elif r.day == today_name %} day-today{% endif %}{% endif %}">{{ r.day }}</span></td>
                     <td>{{ r.category }}</td>
-                    <td><code>{{ r.pattern }}{% if r.pattern_or %} | {{ r.pattern_or }}{% endif %}</code>{% if r.pattern2 %} <span style="background:#eff6ff; color:#3b82f6; padding:2px 6px; border-radius:3px; font-size:0.85em; white-space:nowrap;">＋{{ r.pattern2 }}{% if r.pattern2_or %} | {{ r.pattern2_or }}{% endif %}</span>{% endif %}{% if r.exclude_pattern %} <span style="background:#fef2f2; color:#ef4444; padding:2px 6px; border-radius:3px; font-size:0.85em; white-space:nowrap;">✕{{ r.exclude_pattern }}</span>{% endif %}</td>
+                    <td>{{ pattern_display(r) }}</td>
                     <td>
                       <a href="#" onclick="searchNamu('{{ r.subfolder }}'); return false;" class="subfolder-link">{{ r.subfolder }}</a>
                       {% if r.release %}
@@ -942,30 +979,27 @@
               </select>
               <div class="hint" style="visibility: hidden; height: 32px;">placeholder</div>
             </div>
-            <div class="field" style="flex:1;">
-              <label class="muted">포함 패턴 1 (필수)</label>
-              <input type="text" name="pattern" placeholder="나는SOLO | I Am Solo (|로 OR 조건)" required>
-              <div class="hint">| 기호로 여러 패턴을 OR 조건으로 지정 가능</div>
+            <div class="field" style="flex:2; min-width:260px;">
+              <label class="muted">포함 패턴 A (필수, AND)</label>
+              <div class="pattern-and-group">
+                <input type="text" name="pattern" placeholder="예: 나는" required>
+                <input type="text" name="pattern2" placeholder="+ 솔로 (선택)">
+              </div>
+              <div class="hint">두 칸을 모두 만족해야 매칭 (두번째 칸은 비워도 됨)</div>
+            </div>
+            <div class="field pattern-or-divider" style="flex:0 0 auto;">또는</div>
+            <div class="field" style="flex:2; min-width:260px;">
+              <label class="muted">포함 패턴 B (선택, AND)</label>
+              <div class="pattern-and-group">
+                <input type="text" name="pattern_or" placeholder="예: I AM">
+                <input type="text" name="pattern2_or" placeholder="+ SOLO (선택)">
+              </div>
+              <div class="hint">A를 만족 못해도 B를 만족하면 매칭</div>
             </div>
             <div class="field" style="flex:1;">
-              <label class="muted">포함 패턴 1-OR (선택)</label>
-              <input type="text" name="pattern_or" placeholder="추가 포함 패턴">
-              <div class="hint">포함 패턴 1의 OR 조건</div>
-            </div>
-            <div class="field" style="flex:1;">
-              <label class="muted">포함 패턴 2 (선택)</label>
-              <input type="text" name="pattern2" placeholder="두 번째 포함 조건 (|로 OR 조건)">
-              <div class="hint">첫 번째 조건과 AND로 결합</div>
-            </div>
-            <div class="field" style="flex:1;">
-              <label class="muted">포함 패턴 2-OR (선택)</label>
-              <input type="text" name="pattern2_or" placeholder="패턴 2의 OR 조건">
-              <div class="hint">패턴2와의 OR 조건</div>
-            </div>
-            <div class="field" style="flex:1;">
-              <label class="muted">제외 패턴 (선택)</label>
-              <input type="text" name="exclude_pattern" placeholder="이 패턴이 있으면 제외 (|로 OR 조건)">
-              <div class="hint">제외할 파일 패턴</div>
+              <label class="muted">제외 패턴 (전체 적용)</label>
+              <input type="text" name="exclude_pattern" placeholder="이 패턴이 있으면 제외">
+              <div class="hint">A/B 결과와 무관하게 항상 제외</div>
             </div>
             <div class="field" style="flex:1;">
               <label class="muted">대상 하위 폴더</label>
@@ -986,17 +1020,22 @@
               {% endfor %}
             </div>
           </div>
-          <div class="field" id="total_episodes_field" style="display:none;">
+          <div class="field" id="total_episodes_field">
             <label class="muted">전체 에피소드 수 (드라마만)</label>
             <input type="number" name="total_episodes" min="1" placeholder="예: 16" id="total_episodes_input">
             <div class="hint">드라마 등록 시 전체 에피소드 수를 입력하세요. (TMDB에서 자동으로 입력되지 않으면 수동 입력)</div>
           </div>
           <button class="btn primary" type="submit">추가</button>
           <script>
-            document.querySelector('select[name="category"]').addEventListener('change', function() {
+            (function() {
+              var categorySelect = document.querySelector('select[name="category"]');
               var field = document.getElementById('total_episodes_field');
-              field.style.display = (this.value === '드라마') ? 'block' : 'none';
-            });
+              function syncEpisodeField() {
+                field.style.display = (categorySelect.value === '드라마') ? 'block' : 'none';
+              }
+              categorySelect.addEventListener('change', syncEpisodeField);
+              syncEpisodeField();
+            })();
             
             function searchTMDB() {
               var query = document.getElementById('tmdb_search_input').value.trim();
@@ -1114,7 +1153,7 @@
                   <td>{{ r._idx }}</td>
                   <td>{{ r.category }}</td>
                   <td>
-                    <code>{{ r.pattern }}{% if r.pattern_or %} | {{ r.pattern_or }}{% endif %}</code>{% if r.pattern2 %} <span style="background:#eff6ff; color:#3b82f6; padding:2px 6px; border-radius:3px; font-size:0.85em; white-space:nowrap;">＋{{ r.pattern2 }}{% if r.pattern2_or %} | {{ r.pattern2_or }}{% endif %}</span>{% endif %}{% if r.exclude_pattern %} <span style="background:#fef2f2; color:#ef4444; padding:2px 6px; border-radius:3px; font-size:0.85em; white-space:nowrap;">✕{{ r.exclude_pattern }}</span>{% endif %}
+                    {{ pattern_display(r) }}
                   </td>
                   <td>
                     {{ r.subfolder }}
@@ -1164,30 +1203,25 @@
                             {% endfor %}
                           </select>
                         </div>
-                        <div class="field">
-                          <label class="muted">패턴</label>
-                          <input type="text" name="pattern" value="{{ r.pattern }}" placeholder="나는SOLO | I Am Solo (|로 OR 조건)" required>
-                          <div class="hint">| 기호로 여러 패턴을 OR 조건으로 지정 가능</div>
+                        <div class="field" style="flex:2; min-width:220px;">
+                          <label class="muted">포함 패턴 A (필수, AND)</label>
+                          <div class="pattern-and-group">
+                            <input type="text" name="pattern" value="{{ r.pattern }}" placeholder="예: 나는" required>
+                            <input type="text" name="pattern2" value="{{ r.pattern2 or '' }}" placeholder="+ 솔로 (선택)">
+                          </div>
+                        </div>
+                        <div class="field pattern-or-divider" style="flex:0 0 auto;">또는</div>
+                        <div class="field" style="flex:2; min-width:220px;">
+                          <label class="muted">포함 패턴 B (선택, AND)</label>
+                          <div class="pattern-and-group">
+                            <input type="text" name="pattern_or" value="{{ r.pattern_or or '' }}" placeholder="예: I AM">
+                            <input type="text" name="pattern2_or" value="{{ r.pattern2_or or '' }}" placeholder="+ SOLO (선택)">
+                          </div>
                         </div>
                         <div class="field">
-                          <label class="muted">Pattern OR (선택)</label>
-                          <input type="text" name="pattern_or" value="{{ r.pattern_or or '' }}" placeholder="추가 포함 패턴">
-                          <div class="hint">포함 패턴의 OR 조건</div>
-                        </div>
-                        <div class="field">
-                          <label class="muted">Pattern2 (선택)</label>
-                          <input type="text" name="pattern2" value="{{ r.pattern2 or '' }}" placeholder="두 번째 포함 조건">
-                          <div class="hint">첫 번째 조건과 AND로 결합</div>
-                        </div>
-                        <div class="field">
-                          <label class="muted">Pattern2 OR (선택)</label>
-                          <input type="text" name="pattern2_or" value="{{ r.pattern2_or or '' }}" placeholder="패턴 2의 OR 조건">
-                          <div class="hint">패턴2와의 OR 조건</div>
-                        </div>
-                        <div class="field">
-                          <label class="muted">제외 패턴 (선택)</label>
+                          <label class="muted">제외 패턴 (전체 적용)</label>
                           <input type="text" name="exclude_pattern" value="{{ r.exclude_pattern or '' }}" placeholder="제외할 패턴">
-                          <div class="hint">제외 조건 (NOT)</div>
+                          <div class="hint">A/B 결과와 무관하게 항상 제외</div>
                         </div>
                         <div class="field">
                           <label class="muted">대상 하위 폴더</label>
