@@ -37,14 +37,27 @@ CREATE TABLE IF NOT EXISTS rules (
 """
 
 _initialized = False
+_connection: sqlite3.Connection | None = None
 
 
 def _conn() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA journal_mode=WAL")
-    return c
+    """Return a shared, persistent connection.
+
+    Reused across calls instead of opening/closing per request: on this NAS's
+    btrfs volume, closing the last WAL connection triggers an auto-checkpoint
+    (fsync-bound, observed 1-10s+), so opening a fresh connection for every
+    load/save made every save operation pay that cost. synchronous=NORMAL
+    avoids fsync on ordinary commits in WAL mode (only checkpoints need it).
+    """
+    global _connection
+    if _connection is None:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        c = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA synchronous=NORMAL")
+        _connection = c
+    return _connection
 
 
 def init_db() -> None:
@@ -52,17 +65,14 @@ def init_db() -> None:
     if _initialized:
         return
     c = _conn()
-    try:
-        c.executescript(_SCHEMA)
-        c.commit()
-        # 기존 DB에 pattern2, exclude_pattern 컬럼 추가 (마이그레이션)
-        _migrate_add_pattern2_exclude(c)
-        row_count = c.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
-        cfg_count = c.execute("SELECT COUNT(*) FROM config").fetchone()[0]
-        if row_count == 0 and cfg_count == 0:
-            _try_migrate(c)
-    finally:
-        c.close()
+    c.executescript(_SCHEMA)
+    c.commit()
+    # 기존 DB에 pattern2, exclude_pattern 컬럼 추가 (마이그레이션)
+    _migrate_add_pattern2_exclude(c)
+    row_count = c.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
+    cfg_count = c.execute("SELECT COUNT(*) FROM config").fetchone()[0]
+    if row_count == 0 and cfg_count == 0:
+        _try_migrate(c)
     _initialized = True
 
 
@@ -148,148 +158,142 @@ def _ensure_rule_updated_map(rule: Dict) -> None:
 def load_cfg() -> Dict:
     init_db()
     c = _conn()
-    try:
-        cfg: Dict[str, Any] = {}
-        for row in c.execute("SELECT key, value FROM config"):
-            cfg[row["key"]] = json.loads(row["value"])
+    cfg: Dict[str, Any] = {}
+    for row in c.execute("SELECT key, value FROM config"):
+        cfg[row["key"]] = json.loads(row["value"])
 
-        cfg.setdefault("paths", {
-            "sources": [],
-            "cleanup": {"remove_dirs": ["@eaDir"], "remove_files": ["thumbs.db", "Thumbs.db"]},
-        })
-        cfg["paths"].setdefault("sources", [])
-        cfg["paths"].setdefault("cleanup", {
-            "remove_dirs": ["@eaDir"], "remove_files": ["thumbs.db", "Thumbs.db"],
-        })
-        cfg.setdefault("base_paths", {
-            "예능": "/path/to/video/예능",
-            "드라마": "/path/to/video/드라마",
-            "다큐": "/path/to/video/다큐",
-            "애니메이션": "/path/to/video/애니메이션",
-        })
-        cfg.setdefault("telegram", {"enabled": False, "bot_token": "", "chat_id": ""})
-        cfg.setdefault("ownership", {
-            "apply": True, "user": "plex", "group": "users",
-            "file_mode": 0o664, "dir_mode": 0o775,
-            "setgid_dirs": True, "enforce_inherit": True,
-        })
+    cfg.setdefault("paths", {
+        "sources": [],
+        "cleanup": {"remove_dirs": ["@eaDir"], "remove_files": ["thumbs.db", "Thumbs.db"]},
+    })
+    cfg["paths"].setdefault("sources", [])
+    cfg["paths"].setdefault("cleanup", {
+        "remove_dirs": ["@eaDir"], "remove_files": ["thumbs.db", "Thumbs.db"],
+    })
+    cfg.setdefault("base_paths", {
+        "예능": "/path/to/video/예능",
+        "드라마": "/path/to/video/드라마",
+        "다큐": "/path/to/video/다큐",
+        "애니메이션": "/path/to/video/애니메이션",
+    })
+    cfg.setdefault("telegram", {"enabled": False, "bot_token": "", "chat_id": ""})
+    cfg.setdefault("ownership", {
+        "apply": True, "user": "plex", "group": "users",
+        "file_mode": 0o664, "dir_mode": 0o775,
+        "setgid_dirs": True, "enforce_inherit": True,
+    })
 
-        rules: List[Dict] = []
-        for row in c.execute("SELECT * FROM rules ORDER BY position, id"):
-            r: Dict[str, Any] = {
-                "id": row["id"],
-                "category": row["category"],
-                "pattern": row["pattern"],
-                "subfolder": row["subfolder"],
-                "days": json.loads(row["days"] or "[]"),
-                "updated": row["updated"],
-                "updated_map": json.loads(row["updated_map"] or "{}"),
-            }
-            if row["pattern_or"]:
-                r["pattern_or"] = row["pattern_or"]
-            if row["pattern2"]:
-                r["pattern2"] = row["pattern2"]
-            if row["pattern2_or"]:
-                r["pattern2_or"] = row["pattern2_or"]
-            if row["exclude_pattern"]:
-                r["exclude_pattern"] = row["exclude_pattern"]
-            if row["total_episodes"] is not None:
-                r["total_episodes"] = row["total_episodes"]
-            if row["received_episodes"] is not None:
-                r["received_episodes"] = json.loads(row["received_episodes"])
-            if row["last_episode"] is not None:
-                r["last_episode"] = row["last_episode"]
-            if row["release"]:
-                r["release"] = row["release"]
-            _ensure_rule_updated_map(r)
-            rules.append(r)
+    rules: List[Dict] = []
+    for row in c.execute("SELECT * FROM rules ORDER BY position, id"):
+        r: Dict[str, Any] = {
+            "id": row["id"],
+            "category": row["category"],
+            "pattern": row["pattern"],
+            "subfolder": row["subfolder"],
+            "days": json.loads(row["days"] or "[]"),
+            "updated": row["updated"],
+            "updated_map": json.loads(row["updated_map"] or "{}"),
+        }
+        if row["pattern_or"]:
+            r["pattern_or"] = row["pattern_or"]
+        if row["pattern2"]:
+            r["pattern2"] = row["pattern2"]
+        if row["pattern2_or"]:
+            r["pattern2_or"] = row["pattern2_or"]
+        if row["exclude_pattern"]:
+            r["exclude_pattern"] = row["exclude_pattern"]
+        if row["total_episodes"] is not None:
+            r["total_episodes"] = row["total_episodes"]
+        if row["received_episodes"] is not None:
+            r["received_episodes"] = json.loads(row["received_episodes"])
+        if row["last_episode"] is not None:
+            r["last_episode"] = row["last_episode"]
+        if row["release"]:
+            r["release"] = row["release"]
+        _ensure_rule_updated_map(r)
+        rules.append(r)
 
-        cfg["rules"] = rules
-        return cfg
-    finally:
-        c.close()
+    cfg["rules"] = rules
+    return cfg
 
 
 def save_cfg(cfg: Dict) -> None:
     init_db()
     c = _conn()
-    try:
-        with c:
-            for key in ("paths", "base_paths", "telegram", "ownership", "tmdb_api_key"):
-                if key in cfg:
-                    c.execute(
-                        "INSERT OR REPLACE INTO config (key, value) VALUES (?,?)",
-                        (key, json.dumps(cfg[key], ensure_ascii=False)),
-                    )
-
-            rules = cfg.get("rules") or []
-            incoming_ids = {r["id"] for r in rules if r.get("id")}
-            existing_ids = {row[0] for row in c.execute("SELECT id FROM rules")}
-
-            for rid in existing_ids - incoming_ids:
-                c.execute("DELETE FROM rules WHERE id=?", (rid,))
-
-            for pos, r in enumerate(rules):
-                received_json = (
-                    json.dumps(r["received_episodes"])
-                    if r.get("received_episodes") is not None
-                    else None
+    with c:
+        for key in ("paths", "base_paths", "telegram", "ownership", "tmdb_api_key"):
+            if key in cfg:
+                c.execute(
+                    "INSERT OR REPLACE INTO config (key, value) VALUES (?,?)",
+                    (key, json.dumps(cfg[key], ensure_ascii=False)),
                 )
-                rule_id = r.get("id")
-                if rule_id and rule_id in existing_ids:
-                    c.execute(
-                        """UPDATE rules SET
-                               position=?, category=?, pattern=?, pattern_or=?, pattern2=?, pattern2_or=?,
-                               exclude_pattern=?, subfolder=?, days=?, updated=?, updated_map=?,
-                               total_episodes=?, received_episodes=?,
-                               last_episode=?, release=?
-                           WHERE id=?""",
-                        (
-                            pos,
-                            r.get("category", ""),
-                            r.get("pattern", ""),
-                            r.get("pattern_or"),
-                            r.get("pattern2"),
-                            r.get("pattern2_or"),
-                            r.get("exclude_pattern"),
-                            r.get("subfolder", ""),
-                            json.dumps(r.get("days", [])),
-                            r.get("updated", "N"),
-                            json.dumps(r.get("updated_map", {})),
-                            r.get("total_episodes"),
-                            received_json,
-                            r.get("last_episode"),
-                            r.get("release"),
-                            rule_id,
-                        ),
-                    )
-                else:
-                    c.execute(
-                        """INSERT INTO rules
-                               (position, category, pattern, pattern_or, pattern2, pattern2_or, exclude_pattern,
-                                subfolder, days, updated, updated_map, total_episodes,
-                                received_episodes, last_episode, release)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                        (
-                            pos,
-                            r.get("category", ""),
-                            r.get("pattern", ""),
-                            r.get("pattern_or"),
-                            r.get("pattern2"),
-                            r.get("pattern2_or"),
-                            r.get("exclude_pattern"),
-                            r.get("subfolder", ""),
-                            json.dumps(r.get("days", [])),
-                            r.get("updated", "N"),
-                            json.dumps(r.get("updated_map", {})),
-                            r.get("total_episodes"),
-                            received_json,
-                            r.get("last_episode"),
-                            r.get("release"),
-                        ),
-                    )
-    finally:
-        c.close()
+
+        rules = cfg.get("rules") or []
+        incoming_ids = {r["id"] for r in rules if r.get("id")}
+        existing_ids = {row[0] for row in c.execute("SELECT id FROM rules")}
+
+        for rid in existing_ids - incoming_ids:
+            c.execute("DELETE FROM rules WHERE id=?", (rid,))
+
+        for pos, r in enumerate(rules):
+            received_json = (
+                json.dumps(r["received_episodes"])
+                if r.get("received_episodes") is not None
+                else None
+            )
+            rule_id = r.get("id")
+            if rule_id and rule_id in existing_ids:
+                c.execute(
+                    """UPDATE rules SET
+                           position=?, category=?, pattern=?, pattern_or=?, pattern2=?, pattern2_or=?,
+                           exclude_pattern=?, subfolder=?, days=?, updated=?, updated_map=?,
+                           total_episodes=?, received_episodes=?,
+                           last_episode=?, release=?
+                       WHERE id=?""",
+                    (
+                        pos,
+                        r.get("category", ""),
+                        r.get("pattern", ""),
+                        r.get("pattern_or"),
+                        r.get("pattern2"),
+                        r.get("pattern2_or"),
+                        r.get("exclude_pattern"),
+                        r.get("subfolder", ""),
+                        json.dumps(r.get("days", [])),
+                        r.get("updated", "N"),
+                        json.dumps(r.get("updated_map", {})),
+                        r.get("total_episodes"),
+                        received_json,
+                        r.get("last_episode"),
+                        r.get("release"),
+                        rule_id,
+                    ),
+                )
+            else:
+                c.execute(
+                    """INSERT INTO rules
+                           (position, category, pattern, pattern_or, pattern2, pattern2_or, exclude_pattern,
+                            subfolder, days, updated, updated_map, total_episodes,
+                            received_episodes, last_episode, release)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        pos,
+                        r.get("category", ""),
+                        r.get("pattern", ""),
+                        r.get("pattern_or"),
+                        r.get("pattern2"),
+                        r.get("pattern2_or"),
+                        r.get("exclude_pattern"),
+                        r.get("subfolder", ""),
+                        json.dumps(r.get("days", [])),
+                        r.get("updated", "N"),
+                        json.dumps(r.get("updated_map", {})),
+                        r.get("total_episodes"),
+                        received_json,
+                        r.get("last_episode"),
+                        r.get("release"),
+                    ),
+                )
 
 
 # Alias so media_router.py can import save_cfg_atomic

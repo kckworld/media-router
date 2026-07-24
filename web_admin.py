@@ -434,6 +434,33 @@ def check_action():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/reset_day", methods=["POST"])
+def reset_day():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    try:
+        target_day = request.form.get("target_day", "").strip()
+        cfg = load_cfg()
+        changed = False
+        if target_day in WEEKDAYS:
+            for r in cfg["rules"]:
+                if target_day not in (r.get("days") or []):
+                    continue
+                umap = r.get("updated_map") or {}
+                if umap.get(target_day) == "Y":
+                    umap[target_day] = "N"
+                    changed = True
+                r["updated_map"] = umap
+        if changed:
+            save_cfg(cfg)
+        day = request.form.get("day", "").strip()
+        if day not in WEEKDAYS:
+            day = "__three__"
+        return redirect(f"/?mode=check&day={day}")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/check_episodes", methods=["POST"])
 def check_episodes():
     try:

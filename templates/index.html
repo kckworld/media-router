@@ -799,6 +799,11 @@
           </div>
           <noscript><button class="btn small" type="submit">적용</button></noscript>
         </form>
+        <form method="post" action="/reset_day" onsubmit="return confirm('{{ yest_name }} 체크 항목을 모두 미처리로 되돌리시겠습니까?');" style="display:inline;">
+          <input type="hidden" name="target_day" value="{{ yest_name }}">
+          <input type="hidden" name="day" value="{{ selected_day }}">
+          <button class="btn small" type="submit" style="background:#f59e0b; color:#fff; border-color:#f59e0b; white-space:nowrap;">어제({{ yest_name }}) 체크 초기화</button>
+        </form>
       </div>
     </div>
     {% elif mode != 'settings' %}
