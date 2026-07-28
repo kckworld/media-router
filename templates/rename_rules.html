@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>파일명 치환 규칙 - Media Router Web Admin</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --fg: #0f172a;
+      --muted: #64748b;
+      --bg: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+      --bg-solid: #f8fafc;
+      --bg-card: #ffffff;
+      --line: #e2e8f0;
+      --line-hover: #cbd5e1;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --accent-light: #eef2ff;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --danger-light: #fef2f2;
+      --success: #10b981;
+      --success-hover: #059669;
+      --success-light: #ecfdf5;
+      --warning: #f59e0b;
+      --warning-light: #fffbeb;
+      --purple: #8b5cf6;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", Arial, sans-serif;
+      color: var(--fg);
+      background: var(--bg-solid);
+      background-image: var(--bg);
+      min-height: 100vh;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 28px 32px;
+      box-shadow: var(--shadow-md);
+      position: sticky; top: 0; z-index: 100;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    header h1 { margin: 0; font-size: 22px; font-weight: 700; color: #fff; letter-spacing: -0.02em; }
+    header .sub { color: rgba(255,255,255,0.9); font-size: 13px; margin-top: 4px; }
+    header .btn { background: rgba(255,255,255,0.2); color: #fff; border-color: rgba(255,255,255,0.3); }
+    header .btn:hover { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.4); }
+    main { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+    .card { background: var(--bg-card); border: 1px solid var(--line); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); margin-bottom: 24px; }
+    .section-title { font-weight: 700; font-size: 18px; margin: 0 0 16px 0; color: var(--fg); display: flex; align-items: center; gap: 10px; }
+    .section-title::before { content: ''; width: 4px; height: 20px; background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%); border-radius: 2px; }
+    .muted { color: var(--muted); }
+    .hint { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 10px 18px; font-size: 14px; font-weight: 600;
+      border: 1px solid var(--line); border-radius: 10px; background: var(--bg-card);
+      cursor: pointer; text-decoration: none; color: var(--fg);
+      transition: all 0.2s ease; white-space: nowrap; box-shadow: var(--shadow-sm);
+    }
+    .btn:hover { background: #f8fafc; border-color: var(--line-hover); transform: translateY(-1px); }
+    .btn.primary { background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%); color: #fff; border-color: var(--accent); box-shadow: 0 4px 14px rgba(99,102,241,0.25); }
+    .btn.primary:hover { background: linear-gradient(135deg, var(--accent-hover) 0%, #4338ca 100%); }
+    .btn.danger { background: #fff; color: var(--danger); border-color: #fecaca; }
+    .btn.danger:hover { background: var(--danger-light); border-color: var(--danger); }
+    .btn.small { padding: 6px 10px; font-size: 13px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    input[type=text] {
+      padding: 10px 12px; font-size: 14px; border: 2px solid var(--line); border-radius: 8px;
+      background: var(--bg-card); color: var(--fg); width: 100%; font-family: inherit;
+      transition: all 0.2s ease;
+    }
+    input[type=text]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
+    textarea {
+      padding: 12px 14px; font-size: 13.5px; border: 2px solid var(--line); border-radius: 10px;
+      width: 100%; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      resize: vertical; color: var(--fg);
+    }
+    textarea:focus { outline: none; border-color: var(--accent); }
+    table { width: 100%; border-collapse: separate; border-spacing: 0 8px; }
+    .rule-row td { padding: 4px 6px; vertical-align: middle; }
+    .rule-row { background: var(--bg-solid); }
+    .rule-row td:first-child { border-radius: 10px 0 0 10px; }
+    .rule-row td:last-child { border-radius: 0 10px 10px 0; }
+    .col-num { width: 28px; text-align: center; font-size: 12px; color: var(--muted); font-weight: 700; }
+    .col-arrow { width: 28px; text-align: center; color: var(--purple); font-weight: 700; font-size: 16px; }
+    .col-actions { width: 132px; white-space: nowrap; }
+    thead th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 0 6px 6px; font-weight: 700; }
+    .banner { border-radius: 10px; padding: 12px 16px; margin-bottom: 20px; font-weight: 600; font-size: 14px; }
+    .banner.ok { background: var(--success-light); color: var(--success-hover); border: 1px solid #6ee7b7; }
+    .banner.err { background: var(--danger-light); color: var(--danger-hover); border: 1px solid #fca5a5; }
+    .banner.warn { background: var(--warning-light); color: #92400e; border: 1px solid #fde68a; }
+    .example-box { background: var(--accent-light); border: 1px solid rgba(99,102,241,0.2); border-radius: 10px; padding: 14px 18px; font-size: 13px; margin-top: 6px; }
+    .example-box code { background: rgba(99,102,241,0.12); padding: 1px 6px; border-radius: 4px; }
+    .empty-state { text-align: center; padding: 32px; color: var(--muted); font-size: 14px; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
+    .path-tag { font-family: ui-monospace, monospace; font-size: 12.5px; background: var(--bg-solid); border: 1px solid var(--line); padding: 4px 10px; border-radius: 6px; color: var(--muted); }
+    @media (max-width: 640px) {
+      main { padding: 16px 12px; }
+      .card { padding: 18px; }
+      .col-actions { width: auto; }
+      table, thead, tbody, th, td, tr { display: block; }
+      thead { display: none; }
+      .rule-row { margin-bottom: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+      .rule-row td { padding: 6px 2px; }
+      .col-arrow { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>파일명 치환 규칙</h1>
+      <div class="sub">drama_name.sh가 참조하는 rename_rules.conf 편집</div>
+    </div>
+    <a class="btn" href="/">← 돌아가기</a>
+  </header>
+
+  <main>
+    {% if saved %}
+      <div class="banner ok">✓ 저장되었습니다. 다음 drama_name.sh 실행부터 새 규칙이 적용됩니다.</div>
+    {% endif %}
+    {% if error %}
+      <div class="banner err">✗ 처리 중 오류가 발생했습니다: {{ error }}</div>
+    {% endif %}
+    {% if not conf_exists and not error %}
+      <div class="banner warn">⚠ 설정 파일 경로({{ conf_path }})를 찾을 수 없습니다. 저장하면 새로 생성됩니다. 컨테이너에 해당 경로가 마운트되어 있는지 확인하세요.</div>
+    {% endif %}
+
+    <div class="card">
+      <div class="section-title">규칙 형식 안내</div>
+      <div class="hint">
+        각 규칙은 파일(또는 폴더)명에서 <strong>찾을 문자열</strong>을 <strong>바꿀 문자열</strong>로 치환합니다.
+        <strong>검색 키워드</strong>는 선택 사항이며, 비워두면 "찾을 문자열"로 대상 파일을 검색합니다.
+        키워드를 입력하면 파일명이 다른 형태로 자주 바뀌는 프로그램에서 "이 키워드가 포함된 파일 중"이라는
+        더 넓은 범위로 대상을 먼저 찾은 뒤, 그 안에서 "찾을 문자열"만 정확히 치환할 때 유용합니다.
+        "바꿀 문자열"을 비워두면 "찾을 문자열"이 삭제됩니다.
+      </div>
+      <div class="example-box">
+        예) 검색 키워드 <code>불꽃야구</code> / 찾을 문자열 <code>불꽃야구2(Burn to win) Ep.</code> / 바꿀 문자열 <code>불꽃야구.S02.E0</code><br>
+        → <code>불꽃야구2(Burn to win) Ep.05.mp4</code> 파일이 <code>불꽃야구.S02.E005.mp4</code> 로 바뀝니다.
+      </div>
+    </div>
+
+    <form method="post" action="/rename_rules" id="rulesForm">
+      <div class="card">
+        <div class="section-title">치환 규칙 목록</div>
+        <table id="rulesTable">
+          <thead>
+            <tr>
+              <th class="col-num">#</th>
+              <th>검색 키워드 <span class="muted" style="font-weight:400;">(선택)</span></th>
+              <th>찾을 문자열 <span class="muted" style="font-weight:400;">(필수)</span></th>
+              <th class="col-arrow"></th>
+              <th>바꿀 문자열 <span class="muted" style="font-weight:400;">(비우면 삭제됨)</span></th>
+              <th class="col-actions">동작</th>
+            </tr>
+          </thead>
+          <tbody id="rulesBody">
+            {% for r in rules %}
+            <tr class="rule-row">
+              <td class="col-num">{{ loop.index }}</td>
+              <td><input type="text" name="row_keyword" value="{{ r.keyword }}" placeholder="예: 불꽃야구"></td>
+              <td><input type="text" name="row_from" value="{{ r.from_prefix }}" placeholder="찾을 문자열"></td>
+              <td class="col-arrow">→</td>
+              <td><input type="text" name="row_to" value="{{ r.to_prefix }}" placeholder="바꿀 문자열 (선택)"></td>
+              <td class="col-actions">
+                <button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>
+                <button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>
+                <button type="button" class="btn small danger" onclick="removeRuleRow(this)" title="삭제">삭제</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div id="emptyState" class="empty-state" style="{{ '' if rules else '' }}display:{{ 'block' if not rules else 'none' }};">
+          등록된 규칙이 없습니다. 아래 버튼으로 규칙을 추가하세요.
+        </div>
+        <div class="toolbar">
+          <button type="button" class="btn" onclick="addRuleRow()">+ 규칙 추가</button>
+          <span class="path-tag">{{ conf_path }}</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">메모 / 주석</div>
+        <div class="hint" style="margin-bottom:10px;">
+          파일 상단에 남겨둘 설명 텍스트입니다. drama_name.sh 실행 동작에는 아무 영향을 주지 않는 순수 메모입니다.
+          한 줄에 하나씩 적으면 됩니다 (자동으로 <code>#</code> 주석 처리되어 저장됩니다).
+        </div>
+        <textarea name="memo" rows="4" placeholder="예: 다른 규칙도 계속 추가 가능">{{ memo_text }}</textarea>
+      </div>
+
+      <div style="text-align:right;">
+        <button type="submit" class="btn primary" style="padding:12px 28px; font-size:15px;">저장</button>
+      </div>
+    </form>
+
+    <div style="height:24px;"></div>
+  </main>
+
+  <script>
+    function currentRuleCount() {
+      return document.querySelectorAll('#rulesBody .rule-row').length;
+    }
+
+    function renumberRows() {
+      var rows = document.querySelectorAll('#rulesBody .rule-row');
+      rows.forEach(function(row, i) {
+        row.querySelector('.col-num').textContent = i + 1;
+      });
+      document.getElementById('emptyState').style.display = rows.length ? 'none' : 'block';
+    }
+
+    function addRuleRow() {
+      var tbody = document.getElementById('rulesBody');
+      var tr = document.createElement('tr');
+      tr.className = 'rule-row';
+      tr.innerHTML =
+        '<td class="col-num"></td>' +
+        '<td><input type="text" name="row_keyword" placeholder="예: 불꽃야구"></td>' +
+        '<td><input type="text" name="row_from" placeholder="찾을 문자열"></td>' +
+        '<td class="col-arrow">→</td>' +
+        '<td><input type="text" name="row_to" placeholder="바꿀 문자열 (선택)"></td>' +
+        '<td class="col-actions">' +
+          '<button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>' +
+          '<button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>' +
+          '<button type="button" class="btn small danger" onclick="removeRuleRow(this)" title="삭제">삭제</button>' +
+        '</td>';
+      tbody.appendChild(tr);
+      renumberRows();
+      tr.querySelector('input[name="row_from"]').focus();
+    }
+
+    function removeRuleRow(btn) {
+      var row = btn.closest('tr');
+      row.remove();
+      renumberRows();
+    }
+
+    function moveRuleRow(btn, dir) {
+      var row = btn.closest('tr');
+      if (dir < 0) {
+        var prev = row.previousElementSibling;
+        if (prev) row.parentNode.insertBefore(row, prev);
+      } else {
+        var next = row.nextElementSibling;
+        if (next) row.parentNode.insertBefore(next, row);
+      }
+      renumberRows();
+    }
+
+    document.getElementById('rulesForm').addEventListener('submit', function(e) {
+      var rows = document.querySelectorAll('#rulesBody .rule-row');
+      var hasEmptyFrom = false;
+      rows.forEach(function(row) {
+        var from = row.querySelector('input[name="row_from"]').value.trim();
+        var keyword = row.querySelector('input[name="row_keyword"]').value.trim();
+        var to = row.querySelector('input[name="row_to"]').value.trim();
+        if (!from && (keyword || to)) hasEmptyFrom = true;
+      });
+      if (hasEmptyFrom) {
+        if (!confirm('"찾을 문자열"이 비어 있는 규칙이 있습니다. 저장 시 해당 규칙은 무시됩니다. 계속할까요?')) {
+          e.preventDefault();
+        }
+      }
+    });
+  </script>
+</body>
+</html>

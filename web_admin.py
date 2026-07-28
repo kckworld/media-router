@@ -17,6 +17,8 @@ CATEGORIES = ["드라마", "예능", "애니메이션", "다큐"]
 DAY_ORDER = {d: i for i, d in enumerate(WEEKDAYS)}
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Seoul"))
 
+RENAME_RULES_PATH = Path(os.getenv("RENAME_RULES_PATH", "/volume1/web/video_auto/rename_rules.conf"))
+
 # TMDB API KEY 초기화 함수
 def get_tmdb_api_key():
     """환경변수 또는 설정에서 TMDB API 키 가져오기"""
@@ -204,6 +206,56 @@ def safe_int(value, default):
         return int(str(value).strip())
     except (TypeError, ValueError):
         return default
+
+def parse_rename_rules_conf(path: Path):
+    """rename_rules.conf(keyword|from_prefix|to_prefix 형식)를 파싱.
+    drama_name.sh의 apply_rename_rules()와 동일한 규칙으로 라인을 해석한다:
+    빈 줄은 무시, '#'로 시작하는 줄은 주석(메모)으로 취급."""
+    memo_lines = []
+    rules = []
+    if not path.exists():
+        return memo_lines, rules
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if stripped == "":
+            continue
+        if stripped.startswith("#"):
+            memo_lines.append(stripped)
+            continue
+        # bash의 `IFS='|' read -r keyword from_prefix to_prefix`와 동일하게
+        # 세 번째 필드는 남은 '|' 포함 나머지 전체를 가진다.
+        parts = raw_line.split("|", 2)
+        while len(parts) < 3:
+            parts.append("")
+        keyword, from_prefix, to_prefix = parts
+        rules.append({"keyword": keyword, "from_prefix": from_prefix, "to_prefix": to_prefix})
+    return memo_lines, rules
+
+
+def render_rename_rules_conf(memo_text: str, rules: list) -> str:
+    """편집 폼 데이터를 rename_rules.conf 텍스트로 변환.
+    from_prefix/to_prefix의 앞쪽 공백은 의미가 있어 보존하고(예: ' 시즌2'),
+    뒤쪽 공백은 drama_name.sh가 어차피 trim하므로 함께 제거한다."""
+    lines = []
+    for m in (memo_text or "").splitlines():
+        m2 = m.rstrip()
+        if m2.strip() == "":
+            continue
+        if not m2.lstrip().startswith("#"):
+            m2 = "# " + m2.strip()
+        lines.append(m2)
+    if lines:
+        lines.append("")
+    for r in rules:
+        from_prefix = (r.get("from_prefix") or "").rstrip()
+        if not from_prefix:
+            continue
+        keyword = (r.get("keyword") or "").strip()
+        to_prefix = (r.get("to_prefix") or "").rstrip()
+        lines.append(f"{keyword}|{from_prefix}|{to_prefix}")
+    return "\n".join(lines) + "\n"
+
 
 def rule_key(rule):
     raw = f"{(rule.get('category') or '').strip()}|" \
@@ -727,6 +779,63 @@ def settings():
         today_name=WEEKDAYS[current_weekday()], yest_name=WEEKDAYS[(current_weekday()-1)%7],
         two_days_ago_name=WEEKDAYS[(current_weekday()-2)%7], categories=CATEGORIES,
         sort_key="default", sort_dir="asc", edit_id=None, saved=saved, error=error)
+
+@app.route("/rename_rules", methods=["GET", "POST"])
+def rename_rules():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+
+    saved = False
+    error = None
+
+    if request.method == "POST":
+        try:
+            memo_text = request.form.get("memo", "")
+            keywords = request.form.getlist("row_keyword")
+            froms = request.form.getlist("row_from")
+            tos = request.form.getlist("row_to")
+            rules = []
+            for i in range(len(froms)):
+                rules.append({
+                    "keyword": keywords[i] if i < len(keywords) else "",
+                    "from_prefix": froms[i],
+                    "to_prefix": tos[i] if i < len(tos) else "",
+                })
+            content = render_rename_rules_conf(memo_text, rules)
+
+            RENAME_RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            if RENAME_RULES_PATH.exists():
+                backup_path = RENAME_RULES_PATH.with_suffix(RENAME_RULES_PATH.suffix + ".bak")
+                backup_path.write_text(
+                    RENAME_RULES_PATH.read_text(encoding="utf-8", errors="replace"),
+                    encoding="utf-8",
+                )
+            RENAME_RULES_PATH.write_text(content, encoding="utf-8")
+            saved = True
+        except Exception as e:
+            app.logger.exception("rename_rules.conf 저장 중 오류")
+            error = str(e)
+
+    try:
+        memo_lines, rules = parse_rename_rules_conf(RENAME_RULES_PATH)
+        load_error = None
+    except Exception as e:
+        app.logger.exception("rename_rules.conf 로딩 중 오류")
+        memo_lines, rules = [], []
+        load_error = str(e)
+
+    return render_template(
+        "rename_rules.html",
+        authed=True,
+        memo_text="\n".join(memo_lines),
+        rules=rules,
+        saved=saved,
+        error=error or load_error,
+        conf_path=str(RENAME_RULES_PATH),
+        conf_exists=RENAME_RULES_PATH.exists(),
+    )
+
 
 @app.route("/edit", methods=["GET","POST"])
 def edit():
