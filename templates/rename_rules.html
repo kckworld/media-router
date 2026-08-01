@@ -49,8 +49,8 @@
       position: sticky; top: 0; z-index: 100;
       display: flex; justify-content: space-between; align-items: center;
     }
-    header h1 { margin: 0; font-size: 22px; font-weight: 700; color: #fff; letter-spacing: -0.02em; }
-    header .sub { color: rgba(255,255,255,0.9); font-size: 13px; margin-top: 4px; }
+    header > div { flex: 1; }
+    header h1 { margin: 0; font-size: 24px; font-weight: 700; color: #fff; letter-spacing: -0.02em; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
     .mode-tabs {
       display: flex;
       gap: 0;
@@ -60,9 +60,6 @@
       z-index: 50;
       background: var(--bg-solid);
       margin: 0 0 24px 0;
-      max-width: 1100px;
-      margin-left: auto;
-      margin-right: auto;
     }
     .mode-tabs a {
       padding: 14px 24px;
@@ -82,7 +79,7 @@
       border-bottom-color: var(--accent);
       font-weight: 700;
     }
-    main { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+    main { max-width: 1400px; margin: 0 auto; padding: 32px 24px; }
     .card { background: var(--bg-card); border: 1px solid var(--line); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); margin-bottom: 24px; }
     .section-title { font-weight: 700; font-size: 18px; margin: 0 0 16px 0; color: var(--fg); display: flex; align-items: center; gap: 10px; }
     .section-title::before { content: ''; width: 4px; height: 20px; background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%); border-radius: 2px; }
@@ -132,6 +129,10 @@
     .empty-state { text-align: center; padding: 32px; color: var(--muted); font-size: 14px; }
     .toolbar { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
     .path-tag { font-family: ui-monospace, monospace; font-size: 12.5px; background: var(--bg-solid); border: 1px solid var(--line); padding: 4px 10px; border-radius: 6px; color: var(--muted); }
+    @media (max-width: 768px) {
+      header { padding: 16px 20px; flex-direction: column; align-items: flex-start; gap: 12px; }
+      header h1 { font-size: 18px; }
+    }
     @media (max-width: 640px) {
       main { padding: 16px 12px; }
       .card { padding: 18px; }
@@ -147,19 +148,18 @@
 <body>
   <header>
     <div>
-      <h1>파일명 치환 규칙</h1>
-      <div class="sub">drama_name.sh가 참조하는 rename_rules.conf 편집</div>
+      <h1>Media Router Web Admin</h1>
     </div>
   </header>
 
-  <div class="mode-tabs">
-    <a href="/?mode=check">체크모드 (그저께+어제+오늘)</a>
-    <a href="/?mode=">전체 관리</a>
-    <a href="/rename_rules" class="active">파일명 치환 규칙</a>
-    <a href="/settings">설정</a>
-  </div>
-
   <main>
+    <div class="mode-tabs">
+      <a href="/?mode=check">체크모드 (그저께+어제+오늘)</a>
+      <a href="/?mode=">전체 관리</a>
+      <a href="/rename_rules" class="active">파일명 치환 규칙</a>
+      <a href="/settings">설정</a>
+    </div>
+
     {% if saved %}
       <div class="banner ok">✓ 저장되었습니다. 다음 drama_name.sh 실행부터 새 규칙이 적용됩니다.</div>
     {% endif %}

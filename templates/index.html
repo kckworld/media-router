@@ -65,14 +65,7 @@
     header > div {
       flex: 1;
     }
-    
-    header .header-actions {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      margin-left: auto;
-    }
-    
+
     header h1 {
       margin: 0;
       font-size: 24px;
@@ -80,25 +73,6 @@
       color: #ffffff;
       letter-spacing: -0.02em;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-    }
-    
-    header .sub {
-      color: rgba(255, 255, 255, 0.9);
-      font-size: 14px;
-      margin-top: 6px;
-      font-weight: 400;
-    }
-    
-    header .btn {
-      background: rgba(255, 255, 255, 0.2);
-      color: #ffffff;
-      border-color: rgba(255, 255, 255, 0.3);
-      backdrop-filter: blur(10px);
-    }
-    
-    header .btn:hover {
-      background: rgba(255, 255, 255, 0.3);
-      border-color: rgba(255, 255, 255, 0.4);
     }
     
     .mode-tabs {
@@ -652,11 +626,6 @@
         flex-direction: column;
         align-items: flex-start;
         gap: 12px;
-      }
-      
-      header .header-actions {
-        width: 100%;
-        justify-content: flex-end;
       }
       
       header h1 {
@@ -1545,10 +1514,19 @@
 
     // 체크모드에서 전체관리 편집으로 이동
     function goToEdit(idx) {
-      var url = '/?mode=&day=전체&cat=전체&edit_id=' + encodeURIComponent(idx) + '#rule-' + encodeURIComponent(idx);
+      var url = '/?mode=&day=전체&cat=전체&edit_id=' + encodeURIComponent(idx);
       window.location.href = url;
     }
-    
+
+    {% if edit_id %}
+    // 체크모드에서 편집으로 이동한 경우, 해당 편집 폼으로 자동 스크롤
+    document.addEventListener('DOMContentLoaded', function() {
+      var editRow = document.getElementById('manage-edit-row-{{ edit_id }}');
+      if (editRow) {
+        editRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+    {% endif %}
 
   </script>
 </body>
