@@ -7,7 +7,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     :root {
-      --header-h: 72px;
       --fg: #0f172a;
       --muted: #64748b;
       --bg: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
@@ -50,19 +49,23 @@
       -moz-osx-font-smoothing: grayscale;
     }
     
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg-solid);
+    }
+
     header {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       border-bottom: none;
       padding: 28px 32px;
       box-shadow: var(--shadow-md);
-      position: sticky;
-      top: 0;
-      z-index: 100;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
-    
+
     header > div {
       flex: 1;
     }
@@ -80,11 +83,8 @@
       display: flex;
       gap: 0;
       border-bottom: 2px solid var(--line);
-      position: sticky;
-      top: var(--header-h);
-      z-index: 50;
       background: var(--bg-solid);
-      margin: 0 0 24px 0;
+      margin: 0;
     }
 
     .mode-tabs a {
@@ -115,7 +115,17 @@
       margin: 0 auto;
       padding: 32px 24px;
     }
-    
+
+    .topbar-inner {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    .topbar-filter {
+      margin: 16px 0;
+    }
+
     .row {
       display: flex;
       gap: 20px;
@@ -636,7 +646,11 @@
       main {
         padding: 16px;
       }
-      
+
+      .topbar-inner {
+        padding: 0 16px;
+      }
+
       .card {
         padding: 20px;
         border-radius: 10px;
@@ -715,32 +729,87 @@
 </head>
 <body>
   {% macro pattern_display(r) %}<code>{{ r.pattern }}{% if r.pattern2 %} + {{ r.pattern2 }}{% endif %}</code>{% if r.pattern_or %} <span class="muted" style="font-size:0.85em; font-weight:700;">또는</span> <code>{{ r.pattern_or }}{% if r.pattern2_or %} + {{ r.pattern2_or }}{% endif %}</code>{% endif %}{% if r.exclude_pattern %} <span style="background:#fef2f2; color:#ef4444; padding:2px 6px; border-radius:3px; font-size:0.85em; white-space:nowrap;">✕{{ r.exclude_pattern }}</span>{% endif %}{% endmacro %}
-  <header>
-    <div>
-      <h1>Media Router Web Admin</h1>
+  <div class="topbar">
+    <header>
+      <div>
+        <h1>Media Router Web Admin</h1>
+      </div>
+    </header>
+
+    <div class="topbar-inner">
+      <!-- 모드 전환 탭 -->
+      <div class="mode-tabs">
+        <a href="/?mode=check" class="{{ 'active' if mode == 'check' else '' }}">체크모드 (그저께+어제+오늘)</a>
+        <a href="/?mode=" class="{{ 'active' if mode != 'check' and mode != 'settings' else '' }}">전체 관리</a>
+        <a href="/rename_rules">파일명 치환 규칙</a>
+        <a href="/settings" class="{{ 'active' if mode == 'settings' else '' }}">설정</a>
+      </div>
+
+      <!-- 상단 컨트롤 (스크롤해도 탭과 함께 고정 노출) -->
+      {% if mode != 'settings' and mode == 'check' %}
+      <div class="row card topbar-filter">
+        <div class="row filters">
+          <form class="filter-form" method="get" action="/">
+            <input type="hidden" name="mode" value="check">
+            <div class="filter-group">
+              <label class="muted">요일</label>
+              <select name="day" onchange="this.form.submit()">
+                <option value="__three__" {{ 'selected' if selected_day == '__three__' else '' }}>그저께+어제+오늘</option>
+                {% for d in weekdays %}
+                  <option value="{{ d }}" {{ 'selected' if selected_day == d else '' }}>{{ d }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <noscript><button class="btn small" type="submit">적용</button></noscript>
+          </form>
+          <form method="post" action="/reset_day" onsubmit="return confirm('{{ yest_name }} 체크 항목을 모두 미처리로 되돌리시겠습니까?');" style="display:inline;">
+            <input type="hidden" name="target_day" value="{{ yest_name }}">
+            <input type="hidden" name="day" value="{{ selected_day }}">
+            <button class="btn small" type="submit" style="background:#f59e0b; color:#fff; border-color:#f59e0b; white-space:nowrap;">어제({{ yest_name }}) 체크 초기화</button>
+          </form>
+        </div>
+      </div>
+      {% elif mode != 'settings' %}
+      <div class="row card topbar-filter">
+        <div class="row filters">
+          <form class="filter-form" method="get" action="/">
+            <input type="hidden" name="mode" value="">
+            <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
+            <div class="filter-group">
+              <label class="muted">요일</label>
+              <select name="day" onchange="this.form.submit()">
+                {% for d in weekdays %}
+                  <option value="{{ d }}" {{ 'selected' if selected_day == d else '' }}>{{ d }}</option>
+                {% endfor %}
+                <option value="전체" {{ 'selected' if selected_day == '전체' else '' }}>전체</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label class="muted">카테고리</label>
+              <select name="cat" onchange="this.form.submit()">
+                <option value="전체" {{ 'selected' if selected_cat == '전체' or not selected_cat else '' }}>전체</option>
+                {% for c in categories %}
+                  <option value="{{ c }}" {{ 'selected' if selected_cat == c else '' }}>{{ c }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="filter-group">
+              <label class="muted">요일 없는 규칙</label>
+              <a class="btn" href="/?mode=&day={{ selected_day }}&cat={{ selected_cat }}&sort={{ sort_key }}&dir={{ sort_dir }}&hide_no_days={{ '0' if hide_no_days == '1' else '1' }}">
+                {{ '표시' if hide_no_days == '1' else '숨김' }}
+              </a>
+            </div>
+
+            <noscript><button class="btn small" type="submit">적용</button></noscript>
+          </form>
+        </div>
+      </div>
+      {% endif %}{# end if mode controls #}
     </div>
-  </header>
-  <script>
-    // 헤더 실제 높이를 측정해 탭 바 sticky 위치에 반영 (헤더 높이가 바뀌어도 탭이 가려지지 않도록)
-    (function () {
-      var header = document.querySelector('header');
-      function syncHeaderHeight() {
-        if (header) document.documentElement.style.setProperty('--header-h', header.offsetHeight + 'px');
-      }
-      syncHeaderHeight();
-      window.addEventListener('resize', syncHeaderHeight);
-    })();
-  </script>
+  </div>
 
   <main>
-
-    <!-- 모드 전환 탭 -->
-    <div class="mode-tabs">
-      <a href="/?mode=check" class="{{ 'active' if mode == 'check' else '' }}">체크모드 (그저께+어제+오늘)</a>
-      <a href="/?mode=" class="{{ 'active' if mode != 'check' and mode != 'settings' else '' }}">전체 관리</a>
-      <a href="/rename_rules">파일명 치환 규칙</a>
-      <a href="/settings" class="{{ 'active' if mode == 'settings' else '' }}">설정</a>
-    </div>
 
     {% if not authed %}
       <div class="card">
@@ -755,70 +824,6 @@
       </div>
       <div class="spacer"></div>
     {% endif %}
-
-    <!-- 상단 컨트롤 -->
-    {% if mode != 'settings' and mode == 'check' %}
-    <div class="row card">
-      <div class="row filters">
-        <form class="filter-form" method="get" action="/">
-          <input type="hidden" name="mode" value="check">
-          <div class="filter-group">
-            <label class="muted">요일</label>
-            <select name="day" onchange="this.form.submit()">
-              <option value="__three__" {{ 'selected' if selected_day == '__three__' else '' }}>그저께+어제+오늘</option>
-              {% for d in weekdays %}
-                <option value="{{ d }}" {{ 'selected' if selected_day == d else '' }}>{{ d }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <noscript><button class="btn small" type="submit">적용</button></noscript>
-        </form>
-        <form method="post" action="/reset_day" onsubmit="return confirm('{{ yest_name }} 체크 항목을 모두 미처리로 되돌리시겠습니까?');" style="display:inline;">
-          <input type="hidden" name="target_day" value="{{ yest_name }}">
-          <input type="hidden" name="day" value="{{ selected_day }}">
-          <button class="btn small" type="submit" style="background:#f59e0b; color:#fff; border-color:#f59e0b; white-space:nowrap;">어제({{ yest_name }}) 체크 초기화</button>
-        </form>
-      </div>
-    </div>
-    {% elif mode != 'settings' %}
-    <div class="row card">
-      <div class="row filters">
-        <form class="filter-form" method="get" action="/">
-          <input type="hidden" name="mode" value="">
-          <input type="hidden" name="hide_no_days" value="{{ hide_no_days }}">
-          <div class="filter-group">
-            <label class="muted">요일</label>
-            <select name="day" onchange="this.form.submit()">
-              {% for d in weekdays %}
-                <option value="{{ d }}" {{ 'selected' if selected_day == d else '' }}>{{ d }}</option>
-              {% endfor %}
-              <option value="전체" {{ 'selected' if selected_day == '전체' else '' }}>전체</option>
-            </select>
-          </div>
-
-          <div class="filter-group">
-            <label class="muted">카테고리</label>
-            <select name="cat" onchange="this.form.submit()">
-              <option value="전체" {{ 'selected' if selected_cat == '전체' or not selected_cat else '' }}>전체</option>
-              {% for c in categories %}
-                <option value="{{ c }}" {{ 'selected' if selected_cat == c else '' }}>{{ c }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="filter-group">
-            <label class="muted">요일 없는 규칙</label>
-            <a class="btn" href="/?mode=&day={{ selected_day }}&cat={{ selected_cat }}&sort={{ sort_key }}&dir={{ sort_dir }}&hide_no_days={{ '0' if hide_no_days == '1' else '1' }}">
-              {{ '표시' if hide_no_days == '1' else '숨김' }}
-            </a>
-          </div>
-
-          <noscript><button class="btn small" type="submit">적용</button></noscript>
-        </form>
-      </div>
-    </div>
-    {% endif %}{# end if mode controls #}
-
-    <div class="spacer"></div>
 
     {% if mode == 'check' %}
       <!-- 체크모드: 카드뷰 + 데스크톱 테이블 -->
