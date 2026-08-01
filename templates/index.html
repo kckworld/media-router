@@ -749,14 +749,6 @@
     <div>
       <h1>Media Router Web Admin</h1>
     </div>
-    <div class="header-actions">
-      {% if mode == 'settings' %}
-      <a class="btn" href="/?mode=">나가기</a>
-      {% else %}
-      <a class="btn" href="/settings" style="{{ 'background:rgba(255,255,255,0.4)' if mode == 'settings' else '' }}">⚙ 설정</a>
-      {% endif %}
-    </div>
-
   </header>
 
   <main>
@@ -1358,7 +1350,6 @@
 
         <div style="margin-top:24px;">
           <button class="btn primary" type="submit">저장</button>
-          <a class="btn" href="/?mode=" style="margin-left:8px;">나가기</a>
         </div>
       </form>
     </div>

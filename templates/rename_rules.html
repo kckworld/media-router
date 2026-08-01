@@ -51,8 +51,37 @@
     }
     header h1 { margin: 0; font-size: 22px; font-weight: 700; color: #fff; letter-spacing: -0.02em; }
     header .sub { color: rgba(255,255,255,0.9); font-size: 13px; margin-top: 4px; }
-    header .btn { background: rgba(255,255,255,0.2); color: #fff; border-color: rgba(255,255,255,0.3); }
-    header .btn:hover { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.4); }
+    .mode-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid var(--line);
+      position: sticky;
+      top: 72px;
+      z-index: 50;
+      background: var(--bg-solid);
+      margin: 0 0 24px 0;
+      max-width: 1100px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .mode-tabs a {
+      padding: 14px 24px;
+      text-decoration: none;
+      color: var(--muted);
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      font-weight: 500;
+      font-size: 14px;
+      transition: all 0.25s ease;
+      display: inline-block;
+      cursor: pointer;
+    }
+    .mode-tabs a:hover { color: var(--accent); }
+    .mode-tabs a.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      font-weight: 700;
+    }
     main { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
     .card { background: var(--bg-card); border: 1px solid var(--line); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); margin-bottom: 24px; }
     .section-title { font-weight: 700; font-size: 18px; margin: 0 0 16px 0; color: var(--fg); display: flex; align-items: center; gap: 10px; }
@@ -121,8 +150,14 @@
       <h1>파일명 치환 규칙</h1>
       <div class="sub">drama_name.sh가 참조하는 rename_rules.conf 편집</div>
     </div>
-    <a class="btn" href="/">← 돌아가기</a>
   </header>
+
+  <div class="mode-tabs">
+    <a href="/?mode=check">체크모드 (그저께+어제+오늘)</a>
+    <a href="/?mode=">전체 관리</a>
+    <a href="/rename_rules" class="active">파일명 치환 규칙</a>
+    <a href="/settings">설정</a>
+  </div>
 
   <main>
     {% if saved %}
@@ -199,7 +234,7 @@
         <textarea name="memo" rows="4" placeholder="예: 다른 규칙도 계속 추가 가능">{{ memo_text }}</textarea>
       </div>
 
-      <div style="text-align:right;">
+      <div>
         <button type="submit" class="btn primary" style="padding:12px 28px; font-size:15px;">저장</button>
       </div>
     </form>

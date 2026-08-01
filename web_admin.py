@@ -678,13 +678,14 @@ def add():
     hide_no_days = request.form.get("hide_no_days", "1").strip()
     
     params = []
-    if mode: params.append(f"mode={mode}")
+    # mode는 항상 추가 (빈 문자열이어도 전체 관리 모드로 감)
+    params.append(f"mode={mode if mode else ''}")
     if day: params.append(f"day={day}")
     if cat: params.append(f"cat={cat}")
     if sort != "default": params.append(f"sort={sort}")
     if sort_dir != "asc": params.append(f"dir={sort_dir}")
     if hide_no_days == "1": params.append(f"hide_no_days={hide_no_days}")
-    
+
     redirect_url = "/" + ("?" + "&".join(params) if params else "")
     return redirect(redirect_url)
 
@@ -707,13 +708,14 @@ def delete():
     hide_no_days = request.form.get("hide_no_days", "1").strip()
     
     params = []
-    if mode: params.append(f"mode={mode}")
+    # mode는 항상 추가 (빈 문자열이어도 전체 관리 모드로 감)
+    params.append(f"mode={mode if mode else ''}")
     if day: params.append(f"day={day}")
     if cat: params.append(f"cat={cat}")
     if sort != "default": params.append(f"sort={sort}")
     if sort_dir != "asc": params.append(f"dir={sort_dir}")
     if hide_no_days == "1": params.append(f"hide_no_days={hide_no_days}")
-    
+
     redirect_url = "/" + ("?" + "&".join(params) if params else "")
     return redirect(redirect_url)
 
