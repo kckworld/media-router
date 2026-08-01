@@ -7,6 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     :root {
+      --header-h: 72px;
       --fg: #0f172a;
       --muted: #64748b;
       --bg: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
@@ -56,7 +57,7 @@
       gap: 0;
       border-bottom: 2px solid var(--line);
       position: sticky;
-      top: 72px;
+      top: var(--header-h);
       z-index: 50;
       background: var(--bg-solid);
       margin: 0 0 24px 0;
@@ -151,6 +152,17 @@
       <h1>Media Router Web Admin</h1>
     </div>
   </header>
+  <script>
+    // 헤더 실제 높이를 측정해 탭 바 sticky 위치에 반영 (헤더 높이가 바뀌어도 탭이 가려지지 않도록)
+    (function () {
+      var header = document.querySelector('header');
+      function syncHeaderHeight() {
+        if (header) document.documentElement.style.setProperty('--header-h', header.offsetHeight + 'px');
+      }
+      syncHeaderHeight();
+      window.addEventListener('resize', syncHeaderHeight);
+    })();
+  </script>
 
   <main>
     <div class="mode-tabs">
