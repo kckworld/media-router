@@ -1128,7 +1128,7 @@
               <tr><td colspan="6" class="muted">등록된 규칙이 없습니다.</td></tr>
             {% else %}
               {% for r in rules %}
-                <tr>
+                <tr id="rule-{{ r._idx }}">
                   <td>{{ r._idx }}</td>
                   <td>{{ r.category }}</td>
                   <td>
@@ -1149,7 +1149,7 @@
                   </td>
                   <td>
                     <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-                      <form class="inline" method="post" action="/delete" onsubmit="return confirm('삭제하시겠습니까?')">
+                      <form class="inline" method="post" action="/delete" onsubmit="if(!confirm('삭제하시겠습니까?')) return false; saveScrollFocus({{ r._idx }});">
                         <input type="hidden" name="idx" value="{{ r._idx }}">
                         <input type="hidden" name="mode" value="{{ mode }}">
                         <input type="hidden" name="day" value="{{ selected_day }}">
@@ -1165,7 +1165,7 @@
                 </tr>
                 <tr id="manage-edit-row-{{ r._idx }}" style="display:{{ 'table-row' if edit_id == r._idx else 'none' }}; background:#f8fafc;">
                   <td colspan="6" style="padding:16px; border-top:none;">
-                    <form method="post" action="/edit">
+                    <form method="post" action="/edit" onsubmit="saveScrollFocus({{ r._idx }})">
                       <input type="hidden" name="idx" value="{{ r._idx }}">
                       <input type="hidden" name="mode" value="{{ mode }}">
                       <input type="hidden" name="day" value="{{ selected_day }}">
@@ -1530,6 +1530,15 @@
       window.location.href = url;
     }
 
+    // 전체관리에서 편집/삭제 폼 제출 직전에 스크롤 위치를 기억해뒀다가,
+    // 결과 페이지가 로드되면 같은 위치로 복원 (삭제된 행이면 대략적인 스크롤 위치로)
+    function saveScrollFocus(idx) {
+      try {
+        sessionStorage.setItem('mr_focus_idx', String(idx));
+        sessionStorage.setItem('mr_scroll_y', String(window.scrollY));
+      } catch (e) {}
+    }
+
     {% if edit_id %}
     // 체크모드에서 편집으로 이동한 경우, 해당 편집 폼으로 자동 스크롤
     document.addEventListener('DOMContentLoaded', function() {
@@ -1538,6 +1547,25 @@
         editRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     });
+    {% else %}
+    (function restoreScrollFocus() {
+      var focusIdx, scrollY;
+      try {
+        focusIdx = sessionStorage.getItem('mr_focus_idx');
+        scrollY = sessionStorage.getItem('mr_scroll_y');
+        sessionStorage.removeItem('mr_focus_idx');
+        sessionStorage.removeItem('mr_scroll_y');
+      } catch (e) {
+        return;
+      }
+      if (focusIdx === null) return;
+      var row = document.getElementById('rule-' + focusIdx);
+      if (row) {
+        row.scrollIntoView({ block: 'center' });
+      } else if (scrollY !== null) {
+        window.scrollTo(0, parseInt(scrollY, 10));
+      }
+    })();
     {% endif %}
 
   </script>

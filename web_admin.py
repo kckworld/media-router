@@ -684,7 +684,8 @@ def add():
     if cat: params.append(f"cat={cat}")
     if sort != "default": params.append(f"sort={sort}")
     if sort_dir != "asc": params.append(f"dir={sort_dir}")
-    if hide_no_days == "1": params.append(f"hide_no_days={hide_no_days}")
+    # 요일 없는 규칙 표시/숨김 필터도 항상 유지
+    params.append(f"hide_no_days={hide_no_days}")
 
     redirect_url = "/" + ("?" + "&".join(params) if params else "")
     return redirect(redirect_url)
@@ -714,7 +715,8 @@ def delete():
     if cat: params.append(f"cat={cat}")
     if sort != "default": params.append(f"sort={sort}")
     if sort_dir != "asc": params.append(f"dir={sort_dir}")
-    if hide_no_days == "1": params.append(f"hide_no_days={hide_no_days}")
+    # 요일 없는 규칙 표시/숨김 필터도 항상 유지
+    params.append(f"hide_no_days={hide_no_days}")
 
     redirect_url = "/" + ("?" + "&".join(params) if params else "")
     return redirect(redirect_url)
@@ -931,8 +933,9 @@ def edit():
         if cat: params.append(f"cat={cat}")
         if sort != "default": params.append(f"sort={sort}")
         if sort_dir != "asc": params.append(f"dir={sort_dir}")
-        if hide_no_days == "1": params.append(f"hide_no_days={hide_no_days}")
-        
+        # 요일 없는 규칙 표시/숨김 필터도 항상 유지
+        params.append(f"hide_no_days={hide_no_days}")
+
         redirect_url = "/" + ("?" + "&".join(params) if params else "")
         return redirect(redirect_url)
 
