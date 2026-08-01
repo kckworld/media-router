@@ -78,7 +78,94 @@
       letter-spacing: -0.02em;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
     }
-    
+
+    .run-batch-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.16);
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      border-radius: 10px;
+      backdrop-filter: blur(10px);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      flex: 0 0 auto;
+    }
+
+    .run-batch-btn:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.28);
+      border-color: rgba(255, 255, 255, 0.55);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+    }
+
+    .run-batch-btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    .run-batch-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .run-batch-btn .icon {
+      font-size: 13px;
+      line-height: 1;
+    }
+
+    .run-batch-btn .spinner {
+      width: 13px;
+      height: 13px;
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      display: inline-block;
+      animation: run-batch-spin 0.7s linear infinite;
+    }
+
+    @keyframes run-batch-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(16px);
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      color: #fff;
+      padding: 13px 22px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 1000;
+      max-width: 90vw;
+      text-align: center;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .toast.success {
+      background: linear-gradient(135deg, var(--success) 0%, var(--success-hover) 100%);
+    }
+
+    .toast.error {
+      background: linear-gradient(135deg, var(--danger) 0%, var(--danger-hover) 100%);
+    }
+
     .mode-tabs {
       display: flex;
       gap: 0;
@@ -734,6 +821,9 @@
       <div>
         <h1>Media Router Web Admin</h1>
       </div>
+      <button type="button" class="run-batch-btn" id="runBatchBtn" onclick="runBatch()">
+        <span class="icon">▶</span> 배치 실행
+      </button>
     </header>
 
     <div class="topbar-inner">
@@ -808,6 +898,8 @@
       {% endif %}{# end if mode controls #}
     </div>
   </div>
+
+  <div class="toast" id="toast"></div>
 
   <main>
 
@@ -1572,6 +1664,45 @@
       }
     })();
     {% endif %}
+
+    // 상단 "배치 실행" 버튼: media_router 전체 배치(run_all.sh)를 호스트에서 수동 실행 요청
+    function showToast(message, type) {
+      var toast = document.getElementById('toast');
+      if (!toast) return;
+      toast.textContent = message;
+      toast.className = 'toast show' + (type ? ' ' + type : '');
+      clearTimeout(toast._hideTimer);
+      toast._hideTimer = setTimeout(function() {
+        toast.className = 'toast';
+      }, 4000);
+    }
+
+    function runBatch() {
+      if (!confirm('media_router 배치(run_all.sh)를 지금 실행할까요?\n실제 파일 이동/이름변경이 즉시 진행됩니다.')) {
+        return;
+      }
+      var btn = document.getElementById('runBatchBtn');
+      var originalHTML = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> 요청 중...';
+
+      fetch('/run_batch', { method: 'POST' })
+        .then(function(r) {
+          return r.json().then(function(data) { return { ok: r.ok, data: data }; });
+        })
+        .then(function(res) {
+          showToast(res.data.message || (res.ok ? '요청 완료' : '요청 실패'), res.ok ? 'success' : 'error');
+        })
+        .catch(function(e) {
+          showToast('요청 중 오류가 발생했습니다: ' + e, 'error');
+        })
+        .finally(function() {
+          setTimeout(function() {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+          }, 3000);
+        });
+    }
 
   </script>
 </body>

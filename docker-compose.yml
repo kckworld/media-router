@@ -8,6 +8,9 @@ services:
       - ./data:/app/data
       - /volume1/video:/volume1/video:ro
       - /volume1/web/video_auto:/volume1/web/video_auto
+      - ./secrets:/app/secrets:ro
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - RUN_BATCH_SSH_KEY=/app/secrets/run_batch_key
+      - RUN_BATCH_SSH_PORT=202

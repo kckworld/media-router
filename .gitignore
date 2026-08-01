@@ -4,6 +4,7 @@ state.yaml
 status.json
 logs/
 data/
+secrets/
 __pycache__/
 *.zip
 .venv/

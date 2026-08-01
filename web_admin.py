@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
-import os, hashlib, re
+import os, hashlib, re, subprocess, time, threading
 from flask import Flask, request, redirect, render_template, abort, make_response, jsonify
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -18,6 +18,13 @@ DAY_ORDER = {d: i for i, d in enumerate(WEEKDAYS)}
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Seoul"))
 
 RENAME_RULES_PATH = Path(os.getenv("RENAME_RULES_PATH", "/volume1/web/video_auto/rename_rules.conf"))
+
+# 전체 배치(run_all.sh) 수동 실행 - 호스트로 SSH 접속해 강제 명령(run_all.sh)만 실행
+RUN_BATCH_SSH_KEY = os.getenv("RUN_BATCH_SSH_KEY", "/app/secrets/run_batch_key")
+RUN_BATCH_SSH_HOST = os.getenv("RUN_BATCH_SSH_HOST", "127.0.0.1")
+RUN_BATCH_SSH_PORT = os.getenv("RUN_BATCH_SSH_PORT", "202")
+RUN_BATCH_SSH_USER = os.getenv("RUN_BATCH_SSH_USER", "kck9010")
+_run_batch_state = {"lock": threading.Lock(), "last_triggered": 0}
 
 # TMDB API KEY 초기화 함수
 def get_tmdb_api_key():
@@ -938,6 +945,40 @@ def edit():
 
         redirect_url = "/" + ("?" + "&".join(params) if params else "")
         return redirect(redirect_url)
+
+@app.route("/run_batch", methods=["POST"])
+def run_batch():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+
+    if not Path(RUN_BATCH_SSH_KEY).exists():
+        return jsonify({"success": False, "message": "SSH 키가 설정되지 않았습니다 (secrets/run_batch_key 없음)."}), 500
+
+    with _run_batch_state["lock"]:
+        elapsed = time.time() - _run_batch_state["last_triggered"]
+        if elapsed < 30:
+            return jsonify({"success": False, "message": f"방금 요청했습니다. {int(30 - elapsed)}초 후 다시 시도하세요."}), 429
+        _run_batch_state["last_triggered"] = time.time()
+
+    try:
+        subprocess.Popen(
+            [
+                "ssh",
+                "-i", RUN_BATCH_SSH_KEY,
+                "-p", RUN_BATCH_SSH_PORT,
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=5",
+                f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}",
+            ],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        app.logger.exception("배치 실행 요청 중 오류")
+        return jsonify({"success": False, "message": f"실행 요청 실패: {e}"}), 500
+
+    return jsonify({"success": True, "message": "배치 실행을 요청했습니다. 잠시 후 로그에서 진행 상황을 확인하세요."})
 
 @app.route("/search_tmdb", methods=["POST"])
 def search_tmdb():

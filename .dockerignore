@@ -1,0 +1,15 @@
+secrets/
+.git/
+.github/
+data/
+logs/
+.venv/
+__pycache__/
+*.pyc
+.env
+config.yaml
+config.yaml.migrated
+state.yaml
+status.json
+run.lock
+*.bak
