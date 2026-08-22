@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
-import os, hashlib, re, subprocess, time, threading
+import os, hashlib, hmac, re, secrets, subprocess, time, threading
 from flask import Flask, request, redirect, render_template, abort, make_response, jsonify
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import requests
-from db import load_cfg, save_cfg
+from db import load_cfg, save_cfg, DATA_DIR
 
 BASE = Path(__file__).resolve().parent
 PASSWORD = os.getenv("MEDIA_ADMIN_PASSWORD", "")
@@ -25,6 +26,73 @@ RUN_BATCH_SSH_HOST = os.getenv("RUN_BATCH_SSH_HOST", "127.0.0.1")
 RUN_BATCH_SSH_PORT = os.getenv("RUN_BATCH_SSH_PORT", "202")
 RUN_BATCH_SSH_USER = os.getenv("RUN_BATCH_SSH_USER", "kck9010")
 _run_batch_state = {"lock": threading.Lock(), "last_triggered": 0}
+
+
+def _load_or_create_session_secret() -> str:
+    """세션 쿠키 서명용 비밀키. 관리자 비밀번호와 완전히 무관한 별도 랜덤값이다
+    (예전엔 쿠키 값 자체가 "ok:"+비밀번호 라서, 쿠키가 유출되면 곧 비밀번호
+    유출이었음). DATA_DIR에 한 번 생성해두고 재시작 후에도 재사용해서,
+    컨테이너를 재시작해도 기존 로그인 세션이 전부 끊기지 않게 한다."""
+    key_path = DATA_DIR / ".session_secret"
+    try:
+        if key_path.exists():
+            existing = key_path.read_text(encoding="utf-8").strip()
+            if existing:
+                return existing
+    except Exception:
+        pass
+    key = secrets.token_hex(32)
+    try:
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.write_text(key, encoding="utf-8")
+        key_path.chmod(0o600)
+    except Exception:
+        pass  # 저장 실패해도 이번 프로세스 수명 동안은 메모리의 key로 동작
+    return key
+
+
+_SESSION_SECRET = _load_or_create_session_secret()
+_session_serializer = URLSafeTimedSerializer(_SESSION_SECRET, salt="media-router-admin-session")
+SESSION_MAX_AGE = 30 * 24 * 3600  # 쿠키 자체 max_age(12h/30d)와 별개로, 서명 토큰이 유효한 상한
+
+# 로그인 브루트포스 방지: IP별로 짧은 시간 내 실패가 누적되면 일정 시간 잠금.
+# (완벽한 방어는 아니지만 - 리버스 프록시 뒤라면 X-Forwarded-For가 스푸핑될 수
+# 있음 - 무차별 대입 스크립트 정도는 충분히 막는다.)
+_login_lock = threading.Lock()
+_login_failures = {}  # ip -> 실패 타임스탬프 리스트
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_WINDOW_SECONDS = 300   # 이 시간 안에
+LOGIN_LOCKOUT_SECONDS = 60   # 이만큼 잠금
+
+
+def _client_ip(req) -> str:
+    fwd = req.headers.get("X-Forwarded-For", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return req.remote_addr or "unknown"
+
+
+def _login_blocked_seconds(ip: str) -> int:
+    """이 IP가 잠겨있으면 남은 초를, 아니면 0을 반환."""
+    now = time.time()
+    with _login_lock:
+        fails = [t for t in _login_failures.get(ip, []) if now - t < LOGIN_WINDOW_SECONDS]
+        _login_failures[ip] = fails
+    if len(fails) < LOGIN_MAX_ATTEMPTS:
+        return 0
+    trigger_ts = fails[-LOGIN_MAX_ATTEMPTS]
+    remain = LOGIN_LOCKOUT_SECONDS - (now - trigger_ts)
+    return max(0, int(round(remain)))
+
+
+def _register_login_failure(ip: str) -> None:
+    with _login_lock:
+        _login_failures.setdefault(ip, []).append(time.time())
+
+
+def _clear_login_failures(ip: str) -> None:
+    with _login_lock:
+        _login_failures.pop(ip, None)
 
 # TMDB API KEY 초기화 함수
 def get_tmdb_api_key():
@@ -52,8 +120,14 @@ def authed(req):
         return True
     if req.path == "/health":
         return True
-    if req.cookies.get("media_admin", "") == f"ok:{PASSWORD}":
-        return True
+    token = req.cookies.get("media_admin", "")
+    if token:
+        try:
+            data = _session_serializer.loads(token, max_age=SESSION_MAX_AGE)
+            if data.get("a") is True:
+                return True
+        except (BadSignature, SignatureExpired):
+            pass
     return redirect("/login")
 
 def split_title_and_year(name: str) -> tuple[str, int | None]:
@@ -601,7 +675,20 @@ def check_episodes():
 
 @app.route("/login", methods=["GET"])
 def login_page():
-    return render_template("login.html", has_password=bool(PASSWORD), error=request.args.get("error") == "1")
+    error_code = request.args.get("error", "")
+    wait_seconds = 0
+    if error_code == "2":
+        try:
+            wait_seconds = max(0, int(request.args.get("wait", "0")))
+        except ValueError:
+            wait_seconds = 0
+    return render_template(
+        "login.html",
+        has_password=bool(PASSWORD),
+        error=(error_code == "1"),
+        locked=(error_code == "2"),
+        wait_seconds=wait_seconds,
+    )
 
 @app.route("/login", methods=["POST"])
 def login():
@@ -609,11 +696,24 @@ def login():
     remember = request.form.get("remember") == "1"
     if not PASSWORD:
         return redirect("/")
-    if pw == PASSWORD:
+
+    ip = _client_ip(request)
+    blocked_for = _login_blocked_seconds(ip)
+    if blocked_for > 0:
+        return redirect(f"/login?error=2&wait={blocked_for}")
+
+    if hmac.compare_digest(pw, PASSWORD):
+        _clear_login_failures(ip)
         resp=make_response(redirect("/"))
         max_age = 30 * 24 * 3600 if remember else 12 * 3600
-        resp.set_cookie("media_admin","ok:"+PASSWORD,max_age=max_age,httponly=True,samesite="Lax",secure=request.is_secure)
+        token = _session_serializer.dumps({"a": True})
+        resp.set_cookie("media_admin", token, max_age=max_age, httponly=True, samesite="Lax", secure=request.is_secure)
         return resp
+
+    _register_login_failure(ip)
+    blocked_for = _login_blocked_seconds(ip)  # 방금 실패로 임계치를 넘겼으면 바로 잠금 안내
+    if blocked_for > 0:
+        return redirect(f"/login?error=2&wait={blocked_for}")
     return redirect("/login?error=1")
 
 @app.route("/add", methods=["POST"])

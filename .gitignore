@@ -6,6 +6,7 @@ logs/
 data/
 secrets/
 __pycache__/
+.pytest_cache/
 *.zip
 .venv/
 *.code-workspace
@@ -14,3 +15,4 @@ media_cron.sh
 restart_web_admin.sh
 RESTART_GUIDE.md
 .env
+run.lock

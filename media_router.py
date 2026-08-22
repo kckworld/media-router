@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import os, sys, time, shutil, fnmatch, subprocess, stat, pwd, grp, re
+import os, sys, time, shutil, fnmatch, subprocess, stat, pwd, grp, re, logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Iterable, Optional
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 import requests
-from db import load_cfg, save_cfg_atomic, DATA_DIR
+from db import load_cfg, update_rule_fields, set_config_value, DATA_DIR
 
 BASE: Path = Path(__file__).resolve().parent
 LOGDIR: Path = DATA_DIR / "logs"
@@ -17,19 +21,26 @@ WEEKDAYS: List[str] = ["월", "화", "수", "목", "금", "토", "일"]
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Seoul"))
 VIDEO_EXTENSIONS: set = {'.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.webm', '.ts', '.m2ts', '.mts', '.m4v', '.3gp', '.ogv', '.asf', '.divx', '.vob', '.f4v', '.mpg', '.mpeg', '.m2v'}
 
+# media_router.log가 open("a")로 무한정 append만 되며 계속 커지던 문제를 막기 위해
+# 5MB x 5개(최대 25MB)로 순환 저장한다. 로그 줄 형식(`[media_router TS] msg`)은 그대로 유지.
+_logger = logging.getLogger("media_router")
+_logger.setLevel(logging.INFO)
+_logger.propagate = False
+if not _logger.handlers:
+    _fmt = logging.Formatter("[media_router %(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    _file_handler = RotatingFileHandler(LOGFILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    _file_handler.setFormatter(_fmt)
+    _logger.addHandler(_file_handler)
+    _stream_handler = logging.StreamHandler(sys.stdout)
+    _stream_handler.setFormatter(_fmt)
+    _logger.addHandler(_stream_handler)
+
 
 def current_localtime() -> datetime:
     return datetime.now(APP_TZ)
 
 def log(msg: str) -> None:
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[media_router {ts}] {msg}"
-    print(line)
-    try:
-        with LOGFILE.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
+    _logger.info(msg)
 
 def extract_episode_number(filename: str):
     """파일명에서 에피소드 번호 추출 (E01, E1, EP01, S01E05, 01화 등)"""
@@ -71,7 +82,7 @@ def _ensure_rule_updated_map(rule: Dict) -> None:
     rule["updated_map"] = umap
     # 단일 updated 키는 남겨두되, 더 이상 로직에 사용하지 않음
 
-# load_cfg and save_cfg_atomic are imported from db module
+# load_cfg, update_rule_fields, set_config_value are imported from db module
 
 def tg_send(cfg: Dict, text: str) -> None:
     tg = cfg.get("telegram") or {}
@@ -240,20 +251,43 @@ def safe_move_with_ownership(src: Path, dst_dir: Path,
     return dst
 
 def reset_updated_for_today(cfg: Dict) -> bool:
-    """자정~1시: 오늘 요일만 N으로 리셋 (요일별 독립 저장)"""
+    """오늘 날짜의 첫 실행에서 오늘 요일만 N으로 리셋 (요일별 독립 저장).
+
+    캐치업: 예전에는 00:00~01:00 사이에 실행될 때만 리셋했는데, 재부팅/스케줄러
+    장애 등으로 그 시간대에 배치가 한 번도 못 돌면 해당 요일 리셋이 통째로
+    스킵되고 다음 주 같은 요일까지 복구되지 않는 문제가 있었다.
+    이제는 '마지막으로 리셋한 날짜'(last_reset_date)를 cfg에 저장해두고,
+    오늘 날짜로 아직 리셋을 안 했다면 실행 시각과 무관하게(=지연 캐치업)
+    첫 실행에서 리셋한다. 같은 날 여러 번 실행돼도 한 번만 리셋되므로
+    사용자가 이미 체크(Y)한 항목을 낮에 다시 N으로 되돌리는 일은 없다.
+
+    이 함수는 스스로 targeted write를 수행한다(호출자가 별도로 전체 저장할
+    필요 없음) — 레이스 컨디션 방지를 위해 db.update_rule_fields()로 건드린
+    규칙만 개별 UPDATE하고, 전체 규칙 목록을 스냅샷 교체하지 않는다.
+    """
     now = current_localtime()
-    if 0 <= now.hour < 1:
-        today = WEEKDAYS[now.weekday()]
-        changed = False
+    today_date = now.date().isoformat()
+    last = cfg.get("last_reset_date")
+
+    if last == today_date:
+        return False  # 오늘 이미 리셋 완료
+
+    today = WEEKDAYS[now.weekday()]
+    if last is not None:
+        # 정상 케이스(과거에도 리셋 이력이 있음): 날짜가 바뀌었으니 오늘 요일 리셋
         for r in cfg.get("rules", []):
             days = r.get("days") or []
             if today in days:
                 _ensure_rule_updated_map(r)
                 if r["updated_map"].get(today) != "N":
                     r["updated_map"][today] = "N"
-                    changed = True
-        return changed
-    return False
+                    update_rule_fields(r["id"], updated_map=r["updated_map"])
+    # last가 None이면(last_reset_date 필드가 처음 생기는 마이그레이션 시점) 기존
+    # updated_map을 건드리지 않고 날짜만 기록해, 배포 당일 이미 체크한 항목이
+    # 실수로 되돌아가지 않게 한다. 다음 날부터는 정상적으로 캐치업 동작한다.
+    cfg["last_reset_date"] = today_date
+    set_config_value("last_reset_date", today_date)
+    return True
 
 def choose_mark_day_by_order(rule: Dict) -> str | None:
     """규칙의 days 순서대로 마킹할 요일 결정.
@@ -274,8 +308,7 @@ def choose_mark_day_by_order(rule: Dict) -> str | None:
 
 def main() -> None:
     cfg = load_cfg()
-    if reset_updated_for_today(cfg):
-        save_cfg_atomic(cfg)
+    reset_updated_for_today(cfg)  # 필요 시 스스로 targeted write 수행 (전체 스냅샷 저장 없음)
 
     sources = [Path(s) for s in (cfg.get("paths") or {}).get("sources", [])]
     cleanup_cfg = cfg["paths"].get("cleanup", {})
@@ -284,14 +317,14 @@ def main() -> None:
 
     own = cfg["ownership"]
     apply_own = own.get("apply", True)
-    uid, gid = resolve_ids(own["user"], own["group"])
+    uid, gid = resolve_ids(own["user"], own["group"]) if apply_own else (-1, -1)
     file_mode = parse_mode(own["file_mode"], 0o664)
     dir_mode = parse_mode(own["dir_mode"], 0o775)
     setgid_dirs = own.get("setgid_dirs", True)
     do_acl = own.get("enforce_inherit", True)
     acl_entries = own.get("extra_acl") or []
 
-    moved_count, changed = 0, False
+    moved_count = 0
     today = WEEKDAYS[current_localtime().weekday()]
 
     for src_root in sources:
@@ -355,7 +388,7 @@ def main() -> None:
                         mark_day = choose_mark_day_by_order(r)
                         if mark_day and r["updated_map"].get(mark_day) != "Y":
                             r["updated_map"][mark_day] = "Y"
-                            changed = True
+                            update_rule_fields(r["id"], updated_map=r["updated_map"])
                         continue
 
                     # 드라마 파일명에 .END 같은 꼬리 토큰이 있으면 Plex 스캔 호환 형태로 정리
@@ -399,7 +432,7 @@ def main() -> None:
                                 received.append(episode_num)
                                 received.sort()
                                 r["received_episodes"] = received
-                                changed = True
+                                update_rule_fields(r["id"], received_episodes=received)
                                 log(f"Episode {episode_num} recorded for {sub}")
 
                     # 요일별 Y 마킹: days 순서만 따름 (한 개면 그 요일, 여러 개면 앞에서부터 미처리 우선)
@@ -407,14 +440,11 @@ def main() -> None:
                     mark_day = choose_mark_day_by_order(r)
                     if mark_day and r["updated_map"].get(mark_day) != "Y":
                         r["updated_map"][mark_day] = "Y"
-                        changed = True
+                        update_rule_fields(r["id"], updated_map=r["updated_map"])
 
                 except Exception as e:
                     log(f"Move fail: {f} -> {target_dir} ({e})")
 
-    if changed:
-        save_cfg_atomic(cfg)
-    
     # 남은 비디오 파일 검사 및 텔레그램 전송
     remaining_videos = []
     for src_root in sources:

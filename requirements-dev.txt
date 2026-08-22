@@ -1,0 +1,5 @@
+# 테스트 전용 의존성. 프로덕션 Docker 이미지(requirements.txt)에는 포함하지 않는다.
+# 설치: pip install -r requirements-dev.txt
+# 실행: pytest -q
+-r requirements.txt
+pytest==8.3.4

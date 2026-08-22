@@ -221,7 +221,7 @@ def save_cfg(cfg: Dict) -> None:
     init_db()
     c = _conn()
     with c:
-        for key in ("paths", "base_paths", "telegram", "ownership", "tmdb_api_key"):
+        for key in ("paths", "base_paths", "telegram", "ownership", "tmdb_api_key", "last_reset_date"):
             if key in cfg:
                 c.execute(
                     "INSERT OR REPLACE INTO config (key, value) VALUES (?,?)",
@@ -294,6 +294,59 @@ def save_cfg(cfg: Dict) -> None:
                         r.get("release"),
                     ),
                 )
+
+
+_RULE_PATCHABLE_COLUMNS = {"updated_map", "received_episodes", "last_episode", "total_episodes", "updated"}
+
+
+def update_rule_fields(rule_id: int, **fields: Any) -> bool:
+    """기존 규칙 하나의 지정된 컬럼만 UPDATE (전체 목록 교체/삭제 없음).
+
+    save_cfg()는 "메모리에 들고 있는 전체 규칙 목록"을 기준으로 DB에 없는 id를
+    삭제하고 있는 id를 통째로 덮어쓰는 스냅샷 교체 방식이다. media_router.py처럼
+    크론으로 주기 실행되며 오래 걸리는(파일 이동 중 텔레그램 전송 등으로 수십 초
+    이상 걸릴 수 있는) 호출자가 이 방식을 쓰면, 그 사이 웹 UI에서 규칙을
+    추가/삭제했을 때 크론이 들고 있던 오래된 스냅샷 기준으로 방금 추가된 규칙을
+    지워버리거나 방금 삭제된 규칙을 되살리는 레이스 컨디션이 생긴다.
+
+    규칙을 추가/삭제하지 않고 기존 규칙의 상태 필드(처리 여부, 받은 에피소드 등)만
+    갱신하는 호출자는 이 함수로 해당 id의 해당 컬럼만 UPDATE해야 한다. 그 사이
+    규칙이 삭제됐다면 UPDATE는 0행에 적용되고 조용히 끝난다(되살리지 않음).
+    다른 규칙에는 전혀 영향을 주지 않는다.
+    """
+    fields = {k: v for k, v in fields.items() if k in _RULE_PATCHABLE_COLUMNS}
+    if not fields or not rule_id:
+        return False
+    init_db()
+    c = _conn()
+    set_clauses = []
+    values: List[Any] = []
+    for col, val in fields.items():
+        if col in ("updated_map",):
+            val = json.dumps(val)
+        elif col == "received_episodes":
+            val = json.dumps(val) if val is not None else None
+        set_clauses.append(f"{col}=?")
+        values.append(val)
+    values.append(rule_id)
+    with c:
+        cur = c.execute(f"UPDATE rules SET {', '.join(set_clauses)} WHERE id=?", values)
+    return cur.rowcount > 0
+
+
+def set_config_value(key: str, value: Any) -> None:
+    """규칙 목록은 건드리지 않고 top-level 설정 키 하나만 갱신.
+
+    save_cfg()를 거치면 규칙 목록 diff/삭제 로직까지 함께 도는데, last_reset_date
+    처럼 규칙과 무관한 단순 값을 갱신할 때는 그럴 필요가 없다.
+    """
+    init_db()
+    c = _conn()
+    with c:
+        c.execute(
+            "INSERT OR REPLACE INTO config (key, value) VALUES (?,?)",
+            (key, json.dumps(value, ensure_ascii=False)),
+        )
 
 
 # Alias so media_router.py can import save_cfg_atomic

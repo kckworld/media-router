@@ -60,7 +60,7 @@ docker compose up -d
 sudo /usr/local/bin/docker exec media_router python media_router.py
 ```
 
-- 매일 자정~1시 사이 실행 시 해당 요일의 `updated_map`을 자동으로 `N`으로 리셋합니다.
+- 날짜가 바뀐 뒤 첫 실행에서 해당 요일의 `updated_map`을 자동으로 `N`으로 리셋합니다(캐치업). 재부팅/스케줄러 장애 등으로 자정 시간대를 놓쳐도, 그날 배치가 처음 도는 시점에 지연 리셋되며 같은 날 중복 리셋되지 않습니다.
 - 파일 이동 성공 시 해당 요일의 `updated_map`을 `Y`로 마킹합니다.
 - 에피소드 점검 기능을 사용하려면 컨테이너에서 대상 경로를 읽을 수 있어야 하므로 `/volume1/video` 마운트가 필요합니다.
 - 드라마 추가 시 전체 에피소드 수를 비워두면 `TMDB_API_KEY`가 설정된 경우 TMDB에서 자동 조회해 채웁니다.
@@ -84,5 +84,18 @@ sudo /usr/local/bin/docker exec media_router python media_router.py
 | `paths.sources` | 다운로드 폴더 경로 |
 | `base_paths` | 카테고리별 대상 폴더 |
 | `ownership` | 파일 소유권/권한 설정 |
+
+---
+
+## 테스트
+
+`find_matches`(패턴 AND/OR/exclude 조합), `extract_episode_number`(에피소드 번호 추출),
+`reset_updated_for_today`(캐치업 리셋), `db.update_rule_fields`(레이스 컨디션 방지)에 대한
+pytest 회귀 테스트가 있습니다. 실제 운영 DB는 건드리지 않고 임시 SQLite DB에서 동작합니다.
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
 
 > ⚠️ `ownership.enforce_inherit`은 Synology 전용 기능입니다. 일반 Linux에서는 `false`로 설정하세요.

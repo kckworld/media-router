@@ -9,6 +9,10 @@ flock -n 9 || { echo "[run_all $(date '+%H:%M:%S')] 이미 실행중입니다.";
 
 ra_ts() { echo "[run_all $(date '+%H:%M:%S')]"; }
 
+# 30일 지난 로그 자동 정리 (run_all/generate_schedule_image/hwasung_alert 등
+# logs/ 아래 쌓이는 모든 *.log 대상). 삭제 없이는 무기한 누적되던 문제 방지.
+find "$LOGDIR" -maxdepth 1 -name "*.log" -mtime +30 -delete 2>/dev/null || true
+
 echo "$(ra_ts) RUN START"
 
 # 1. 드라마 이름 변경
