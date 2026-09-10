@@ -279,9 +279,21 @@ def reset_updated_for_today(cfg: Dict) -> bool:
             days = r.get("days") or []
             if today in days:
                 _ensure_rule_updated_map(r)
-                if r["updated_map"].get(today) != "N":
+                umap_changed = r["updated_map"].get(today) != "N"
+                # 하루 여러 편 드라마의 요일별 카운터도 오늘 요일만 0으로
+                prog = _get_day_progress(r)
+                prog_changed = prog.get(today, 0) != 0
+                if not (umap_changed or prog_changed):
+                    continue
+                patch = {}
+                if umap_changed:
                     r["updated_map"][today] = "N"
-                    update_rule_fields(r["id"], updated_map=r["updated_map"])
+                    patch["updated_map"] = r["updated_map"]
+                if prog_changed:
+                    prog[today] = 0
+                    r["day_progress"] = prog
+                    patch["day_progress"] = prog
+                update_rule_fields(r["id"], **patch)
     # last가 None이면(last_reset_date 필드가 처음 생기는 마이그레이션 시점) 기존
     # updated_map을 건드리지 않고 날짜만 기록해, 배포 당일 이미 체크한 항목이
     # 실수로 되돌아가지 않게 한다. 다음 날부터는 정상적으로 캐치업 동작한다.
@@ -294,6 +306,10 @@ def choose_mark_day_by_order(rule: Dict) -> str | None:
     - days가 1개면 그 요일
     - days가 2개 이상이면 앞에서부터 아직 Y가 아닌 첫 요일
     - 모두 Y면 days[0]
+
+    에피소드 번호를 추적하는 드라마는 choose_mark_days_by_episode()를 우선
+    사용한다. 이 함수는 에피소드 번호를 못 뽑는 규칙(예능/다큐/애니, 또는
+    파일명에서 화수를 못 읽는 드라마)의 폴백이다.
     """
     days = (rule.get("days") or [])[:]
     if not days:
@@ -305,6 +321,85 @@ def choose_mark_day_by_order(rule: Dict) -> str | None:
         if umap.get(d, "N") != "Y":
             return d
     return days[0]
+
+
+def _episodes_per_day(rule: Dict) -> int:
+    try:
+        p = int(rule.get("episodes_per_day") or 1)
+    except (TypeError, ValueError):
+        p = 1
+    return p if p >= 1 else 1
+
+
+def _get_day_progress(rule: Dict) -> Dict[str, int]:
+    prog = rule.get("day_progress")
+    if not isinstance(prog, dict):
+        return {}
+    out: Dict[str, int] = {}
+    for k, v in prog.items():
+        try:
+            out[k] = int(v)
+        except (TypeError, ValueError):
+            out[k] = 0
+    return out
+
+
+def mark_rule_updated_map(rule: Dict, new_episodes: int = 0) -> None:
+    """규칙 하나의 updated_map을 Y로 갱신하고 DB에 개별 저장한다.
+
+    '하루 편수'(episodes_per_day, P)가 2 이상인 드라마는 요일별 카운터
+    (day_progress)에 이번에 새로 받은 편수를 days 순서대로 채운다. 한 요일이
+    P편을 다 채워야 그 요일이 Y가 되고, 그 전에는 다음 방영일로 넘어가지
+    않는다. 예: 신병(수/목 각 2편) → 수요일분 2편을 받으면 '수'만 Y, '목'은
+    목요일분 2편이 실제로 들어와야 Y. day_progress는 주간 리셋 때 그 요일만
+    0으로 돌아간다(reset_updated_for_today).
+
+    그 외(P<=1, 예능/다큐/애니, 또는 새 에피소드 없이 호출된 경우)는 기존
+    choose_mark_day_by_order() 폴백을 쓴다. 어느 경우든 기존 Y를 N으로
+    되돌리지는 않는다(주간 리셋의 역할).
+    """
+    _ensure_rule_updated_map(rule)
+    umap = rule["updated_map"]
+    days = rule.get("days") or []
+    p = _episodes_per_day(rule)
+
+    if (rule.get("category") or "").strip() == "드라마" and p > 1 and days and new_episodes > 0:
+        prog = _get_day_progress(rule)
+        remaining = new_episodes
+        prog_changed = False
+        umap_changed = False
+        for d in days:
+            if remaining <= 0:
+                break
+            cur = prog.get(d, 0)
+            if cur >= p:
+                continue  # 이번 주 이 요일 몫은 이미 참
+            add = min(remaining, p - cur)
+            cur += add
+            remaining -= add
+            prog[d] = cur
+            prog_changed = True
+            if cur >= p and umap.get(d) != "Y":
+                umap[d] = "Y"
+                umap_changed = True
+        # remaining > 0 (모든 요일이 다 참): 다음 주 몫이 미리 온 것. received에
+        # 이미 기록돼 있으므로 여기서 별도로 이월하지 않는다.
+        if prog_changed:
+            rule["day_progress"] = prog
+            update_rule_fields(rule["id"], day_progress=prog, updated_map=umap)
+        elif umap_changed:
+            update_rule_fields(rule["id"], updated_map=umap)
+        return
+
+    # 하루 편수>1 드라마인데 새 에피소드 수를 못 셌으면(파일명에서 화수 못 읽음
+    # 등) 아무것도 마킹하지 않는다 — 잘못 넘어가느니 리셋 상태(N)를 유지.
+    if (rule.get("category") or "").strip() == "드라마" and p > 1:
+        return
+
+    mark_day = choose_mark_day_by_order(rule)
+    if mark_day and umap.get(mark_day) != "Y":
+        umap[mark_day] = "Y"
+        update_rule_fields(rule["id"], updated_map=umap)
 
 def main() -> None:
     cfg = load_cfg()
@@ -384,11 +479,7 @@ def main() -> None:
 
                     if skip_move_keep_existing:
                         tg_send(cfg, f"중복 정리: {f.name} (더 작은 기존 파일 유지)")
-                        _ensure_rule_updated_map(r)
-                        mark_day = choose_mark_day_by_order(r)
-                        if mark_day and r["updated_map"].get(mark_day) != "Y":
-                            r["updated_map"][mark_day] = "Y"
-                            update_rule_fields(r["id"], updated_map=r["updated_map"])
+                        mark_rule_updated_map(r)
                         continue
 
                     # 드라마 파일명에 .END 같은 꼬리 토큰이 있으면 Plex 스캔 호환 형태로 정리
@@ -422,6 +513,7 @@ def main() -> None:
                     tg_send(cfg, f"이동: {f.name} → {target_dir}")
 
                     # 드라마인 경우 에피소드 번호 추출 및 저장
+                    new_episodes = 0
                     if category == "드라마":
                         episode_num = extract_episode_number(f.name)
                         if episode_num is not None:
@@ -434,13 +526,11 @@ def main() -> None:
                                 r["received_episodes"] = received
                                 update_rule_fields(r["id"], received_episodes=received)
                                 log(f"Episode {episode_num} recorded for {sub}")
+                                new_episodes = 1
 
-                    # 요일별 Y 마킹: days 순서만 따름 (한 개면 그 요일, 여러 개면 앞에서부터 미처리 우선)
-                    _ensure_rule_updated_map(r)
-                    mark_day = choose_mark_day_by_order(r)
-                    if mark_day and r["updated_map"].get(mark_day) != "Y":
-                        r["updated_map"][mark_day] = "Y"
-                        update_rule_fields(r["id"], updated_map=r["updated_map"])
+                    # 요일별 Y 마킹: 드라마(하루 편수>1)는 요일별 카운터로 채우고,
+                    # 그 외에는 days 순서 폴백
+                    mark_rule_updated_map(r, new_episodes=new_episodes)
 
                 except Exception as e:
                     log(f"Move fail: {f} -> {target_dir} ({e})")

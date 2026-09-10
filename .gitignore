@@ -16,3 +16,4 @@ restart_web_admin.sh
 RESTART_GUIDE.md
 .env
 run.lock
+.omc/

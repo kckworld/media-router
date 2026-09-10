@@ -200,3 +200,82 @@ def test_reset_does_not_touch_unrelated_weekday(fresh_db, monkeypatch):
     reloaded = fresh_db.load_cfg()
     target = next(r for r in reloaded["rules"] if r["id"] == rule["id"])
     assert target["updated_map"]["일"] == "Y"
+
+
+# ---------------------------------------------------------------------------
+# mark_rule_updated_map: 하루 두 편 올라오는 드라마가 다음 방영일까지 처리
+# 완료로 찍히던 버그의 회귀 테스트 (episodes_per_day + day_progress 기반)
+# ---------------------------------------------------------------------------
+
+def _drama(days, updated_map=None, per_day=2, progress=None):
+    r = {"id": 1, "category": "드라마", "days": days,
+         "updated_map": dict(updated_map or {d: "N" for d in days}),
+         "episodes_per_day": per_day}
+    if progress:
+        r["day_progress"] = dict(progress)
+    return r
+
+
+def test_two_per_day_first_episode_does_not_mark_any_day():
+    r = _drama(["수", "목"])
+    mr.mark_rule_updated_map(r, new_episodes=1)
+    assert r["updated_map"] == {"수": "N", "목": "N"}
+    assert r["day_progress"] == {"수": 1}
+
+
+def test_two_per_day_second_episode_marks_only_first_airday():
+    """수요일분 2편째까지 받으면 '수'만 Y. '목'은 절대 안 넘어간다 (겪은 버그)."""
+    r = _drama(["수", "목"], progress={"수": 1})
+    mr.mark_rule_updated_map(r, new_episodes=1)
+    assert r["updated_map"] == {"수": "Y", "목": "N"}
+    assert r["day_progress"]["수"] == 2
+
+
+def test_two_per_day_two_episodes_at_once_marks_only_first_airday():
+    r = _drama(["수", "목"])
+    mr.mark_rule_updated_map(r, new_episodes=2)
+    assert r["updated_map"] == {"수": "Y", "목": "N"}
+
+
+def test_two_per_day_next_airday_marked_only_after_its_own_two_episodes():
+    r = _drama(["수", "목"], updated_map={"수": "Y", "목": "N"}, progress={"수": 2})
+    mr.mark_rule_updated_map(r, new_episodes=2)   # 목요일분 2편
+    assert r["updated_map"] == {"수": "Y", "목": "Y"}
+
+
+def test_two_per_day_four_episodes_dumped_together_marks_both_days():
+    r = _drama(["수", "목"])
+    mr.mark_rule_updated_map(r, new_episodes=4)
+    assert r["updated_map"] == {"수": "Y", "목": "Y"}
+
+
+def test_single_per_day_uses_order_fallback():
+    """하루 1편이면 예전 로직 그대로: 한 편 받을 때마다 다음 요일."""
+    r = _drama(["금", "토"], per_day=1)
+    mr.mark_rule_updated_map(r, new_episodes=1)
+    assert r["updated_map"]["금"] == "Y" and r["updated_map"]["토"] == "N"
+
+
+def test_reset_clears_only_todays_day_progress(fresh_db, monkeypatch):
+    """주간 리셋은 오늘 요일의 day_progress만 0으로 되돌린다."""
+    rule = _seed_rule(fresh_db, days=["월", "화"], updated_map={"월": "Y", "화": "Y"},
+                      episodes_per_day=2)
+    fresh_db.update_rule_fields(rule["id"], day_progress={"월": 2, "화": 2})
+    fresh_db.set_config_value("last_reset_date", "2026-09-06")
+    cfg = fresh_db.load_cfg()
+    # 2026-09-07 은 월요일
+    monkeypatch.setattr(mr, "current_localtime", lambda: datetime(2026, 9, 7, 0, 5, tzinfo=KST))
+
+    mr.reset_updated_for_today(cfg)
+
+    reloaded = fresh_db.load_cfg()
+    target = next(r for r in reloaded["rules"] if r["id"] == rule["id"])
+    assert target["updated_map"] == {"월": "N", "화": "Y"}
+    assert target["day_progress"] == {"월": 0, "화": 2}
+
+
+def test_seed_rule_persists_episodes_per_day(fresh_db):
+    rule = _seed_rule(fresh_db, days=["수", "목"], episodes_per_day=2, total_episodes=24)
+    reloaded = fresh_db.load_cfg()
+    target = next(r for r in reloaded["rules"] if r["id"] == rule["id"])
+    assert target["episodes_per_day"] == 2

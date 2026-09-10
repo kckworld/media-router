@@ -32,7 +32,9 @@ CREATE TABLE IF NOT EXISTS rules (
     total_episodes    INTEGER,
     received_episodes TEXT,
     last_episode      INTEGER,
-    release           TEXT
+    release           TEXT,
+    episodes_per_day  INTEGER,
+    day_progress      TEXT    NOT NULL DEFAULT '{}'
 );
 """
 
@@ -89,6 +91,10 @@ def _migrate_add_pattern2_exclude(c: sqlite3.Connection) -> None:
             c.execute("ALTER TABLE rules ADD COLUMN pattern2_or TEXT")
         if "exclude_pattern" not in cols:
             c.execute("ALTER TABLE rules ADD COLUMN exclude_pattern TEXT")
+        if "episodes_per_day" not in cols:
+            c.execute("ALTER TABLE rules ADD COLUMN episodes_per_day INTEGER")
+        if "day_progress" not in cols:
+            c.execute("ALTER TABLE rules ADD COLUMN day_progress TEXT NOT NULL DEFAULT '{}'")
         c.commit()
     except Exception as e:
         print(f"[db] Column migration warning: {e}")
@@ -210,6 +216,14 @@ def load_cfg() -> Dict:
             r["last_episode"] = row["last_episode"]
         if row["release"]:
             r["release"] = row["release"]
+        if row["episodes_per_day"] is not None:
+            r["episodes_per_day"] = row["episodes_per_day"]
+        try:
+            dp = json.loads(row["day_progress"] or "{}")
+            if isinstance(dp, dict) and dp:
+                r["day_progress"] = dp
+        except (TypeError, ValueError, KeyError):
+            pass
         _ensure_rule_updated_map(r)
         rules.append(r)
 
@@ -248,7 +262,7 @@ def save_cfg(cfg: Dict) -> None:
                            position=?, category=?, pattern=?, pattern_or=?, pattern2=?, pattern2_or=?,
                            exclude_pattern=?, subfolder=?, days=?, updated=?, updated_map=?,
                            total_episodes=?, received_episodes=?,
-                           last_episode=?, release=?
+                           last_episode=?, release=?, episodes_per_day=?, day_progress=?
                        WHERE id=?""",
                     (
                         pos,
@@ -266,6 +280,8 @@ def save_cfg(cfg: Dict) -> None:
                         received_json,
                         r.get("last_episode"),
                         r.get("release"),
+                        r.get("episodes_per_day"),
+                        json.dumps(r.get("day_progress", {})),
                         rule_id,
                     ),
                 )
@@ -274,8 +290,8 @@ def save_cfg(cfg: Dict) -> None:
                     """INSERT INTO rules
                            (position, category, pattern, pattern_or, pattern2, pattern2_or, exclude_pattern,
                             subfolder, days, updated, updated_map, total_episodes,
-                            received_episodes, last_episode, release)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            received_episodes, last_episode, release, episodes_per_day, day_progress)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         pos,
                         r.get("category", ""),
@@ -292,11 +308,13 @@ def save_cfg(cfg: Dict) -> None:
                         received_json,
                         r.get("last_episode"),
                         r.get("release"),
+                        r.get("episodes_per_day"),
+                        json.dumps(r.get("day_progress", {})),
                     ),
                 )
 
 
-_RULE_PATCHABLE_COLUMNS = {"updated_map", "received_episodes", "last_episode", "total_episodes", "updated"}
+_RULE_PATCHABLE_COLUMNS = {"updated_map", "received_episodes", "last_episode", "total_episodes", "updated", "day_progress"}
 
 
 def update_rule_fields(rule_id: int, **fields: Any) -> bool:
@@ -322,8 +340,8 @@ def update_rule_fields(rule_id: int, **fields: Any) -> bool:
     set_clauses = []
     values: List[Any] = []
     for col, val in fields.items():
-        if col in ("updated_map",):
-            val = json.dumps(val)
+        if col in ("updated_map", "day_progress"):
+            val = json.dumps(val if val is not None else {})
         elif col == "received_episodes":
             val = json.dumps(val) if val is not None else None
         set_clauses.append(f"{col}=?")

@@ -944,6 +944,9 @@
                       {% if r.next_episode %}
                         <span class="pill" style="background:linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-color:#f59e0b; margin-left:6px; color:#92400e; box-shadow:0 2px 4px rgba(245, 158, 11, 0.2);">다음: E{{ r.next_episode }}</span>
                       {% endif %}
+                      {% if r.episodes_per_day and r.episodes_per_day > 1 %}
+                        <span class="pill" style="background:#ecfdf5; border-color:#6ee7b7; margin-left:6px; color:#047857;">하루 {{ r.episodes_per_day }}편</span>
+                      {% endif %}
                     </div>
                     <div class="card-line-actions">
                       {% if r.category == '드라마' or r.category == '예능' %}
@@ -994,6 +997,9 @@
                       {% endif %}
                       {% if r.next_episode %}
                         <span class="pill" style="background:linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-color:#f59e0b; margin-left:6px; color:#92400e; box-shadow:0 2px 4px rgba(245, 158, 11, 0.2);">다음: E{{ r.next_episode }}</span>
+                      {% endif %}
+                      {% if r.episodes_per_day and r.episodes_per_day > 1 %}
+                        <span class="pill" style="background:#ecfdf5; border-color:#6ee7b7; margin-left:6px; color:#047857;">하루 {{ r.episodes_per_day }}편</span>
                       {% endif %}
                     </td>
                     <td>
@@ -1101,13 +1107,21 @@
             <input type="number" name="total_episodes" min="1" placeholder="예: 16" id="total_episodes_input">
             <div class="hint">드라마 등록 시 전체 에피소드 수를 입력하세요. (TMDB에서 자동으로 입력되지 않으면 수동 입력)</div>
           </div>
+          <div class="field" id="episodes_per_day_field">
+            <label class="muted">하루 편수 (드라마만)</label>
+            <input type="number" name="episodes_per_day" min="1" value="1" id="episodes_per_day_input">
+            <div class="hint">한 방영일에 올라오는 편수. 예: 신병처럼 하루 2편이면 2. 이 편수가 다 차야 다음 방영일 체크로 넘어갑니다.</div>
+          </div>
           <button class="btn primary" type="submit">추가</button>
           <script>
             (function() {
               var categorySelect = document.querySelector('select[name="category"]');
               var field = document.getElementById('total_episodes_field');
+              var epdField = document.getElementById('episodes_per_day_field');
               function syncEpisodeField() {
-                field.style.display = (categorySelect.value === '드라마') ? 'block' : 'none';
+                var show = (categorySelect.value === '드라마') ? 'block' : 'none';
+                field.style.display = show;
+                if (epdField) epdField.style.display = show;
               }
               categorySelect.addEventListener('change', syncEpisodeField);
               syncEpisodeField();
@@ -1322,6 +1336,11 @@
                         <input type="number" name="total_episodes" min="1" value="{{ r.total_episodes or '' }}" placeholder="예: 16">
                         <div class="hint">드라마 등록 시 전체 에피소드 수를 입력하세요.</div>
                       </div>
+                      <div class="field edit-episodes-field-{{ r._idx }}" style="display:{{ 'block' if r.category == '드라마' else 'none' }};">
+                        <label class="muted">하루 편수 (드라마만)</label>
+                        <input type="number" name="episodes_per_day" min="1" value="{{ r.episodes_per_day or 1 }}">
+                        <div class="hint">한 방영일에 올라오는 편수. 하루 2편이면 2 — 그 편수가 다 차야 다음 방영일 체크로 넘어갑니다.</div>
+                      </div>
                       <button class="btn primary small" type="submit">저장</button>
                     </form>
                   </td>
@@ -1447,10 +1466,11 @@
     document.addEventListener('DOMContentLoaded', function() {
       document.querySelectorAll('form[action="/edit"]').forEach(function(form) {
         var categorySelect = form.querySelector('select[name="category"]');
-        var episodeField = form.querySelector('[class*="edit-episodes-field-"]');
-        if (categorySelect && episodeField) {
+        var episodeFields = form.querySelectorAll('[class*="edit-episodes-field-"]');
+        if (categorySelect && episodeFields.length) {
           categorySelect.addEventListener('change', function() {
-            episodeField.style.display = (this.value === '드라마') ? 'block' : 'none';
+            var show = (this.value === '드라마') ? 'block' : 'none';
+            episodeFields.forEach(function(el) { el.style.display = show; });
           });
         }
       });

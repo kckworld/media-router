@@ -770,6 +770,14 @@ def add():
             if auto_total:
                 rule["total_episodes"] = auto_total
         rule.setdefault("received_episodes", [])
+        epd_raw = request.form.get("episodes_per_day", "").strip()
+        if epd_raw:
+            try:
+                epd = int(epd_raw)
+                if epd >= 1:
+                    rule["episodes_per_day"] = epd
+            except ValueError:
+                pass
     if not rule["category"] or not rule["pattern"] or not rule["subfolder"]:
         return abort(400)
 
@@ -972,13 +980,19 @@ def edit():
             exclude_pattern = exclude_raw if exclude_raw else None
             sel_days = request.form.getlist("days")
 
+            # 유지되는 요일의 체크 상태(updated_map)는 보존하고, 새로 추가된
+            # 요일만 N으로 시작한다 (규칙만 손봤는데 오늘 체크가 날아가는 것 방지)
+            old_umap = old_rule.get("updated_map") or {}
             new_rule = {
                 "category": request.form.get("category","").strip(),
                 "pattern":  pattern,
                 "subfolder": request.form.get("subfolder","").strip(),
                 "days": [d for d in WEEKDAYS if d in sel_days],
                 "updated": "N",
-                "updated_map": {d: "N" for d in sel_days if d in WEEKDAYS},
+                "updated_map": {
+                    d: (old_umap.get(d, "N") if old_umap.get(d) in ("Y", "N") else "N")
+                    for d in sel_days if d in WEEKDAYS
+                },
             }
             
             if pattern_or:
@@ -1012,7 +1026,21 @@ def edit():
                     new_rule["received_episodes"] = old_rule["received_episodes"]
                 else:
                     new_rule.setdefault("received_episodes", [])
-            
+                epd_raw = request.form.get("episodes_per_day", "").strip()
+                if epd_raw:
+                    try:
+                        epd = int(epd_raw)
+                        if epd >= 1:
+                            new_rule["episodes_per_day"] = epd
+                    except ValueError:
+                        pass
+                # 유지되는 요일의 하루편수 카운터(day_progress)도 보존
+                old_prog = old_rule.get("day_progress")
+                if isinstance(old_prog, dict) and old_prog:
+                    kept = {d: old_prog[d] for d in new_rule["days"] if d in old_prog}
+                    if kept:
+                        new_rule["day_progress"] = kept
+
             new_rule["id"] = idx  # DB id 보존
             cfg["rules"] = [new_rule if r.get("id") == idx else r for r in cfg["rules"]]
             save_cfg(cfg)
