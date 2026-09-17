@@ -1,5 +1,6 @@
 services:
   media-router:
+    build: .
     image: kck9010/media-router:latest
     container_name: media_router
     restart: unless-stopped
