@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>파일명 치환 규칙 - Media Router Web Admin</title>
+  <title>BT4G 키워드 - Media Router Web Admin</title>
   <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
@@ -142,20 +142,14 @@
       transition: all 0.2s ease;
     }
     input[type=text]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
-    textarea {
-      padding: 12px 14px; font-size: 13.5px; border: 2px solid var(--line); border-radius: 10px;
-      width: 100%; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-      resize: vertical; color: var(--fg);
-    }
-    textarea:focus { outline: none; border-color: var(--accent); }
     table { width: 100%; border-collapse: separate; border-spacing: 0 8px; }
     .rule-row td { padding: 4px 6px; vertical-align: middle; }
     .rule-row { background: var(--bg-solid); }
     .rule-row td:first-child { border-radius: 10px 0 0 10px; }
     .rule-row td:last-child { border-radius: 0 10px 10px 0; }
     .col-num { width: 28px; text-align: center; font-size: 12px; color: var(--muted); font-weight: 700; }
-    .col-arrow { width: 28px; text-align: center; color: var(--purple); font-weight: 700; font-size: 16px; }
-    .col-actions { width: 132px; white-space: nowrap; }
+    .col-group { width: 90px; text-align: center; font-size: 12px; color: var(--purple); font-weight: 700; white-space: nowrap; }
+    .col-actions { width: 100px; white-space: nowrap; }
     thead th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 0 6px 6px; font-weight: 700; }
     .banner { border-radius: 10px; padding: 12px 16px; margin-bottom: 20px; font-weight: 600; font-size: 14px; }
     .banner.ok { background: var(--success-light); color: var(--success-hover); border: 1px solid #6ee7b7; }
@@ -179,7 +173,7 @@
       thead { display: none; }
       .rule-row { margin-bottom: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
       .rule-row td { padding: 6px 2px; }
-      .col-arrow { display: none; }
+      .col-group { display: none; }
     }
   </style>
 </head>
@@ -197,8 +191,8 @@
       <div class="mode-tabs">
         <a href="/?mode=check">체크모드 (그저께+어제+오늘)</a>
         <a href="/?mode=">전체 관리</a>
-        <a href="/rename_rules" class="active">파일명 치환 규칙</a>
-        <a href="/bt4g_keywords">BT4G 키워드</a>
+        <a href="/rename_rules">파일명 치환 규칙</a>
+        <a href="/bt4g_keywords" class="active">BT4G 키워드</a>
         <a href="/settings">설정</a>
       </div>
     </div>
@@ -208,52 +202,48 @@
 
   <main>
     {% if saved %}
-      <div class="banner ok">✓ 저장되었습니다. 다음 drama_name.sh 실행부터 새 규칙이 적용됩니다.</div>
+      <div class="banner ok">✓ 저장되었습니다. 다음 bt4g.sh 실행부터 새 키워드 목록이 적용됩니다 (최대 20분 이내).</div>
     {% endif %}
     {% if error %}
       <div class="banner err">✗ 처리 중 오류가 발생했습니다: {{ error }}</div>
     {% endif %}
     {% if not conf_exists and not error %}
-      <div class="banner warn">⚠ 설정 파일 경로({{ conf_path }})를 찾을 수 없습니다. 저장하면 새로 생성됩니다. 컨테이너에 해당 경로가 마운트되어 있는지 확인하세요.</div>
+      <div class="banner warn">⚠ 키워드 파일 경로({{ conf_path }})를 찾을 수 없습니다. 저장하면 새로 생성됩니다. 컨테이너에 해당 경로가 마운트되어 있는지 확인하세요.</div>
     {% endif %}
 
     <div class="card">
-      <div class="section-title">규칙 형식 안내</div>
+      <div class="section-title">BT4G 검색 키워드 안내</div>
       <div class="hint">
-        각 규칙은 파일(또는 폴더)명에서 <strong>찾을 문자열</strong>을 <strong>바꿀 문자열</strong>로 치환합니다.
-        <strong>검색 키워드</strong>는 선택 사항이며, 비워두면 "찾을 문자열"로 대상 파일을 검색합니다.
-        키워드를 입력하면 파일명이 다른 형태로 자주 바뀌는 프로그램에서 "이 키워드가 포함된 파일 중"이라는
-        더 넓은 범위로 대상을 먼저 찾은 뒤, 그 안에서 "찾을 문자열"만 정확히 치환할 때 유용합니다.
-        "바꿀 문자열"을 비워두면 "찾을 문자열"이 삭제됩니다.
+        여기 등록한 검색어로 bt4gprx.com에서 토렌트를 찾아 RSS로 만들어 qBittorrent에 제공합니다.
+        전체 키워드를 3개 그룹으로 나눠 20분마다 한 그룹씩 순환 검색하므로, 각 키워드는 대략
+        <strong>1시간에 한 번</strong> 갱신됩니다. 결과는 검색어와 상관없이 <strong>720p 화질만</strong>
+        자동으로 걸러져서 남습니다.
       </div>
       <div class="example-box">
-        예) 검색 키워드 <code>불꽃야구</code> / 찾을 문자열 <code>불꽃야구2(Burn to win) Ep.</code> / 바꿀 문자열 <code>불꽃야구.S02.E0</code><br>
-        → <code>불꽃야구2(Burn to win) Ep.05.mp4</code> 파일이 <code>불꽃야구.S02.E005.mp4</code> 로 바뀝니다.
+        검색어에 스페이스가 2개 이상 들어가면(단어 3개 이상) bt4g 사이트의 AND 검색이 정상 동작하지
+        않을 수 있으니, 프로그램 이름만 그대로 적으세요 (예: <code>벌거벗은 세계사</code>). 화질(720p)은
+        따로 안 붙여도 결과에서 자동으로 걸러집니다.
       </div>
     </div>
 
-    <form method="post" action="/rename_rules" id="rulesForm">
+    <form method="post" action="/bt4g_keywords" id="rulesForm">
       <div class="card">
-        <div class="section-title">치환 규칙 목록</div>
+        <div class="section-title">키워드 목록</div>
         <table id="rulesTable">
           <thead>
             <tr>
               <th class="col-num">#</th>
-              <th>검색 키워드 <span class="muted" style="font-weight:400;">(선택)</span></th>
-              <th>찾을 문자열 <span class="muted" style="font-weight:400;">(필수)</span></th>
-              <th class="col-arrow"></th>
-              <th>바꿀 문자열 <span class="muted" style="font-weight:400;">(비우면 삭제됨)</span></th>
+              <th class="col-group">그룹</th>
+              <th>검색어</th>
               <th class="col-actions">동작</th>
             </tr>
           </thead>
           <tbody id="rulesBody">
-            {% for r in rules %}
+            {% for k in keywords %}
             <tr class="rule-row">
               <td class="col-num">{{ loop.index }}</td>
-              <td><input type="text" name="row_keyword" value="{{ r.keyword }}" placeholder="예: 불꽃야구"></td>
-              <td><input type="text" name="row_from" value="{{ r.from_prefix }}" placeholder="찾을 문자열"></td>
-              <td class="col-arrow">→</td>
-              <td><input type="text" name="row_to" value="{{ r.to_prefix }}" placeholder="바꿀 문자열 (선택)"></td>
+              <td class="col-group"></td>
+              <td><input type="text" name="row_keyword" value="{{ k }}" placeholder="예: 벌거벗은 세계사"></td>
               <td class="col-actions">
                 <button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>
                 <button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>
@@ -263,22 +253,13 @@
             {% endfor %}
           </tbody>
         </table>
-        <div id="emptyState" class="empty-state" style="{{ '' if rules else '' }}display:{{ 'block' if not rules else 'none' }};">
-          등록된 규칙이 없습니다. 아래 버튼으로 규칙을 추가하세요.
+        <div id="emptyState" class="empty-state" style="display:{{ 'block' if not keywords else 'none' }};">
+          등록된 키워드가 없습니다. 아래 버튼으로 키워드를 추가하세요.
         </div>
         <div class="toolbar">
-          <button type="button" class="btn" onclick="addRuleRow()">+ 규칙 추가</button>
+          <button type="button" class="btn" onclick="addRuleRow()">+ 키워드 추가</button>
           <span class="path-tag">{{ conf_path }}</span>
         </div>
-      </div>
-
-      <div class="card">
-        <div class="section-title">메모 / 주석</div>
-        <div class="hint" style="margin-bottom:10px;">
-          파일 상단에 남겨둘 설명 텍스트입니다. drama_name.sh 실행 동작에는 아무 영향을 주지 않는 순수 메모입니다.
-          한 줄에 하나씩 적으면 됩니다 (자동으로 <code>#</code> 주석 처리되어 저장됩니다).
-        </div>
-        <textarea name="memo" rows="4" placeholder="예: 다른 규칙도 계속 추가 가능">{{ memo_text }}</textarea>
       </div>
 
       <div>
@@ -290,14 +271,15 @@
   </main>
 
   <script>
-    function currentRuleCount() {
-      return document.querySelectorAll('#rulesBody .rule-row').length;
-    }
+    var GROUP_COUNT = 3;
 
     function renumberRows() {
       var rows = document.querySelectorAll('#rulesBody .rule-row');
+      var groupSize = Math.max(1, Math.ceil(rows.length / GROUP_COUNT));
       rows.forEach(function(row, i) {
         row.querySelector('.col-num').textContent = i + 1;
+        var groupNum = Math.floor(i / groupSize) + 1;
+        row.querySelector('.col-group').textContent = '그룹 ' + groupNum;
       });
       document.getElementById('emptyState').style.display = rows.length ? 'none' : 'block';
     }
@@ -308,10 +290,8 @@
       tr.className = 'rule-row';
       tr.innerHTML =
         '<td class="col-num"></td>' +
-        '<td><input type="text" name="row_keyword" placeholder="예: 불꽃야구"></td>' +
-        '<td><input type="text" name="row_from" placeholder="찾을 문자열"></td>' +
-        '<td class="col-arrow">→</td>' +
-        '<td><input type="text" name="row_to" placeholder="바꿀 문자열 (선택)"></td>' +
+        '<td class="col-group"></td>' +
+        '<td><input type="text" name="row_keyword" placeholder="예: 벌거벗은 세계사"></td>' +
         '<td class="col-actions">' +
           '<button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>' +
           '<button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>' +
@@ -319,7 +299,7 @@
         '</td>';
       tbody.appendChild(tr);
       renumberRows();
-      tr.querySelector('input[name="row_from"]').focus();
+      tr.querySelector('input[name="row_keyword"]').focus();
     }
 
     function removeRuleRow(btn) {
@@ -342,19 +322,21 @@
 
     document.getElementById('rulesForm').addEventListener('submit', function(e) {
       var rows = document.querySelectorAll('#rulesBody .rule-row');
-      var hasEmptyFrom = false;
+      var seen = {};
+      var dup = false;
       rows.forEach(function(row) {
-        var from = row.querySelector('input[name="row_from"]').value.trim();
-        var keyword = row.querySelector('input[name="row_keyword"]').value.trim();
-        var to = row.querySelector('input[name="row_to"]').value.trim();
-        if (!from && (keyword || to)) hasEmptyFrom = true;
+        var v = row.querySelector('input[name="row_keyword"]').value.trim();
+        if (v && seen[v]) dup = true;
+        seen[v] = true;
       });
-      if (hasEmptyFrom) {
-        if (!confirm('"찾을 문자열"이 비어 있는 규칙이 있습니다. 저장 시 해당 규칙은 무시됩니다. 계속할까요?')) {
+      if (dup) {
+        if (!confirm('중복된 검색어가 있습니다. 그대로 저장할까요?')) {
           e.preventDefault();
         }
       }
     });
+
+    renumberRows();
 
     // 상단 "배치 실행" 버튼: media_router 전체 배치(run_all.sh)를 호스트에서 수동 실행 요청
     function showToast(message, type) {

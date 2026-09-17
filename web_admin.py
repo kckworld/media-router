@@ -19,6 +19,7 @@ DAY_ORDER = {d: i for i, d in enumerate(WEEKDAYS)}
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Seoul"))
 
 RENAME_RULES_PATH = Path(os.getenv("RENAME_RULES_PATH", "/volume1/web/video_auto/rename_rules.conf"))
+BT4G_KEYWORDS_PATH = Path(os.getenv("BT4G_KEYWORDS_PATH", "/volume1/web/Python/bt4g/bt4g_keywords.txt"))
 
 # 전체 배치(run_all.sh) 수동 실행 - 호스트로 SSH 접속해 강제 명령(run_all.sh)만 실행
 RUN_BATCH_SSH_KEY = os.getenv("RUN_BATCH_SSH_KEY", "/app/secrets/run_batch_key")
@@ -336,6 +337,19 @@ def render_rename_rules_conf(memo_text: str, rules: list) -> str:
         to_prefix = (r.get("to_prefix") or "").rstrip()
         lines.append(f"{keyword}|{from_prefix}|{to_prefix}")
     return "\n".join(lines) + "\n"
+
+
+def parse_bt4g_keywords(path: Path) -> list[str]:
+    """bt4g_keywords.txt(한 줄에 검색어 하나)를 파싱. bt4g.py가 읽는 형식과 동일."""
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def render_bt4g_keywords(keywords: list[str]) -> str:
+    lines = [k.strip() for k in keywords if k.strip()]
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def rule_key(rule):
@@ -956,6 +970,55 @@ def rename_rules():
     )
 
 
+@app.route("/bt4g_keywords", methods=["GET", "POST"])
+def bt4g_keywords():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+
+    saved = False
+    error = None
+
+    if request.method == "POST":
+        try:
+            rows = [k.strip() for k in request.form.getlist("row_keyword")]
+            content = render_bt4g_keywords(rows)
+
+            BT4G_KEYWORDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            if BT4G_KEYWORDS_PATH.exists():
+                # 백업은 소스 파일 옆이 아니라 DATA_DIR(영구 볼륨)에 남긴다.
+                # docker-compose가 bt4g_keywords.txt "파일 하나만" 바인드 마운트하므로,
+                # 옆에 .bak을 쓰면 컨테이너의 임시 레이어에만 생겼다가 재배포 시 사라진다.
+                backup_path = DATA_DIR / "bt4g_keywords.txt.bak"
+                backup_path.write_text(
+                    BT4G_KEYWORDS_PATH.read_text(encoding="utf-8", errors="replace"),
+                    encoding="utf-8",
+                )
+            BT4G_KEYWORDS_PATH.write_text(content, encoding="utf-8")
+            saved = True
+        except Exception as e:
+            app.logger.exception("bt4g_keywords.txt 저장 중 오류")
+            error = str(e)
+
+    try:
+        keywords = parse_bt4g_keywords(BT4G_KEYWORDS_PATH)
+        load_error = None
+    except Exception as e:
+        app.logger.exception("bt4g_keywords.txt 로딩 중 오류")
+        keywords = []
+        load_error = str(e)
+
+    return render_template(
+        "bt4g_keywords.html",
+        authed=True,
+        keywords=keywords,
+        saved=saved,
+        error=error or load_error,
+        conf_path=str(BT4G_KEYWORDS_PATH),
+        conf_exists=BT4G_KEYWORDS_PATH.exists(),
+    )
+
+
 @app.route("/edit", methods=["GET","POST"])
 def edit():
     auth = authed(request)
@@ -1004,14 +1067,12 @@ def edit():
             if exclude_pattern:
                 new_rule["exclude_pattern"] = exclude_pattern
             
-            # 릴리즈 정보 추가 (선택사항)
+            # 릴리즈 정보 추가/수정/삭제 (선택사항)
+            # 편집 폼의 release 입력칸은 항상 값을 전송하므로, 빈 문자열은
+            # "지우고 저장"으로 취급해 old_rule 값을 복사하지 않는다.
             release = request.form.get("release", "").strip()
             if release:
                 new_rule["release"] = release
-            else:
-                # 기존 릴리즈 정보 유지 (편집 시)
-                if "release" in old_rule:
-                    new_rule["release"] = old_rule["release"]
             
             # 드라마인 경우 total_episodes 설정 및 received_episodes 유지
             if new_rule["category"] == "드라마":

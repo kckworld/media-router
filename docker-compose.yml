@@ -8,6 +8,7 @@ services:
       - ./data:/app/data
       - /volume1/video:/volume1/video:ro
       - /volume1/web/video_auto:/volume1/web/video_auto
+      - /volume1/web/Python/bt4g/bt4g_keywords.txt:/volume1/web/Python/bt4g/bt4g_keywords.txt
       - ./secrets:/app/secrets:ro
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}
