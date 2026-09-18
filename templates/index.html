@@ -833,6 +833,8 @@
         <a href="/?mode=" class="{{ 'active' if mode != 'check' and mode != 'settings' else '' }}">전체 관리</a>
         <a href="/rename_rules">파일명 치환 규칙</a>
         <a href="/bt4g_keywords">BT4G 키워드</a>
+        <a href="/logs">실행 로그</a>
+        <a href="/users">사용자 관리</a>
         <a href="/settings" class="{{ 'active' if mode == 'settings' else '' }}">설정</a>
       </div>
 
@@ -1028,10 +1030,13 @@
       </form>
 
     {% elif mode != 'settings' %}
-      <!-- 전체 관리: 규칙 추가 -->
+      <!-- 전체 관리: 규칙 추가 (기본 접힘) -->
       <div class="card">
-        <div class="section-title">규칙 추가</div>
-        
+        <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;" onclick="toggleAddForm()">
+          <span>규칙 추가</span>
+          <button class="btn small" type="button" id="toggleAddFormBtn" onclick="event.stopPropagation(); toggleAddForm();">+ 새 규칙 추가</button>
+        </div>
+        <div id="addFormBody" style="display:none;">
         <!-- TMDB 검색 섹션 -->
         <div style="margin-bottom: 24px; padding: 16px; background: linear-gradient(135deg, #f0f4ff 0%, #f8f5ff 100%); border: 1px solid #c7d2fe; border-radius: 12px;">
           <div style="font-size: 13px; font-weight: 600; color: #4338ca; margin-bottom: 12px;">📺 TMDB 검색 (자동 입력)</div>
@@ -1188,6 +1193,7 @@
             });
           </script>
         </form>
+        </div>
       </div>
 
       <div class="spacer"></div>
@@ -1195,6 +1201,8 @@
       <!-- 전체 관리: 정렬 가능 테이블 -->
       <div class="card">
         <div class="section-title">규칙 목록</div>
+        <input type="text" id="ruleSearch" placeholder="🔍 카테고리 / 패턴 / 폴더명으로 검색..." oninput="filterRules()" style="margin-bottom:14px;">
+        <div id="ruleSearchEmpty" class="muted" style="display:none; padding:12px 0;">검색 결과가 없습니다.</div>
         <table>
           <thead>
             {% set next_dir = 'desc' if sort_dir == 'asc' else 'asc' %}
@@ -1630,6 +1638,28 @@
     }
 
     // 전체관리 테이블: 편집 행 토글
+    function toggleAddForm() {
+      var body = document.getElementById('addFormBody');
+      var btn = document.getElementById('toggleAddFormBtn');
+      var willOpen = body.style.display === 'none';
+      body.style.display = willOpen ? 'block' : 'none';
+      btn.textContent = willOpen ? '접기' : '+ 새 규칙 추가';
+    }
+
+    function filterRules() {
+      var q = document.getElementById('ruleSearch').value.trim().toLowerCase();
+      var rows = document.querySelectorAll('table tbody tr[id^="rule-"]');
+      var visibleCount = 0;
+      rows.forEach(function(row) {
+        var match = !q || row.textContent.toLowerCase().indexOf(q) !== -1;
+        row.style.display = match ? '' : 'none';
+        var editRow = document.getElementById('manage-edit-row-' + row.id.replace('rule-', ''));
+        if (editRow && !match) editRow.style.display = 'none';
+        if (match) visibleCount++;
+      });
+      document.getElementById('ruleSearchEmpty').style.display = (rows.length && !visibleCount) ? 'block' : 'none';
+    }
+
     function toggleManageEditRow(idx) {
       var row = document.getElementById('manage-edit-row-' + idx);
       if (!row) {

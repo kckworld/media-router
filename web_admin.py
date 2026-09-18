@@ -1,12 +1,37 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 import os, hashlib, hmac, re, secrets, subprocess, time, threading
-from flask import Flask, request, redirect, render_template, abort, make_response, jsonify
+from flask import Flask, request, redirect, render_template, abort, make_response, jsonify, send_file
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import requests
+import psycopg2
+from contextlib import contextmanager
 from db import load_cfg, save_cfg, DATA_DIR
+
+# 사용자 관리 탭 - media-stats postgres 연동 (2026-09-18, media_stats_admin에서 이식)
+STATS_DB_CONFIG = {
+    "host": os.getenv("STATS_DB_HOST", "localhost"),
+    "port": int(os.getenv("STATS_DB_PORT", "15433")),
+    "dbname": os.getenv("STATS_DB_NAME", "media_stats"),
+    "user": os.getenv("STATS_DB_USER", "media_admin"),
+    "password": os.getenv("STATS_DB_PASSWORD", ""),
+}
+
+
+@contextmanager
+def _stats_db():
+    """성공 시 commit, 예외 시 rollback, 항상 connection close."""
+    conn = psycopg2.connect(**STATS_DB_CONFIG)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 BASE = Path(__file__).resolve().parent
 PASSWORD = os.getenv("MEDIA_ADMIN_PASSWORD", "")
@@ -27,6 +52,13 @@ RUN_BATCH_SSH_HOST = os.getenv("RUN_BATCH_SSH_HOST", "127.0.0.1")
 RUN_BATCH_SSH_PORT = os.getenv("RUN_BATCH_SSH_PORT", "202")
 RUN_BATCH_SSH_USER = os.getenv("RUN_BATCH_SSH_USER", "kck9010")
 _run_batch_state = {"lock": threading.Lock(), "last_triggered": 0}
+
+# run_all.sh 실행 로그 - 호스트의 logs/ 디렉토리를 컨테이너에 마운트해서 읽는다
+# (docker-compose.yml의 ./logs:/app/logs:ro 참고)
+RUN_ALL_LOGS_DIR = Path(os.getenv("RUN_ALL_LOGS_DIR", "/app/logs"))
+RUN_ALL_LOG_NAME_RE = re.compile(r"^run_all\.(\d{4}-\d{2}-\d{2})\.log$")
+LOG_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+LOG_INITIAL_MAX_BYTES = 2 * 1024 * 1024  # 최초 로딩 시 파일 끝에서 최대 이만큼만
 
 
 def _load_or_create_session_secret() -> str:
@@ -425,8 +457,10 @@ def sort_rules_for_list(rules, sort_key, sort_dir):
         return ((r.get("subfolder") or "").lower(), (r.get("category") or "").lower())
 
     def key_days(r):
-        # 정렬 표시용: 요일 문자열로 비교
-        return (" ".join(r.get("days") or []), (r.get("category") or "").lower())
+        # 요일 문자열(가나다순)이 아니라 월화수목금토일 순서로 정렬
+        days = r.get("days") or []
+        day_ranks = tuple(sorted(DAY_ORDER.get(d, 999) for d in days)) if days else (999,)
+        return (day_ranks, (r.get("category") or "").lower())
 
     keymap = {
         "category": key_category,
@@ -1160,6 +1194,11 @@ def run_batch():
                 "-o", "BatchMode=yes",
                 "-o", "ConnectTimeout=5",
                 f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}",
+                # 강제 명령(authorized_keys의 command=)이 실제로 실행되는 명령을
+                # 대체하지만, sshd는 클라이언트가 요청한 원본 명령을
+                # SSH_ORIGINAL_COMMAND 환경변수로 넘겨준다. run_all.sh가 이 값을
+                # 읽어 로그에 "웹에서 수동 실행"임을 남길 수 있게 표시값을 보낸다.
+                "web-trigger",
             ],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
@@ -1168,6 +1207,122 @@ def run_batch():
         return jsonify({"success": False, "message": f"실행 요청 실패: {e}"}), 500
 
     return jsonify({"success": True, "message": "배치 실행을 요청했습니다. 잠시 후 로그에서 진행 상황을 확인하세요."})
+
+
+def _list_run_all_log_dates() -> list[str]:
+    """logs/ 디렉토리에서 run_all.YYYY-MM-DD.log 파일들의 날짜 목록(최신순)을 반환."""
+    if not RUN_ALL_LOGS_DIR.is_dir():
+        return []
+    dates = []
+    for p in RUN_ALL_LOGS_DIR.iterdir():
+        m = RUN_ALL_LOG_NAME_RE.match(p.name)
+        if m:
+            dates.append(m.group(1))
+    return sorted(dates, reverse=True)
+
+
+def _run_all_log_path(date_str: str) -> Path | None:
+    if not LOG_DATE_RE.match(date_str or ""):
+        return None
+    return RUN_ALL_LOGS_DIR / f"run_all.{date_str}.log"
+
+
+@app.route("/logs", methods=["GET"])
+def logs_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+
+    dates = _list_run_all_log_dates()
+    today_str = datetime.now(APP_TZ).strftime("%Y-%m-%d")
+    requested_date = request.args.get("date", "").strip()
+
+    if requested_date and LOG_DATE_RE.match(requested_date):
+        selected_date = requested_date
+    elif today_str in dates or not dates:
+        selected_date = today_str
+    else:
+        selected_date = dates[0]  # 오늘자 로그가 아직 없으면 가장 최근 로그를 보여줌
+
+    content = ""
+    file_size = 0
+    log_exists = False
+    dir_mounted = RUN_ALL_LOGS_DIR.is_dir()
+    path = _run_all_log_path(selected_date)
+    if path and path.exists():
+        log_exists = True
+        file_size = path.stat().st_size
+        try:
+            with path.open("rb") as f:
+                if file_size > LOG_INITIAL_MAX_BYTES:
+                    f.seek(file_size - LOG_INITIAL_MAX_BYTES)
+                raw = f.read()
+            content = raw.decode("utf-8", errors="replace")
+        except Exception as e:
+            content = f"[로그 파일을 읽는 중 오류: {e}]"
+
+    return render_template(
+        "logs.html",
+        authed=True,
+        dates=dates,
+        selected_date=selected_date,
+        today_str=today_str,
+        content=content,
+        initial_offset=file_size,
+        log_exists=log_exists,
+        dir_mounted=dir_mounted,
+        logs_dir=str(RUN_ALL_LOGS_DIR),
+    )
+
+
+@app.route("/logs/tail", methods=["GET"])
+def logs_tail():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"error": "로그인이 필요합니다."}), 401
+
+    date_str = request.args.get("date", "").strip()
+    path = _run_all_log_path(date_str)
+    if path is None:
+        return jsonify({"error": "날짜 형식이 올바르지 않습니다."}), 400
+
+    try:
+        offset = int(request.args.get("offset", "0"))
+    except ValueError:
+        offset = 0
+
+    if not path.exists():
+        return jsonify({"exists": False, "content": "", "offset": 0})
+
+    size = path.stat().st_size
+    if offset < 0 or offset > size:
+        offset = 0  # 파일이 교체되었거나 최초 조회
+
+    new_text = ""
+    if offset < size:
+        try:
+            with path.open("rb") as f:
+                f.seek(offset)
+                raw = f.read()
+            new_text = raw.decode("utf-8", errors="replace")
+        except Exception as e:
+            return jsonify({"error": f"로그 파일을 읽는 중 오류: {e}"}), 500
+
+    return jsonify({"exists": True, "content": new_text, "offset": size})
+
+
+@app.route("/logs/download", methods=["GET"])
+def logs_download():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+
+    date_str = request.args.get("date", "").strip()
+    path = _run_all_log_path(date_str)
+    if path is None or not path.exists():
+        return abort(404)
+
+    return send_file(path, mimetype="text/plain", as_attachment=True, download_name=path.name)
 
 @app.route("/search_tmdb", methods=["POST"])
 def search_tmdb():
@@ -1178,6 +1333,171 @@ def search_tmdb():
     query = request.form.get("q", "").strip()
     result = tmdb_search_info(query)
     return jsonify(result)
+
+# ─── 사용자 관리 (Jellyfin/Plex 계정 매핑, media-stats postgres 연동) ───────
+@app.route("/users", methods=["GET"])
+def users_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("users.html", authed=True)
+
+
+@app.route("/api/users/summary", methods=["GET"])
+def api_users_summary():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    with _stats_db() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT (SELECT count(*) FROM persons), (SELECT count(*) FROM service_accounts), "
+            "(SELECT count(*) FROM play_history), (SELECT count(*) FROM play_history WHERE account_id IS NULL)"
+        )
+        persons, accounts, plays, unmatched = cur.fetchone()
+    return jsonify({"persons": persons, "accounts": accounts, "plays": plays, "unmatched": unmatched})
+
+
+@app.route("/api/users/persons", methods=["GET"])
+def api_users_persons_list():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    with _stats_db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.id, p.name, p.memo, p.created_at, p.updated_at,
+              COALESCE(json_agg(json_build_object('id', sa.id, 'service', sa.service, 'username', sa.username, 'user_id', sa.user_id))
+                       FILTER (WHERE sa.id IS NOT NULL), '[]') AS accounts
+            FROM persons p
+            LEFT JOIN service_accounts sa ON sa.person_id = p.id
+            GROUP BY p.id
+            ORDER BY p.name
+        """)
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    return jsonify(rows)
+
+
+@app.route("/api/users/persons", methods=["POST"])
+def api_users_persons_create():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    memo = (data.get("memo") or "").strip() or None
+    if not name:
+        return jsonify({"error": "이름을 입력해주세요."}), 400
+    with _stats_db() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO persons (name, memo) VALUES (%s, %s) RETURNING id, name, memo, created_at, updated_at",
+            (name, memo),
+        )
+        cols = [d[0] for d in cur.description]
+        row = cur.fetchone()
+    return jsonify(dict(zip(cols, row)))
+
+
+@app.route("/api/users/persons/<int:person_id>", methods=["PUT"])
+def api_users_persons_update(person_id):
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    memo = (data.get("memo") or "").strip() or None
+    if not name:
+        return jsonify({"error": "이름을 입력해주세요."}), 400
+    with _stats_db() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE persons SET name=%s, memo=%s, updated_at=NOW() WHERE id=%s "
+            "RETURNING id, name, memo, created_at, updated_at",
+            (name, memo, person_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"error": "사용자를 찾을 수 없습니다."}), 404
+        cols = [d[0] for d in cur.description]
+    return jsonify(dict(zip(cols, row)))
+
+
+@app.route("/api/users/persons/<int:person_id>", methods=["DELETE"])
+def api_users_persons_delete(person_id):
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    with _stats_db() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM persons WHERE id=%s", (person_id,))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/users/accounts", methods=["POST"])
+def api_users_accounts_create():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    data = request.get_json(force=True, silent=True) or {}
+    person_id = data.get("person_id")
+    service = (data.get("service") or "").strip()
+    username = (data.get("username") or "").strip()
+    user_id = (data.get("user_id") or "").strip()
+    if not (person_id and service and username and user_id):
+        return jsonify({"error": "모든 항목을 입력해주세요."}), 400
+    try:
+        with _stats_db() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO service_accounts (person_id, service, user_id, username) VALUES (%s,%s,%s,%s) "
+                "RETURNING id, person_id, service, user_id, username, created_at",
+                (person_id, service, user_id, username),
+            )
+            cols = [d[0] for d in cur.description]
+            row = cur.fetchone()
+        return jsonify(dict(zip(cols, row)))
+    except psycopg2.IntegrityError as e:
+        if e.pgcode == "23505":
+            return jsonify({"error": "이미 등록된 계정입니다."}), 409
+        app.logger.exception("계정 추가 중 오류")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/users/accounts/<int:account_id>", methods=["PUT"])
+def api_users_accounts_update(account_id):
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    data = request.get_json(force=True, silent=True) or {}
+    service = (data.get("service") or "").strip()
+    username = (data.get("username") or "").strip()
+    user_id = (data.get("user_id") or "").strip()
+    if not (service and username and user_id):
+        return jsonify({"error": "모든 항목을 입력해주세요."}), 400
+    try:
+        with _stats_db() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE service_accounts SET service=%s, user_id=%s, username=%s WHERE id=%s "
+                "RETURNING id, person_id, service, user_id, username, created_at",
+                (service, user_id, username, account_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                return jsonify({"error": "계정을 찾을 수 없습니다."}), 404
+            cols = [d[0] for d in cur.description]
+        return jsonify(dict(zip(cols, row)))
+    except psycopg2.IntegrityError as e:
+        if e.pgcode == "23505":
+            return jsonify({"error": "이미 등록된 계정입니다."}), 409
+        app.logger.exception("계정 수정 중 오류")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/users/accounts/<int:account_id>", methods=["DELETE"])
+def api_users_accounts_delete(account_id):
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    with _stats_db() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM service_accounts WHERE id=%s", (account_id,))
+    return jsonify({"ok": True})
+
 
 if __name__=="__main__":
     app.run(host="0.0.0.0", port=5080)

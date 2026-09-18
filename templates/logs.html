@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>실행 로그 - Media Router Web Admin</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --fg: #0f172a;
+      --muted: #64748b;
+      --bg: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+      --bg-solid: #f8fafc;
+      --bg-card: #ffffff;
+      --line: #e2e8f0;
+      --line-hover: #cbd5e1;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --accent-light: #eef2ff;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --danger-light: #fef2f2;
+      --success: #10b981;
+      --success-hover: #059669;
+      --success-light: #ecfdf5;
+      --warning: #f59e0b;
+      --warning-light: #fffbeb;
+      --purple: #8b5cf6;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", Arial, sans-serif;
+      color: var(--fg);
+      background: var(--bg-solid);
+      background-image: var(--bg);
+      min-height: 100vh;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .topbar { position: sticky; top: 0; z-index: 100; background: var(--bg-solid); }
+    .topbar-inner { max-width: 1400px; margin: 0 auto; padding: 0 24px; }
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 28px 32px; box-shadow: var(--shadow-md);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    header > div { flex: 1; }
+    header h1 { margin: 0; font-size: 24px; font-weight: 700; color: #fff; letter-spacing: -0.02em; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
+    .run-batch-btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 11px 20px; font-size: 14px; font-weight: 600; color: #fff;
+      background: rgba(255, 255, 255, 0.16); border: 1px solid rgba(255, 255, 255, 0.4);
+      border-radius: 10px; backdrop-filter: blur(10px); cursor: pointer; white-space: nowrap;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); flex: 0 0 auto;
+    }
+    .run-batch-btn:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.28); border-color: rgba(255, 255, 255, 0.55);
+      transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+    }
+    .run-batch-btn:active:not(:disabled) { transform: translateY(0); }
+    .run-batch-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+    .run-batch-btn .icon { font-size: 13px; line-height: 1; }
+    .run-batch-btn .spinner {
+      width: 13px; height: 13px; border: 2px solid rgba(255, 255, 255, 0.4);
+      border-top-color: #fff; border-radius: 50%; display: inline-block;
+      animation: run-batch-spin 0.7s linear infinite;
+    }
+    @keyframes run-batch-spin { to { transform: rotate(360deg); } }
+    .toast {
+      position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(16px);
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: #fff;
+      padding: 13px 22px; border-radius: 12px; font-size: 14px; font-weight: 600;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); opacity: 0; pointer-events: none;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1000; max-width: 90vw; text-align: center;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.success { background: linear-gradient(135deg, var(--success) 0%, var(--success-hover) 100%); }
+    .toast.error { background: linear-gradient(135deg, var(--danger) 0%, var(--danger-hover) 100%); }
+    .mode-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--line); background: var(--bg-solid); margin: 0; }
+    .mode-tabs a {
+      padding: 14px 24px; text-decoration: none; color: var(--muted);
+      border-bottom: 3px solid transparent; margin-bottom: -2px; font-weight: 500; font-size: 14px;
+      transition: all 0.25s ease; display: inline-block; cursor: pointer;
+    }
+    .mode-tabs a:hover { color: var(--accent); }
+    .mode-tabs a.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 700; }
+    main { max-width: 1400px; margin: 0 auto; padding: 32px 24px; }
+    .card { background: var(--bg-card); border: 1px solid var(--line); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); margin-bottom: 24px; }
+    .section-title { font-weight: 700; font-size: 18px; margin: 0 0 16px 0; color: var(--fg); display: flex; align-items: center; gap: 10px; }
+    .section-title::before { content: ''; width: 4px; height: 20px; background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%); border-radius: 2px; }
+    .muted { color: var(--muted); }
+    .hint { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 10px 18px; font-size: 14px; font-weight: 600;
+      border: 1px solid var(--line); border-radius: 10px; background: var(--bg-card);
+      cursor: pointer; text-decoration: none; color: var(--fg);
+      transition: all 0.2s ease; white-space: nowrap; box-shadow: var(--shadow-sm);
+    }
+    .btn:hover { background: #f8fafc; border-color: var(--line-hover); transform: translateY(-1px); }
+    .btn.primary { background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%); color: #fff; border-color: var(--accent); box-shadow: 0 4px 14px rgba(99,102,241,0.25); }
+    .btn.small { padding: 6px 12px; font-size: 13px; }
+    select {
+      padding: 9px 12px; font-size: 14px; border: 2px solid var(--line); border-radius: 8px;
+      background: var(--bg-card); color: var(--fg); font-family: inherit;
+    }
+    select:focus { outline: none; border-color: var(--accent); }
+    input[type=text] {
+      padding: 9px 12px; font-size: 14px; border: 2px solid var(--line); border-radius: 8px;
+      background: var(--bg-card); color: var(--fg); font-family: inherit; min-width: 220px;
+    }
+    input[type=text]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
+    .banner { border-radius: 10px; padding: 12px 16px; margin-bottom: 20px; font-weight: 600; font-size: 14px; }
+    .banner.warn { background: var(--warning-light); color: #92400e; border: 1px solid #fde68a; }
+    .banner.err { background: var(--danger-light); color: var(--danger-hover); border: 1px solid #fca5a5; }
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+      justify-content: space-between; margin-bottom: 16px;
+    }
+    .toolbar .group { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px;
+      border-radius: 999px; font-size: 12.5px; font-weight: 700; white-space: nowrap;
+    }
+    .status-badge.running { background: var(--warning-light); color: #92400e; }
+    .status-badge.running .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); animation: pulse-dot 1.2s ease-in-out infinite; }
+    .status-badge.idle { background: var(--success-light); color: var(--success-hover); }
+    .status-badge.idle .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+    .status-badge.unknown { background: var(--bg-solid); color: var(--muted); border: 1px solid var(--line); }
+    .status-badge.unknown .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .tag-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tag-chip {
+      padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+      border: 1px solid var(--line); background: var(--bg-card); color: var(--muted);
+      cursor: pointer; user-select: none; transition: all 0.15s ease;
+    }
+    .tag-chip:hover { border-color: var(--line-hover); }
+    .tag-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .switch-label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
+    .log-view {
+      background: #0b1220; color: #d6e2f0; border-radius: 12px; padding: 16px 18px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.8px; line-height: 1.65; height: 62vh; overflow: auto;
+      white-space: pre-wrap; word-break: break-all; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+    }
+    .log-view .l-run { color: #93c5fd; }
+    .log-view .l-err { color: #fca5a5; }
+    .log-view .l-tag { color: #86efac; }
+    .log-view .empty { color: #64748b; }
+    .path-tag { font-family: ui-monospace, monospace; font-size: 12.5px; background: var(--bg-solid); border: 1px solid var(--line); padding: 4px 10px; border-radius: 6px; color: var(--muted); }
+    @media (max-width: 768px) {
+      header { padding: 16px 20px; flex-direction: column; align-items: flex-start; gap: 12px; }
+      header h1 { font-size: 18px; }
+    }
+    @media (max-width: 640px) {
+      main { padding: 16px 12px; }
+      .topbar-inner { padding: 0 12px; }
+      .card { padding: 18px; }
+      input[type=text] { min-width: 0; width: 100%; }
+      .log-view { height: 50vh; font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <header>
+      <div><h1>Media Router Web Admin</h1></div>
+      <button type="button" class="run-batch-btn" id="runBatchBtn" onclick="runBatch()">
+        <span class="icon">▶</span> 배치 실행
+      </button>
+    </header>
+    <div class="topbar-inner">
+      <div class="mode-tabs">
+        <a href="/?mode=check">체크모드 (그저께+어제+오늘)</a>
+        <a href="/?mode=">전체 관리</a>
+        <a href="/rename_rules">파일명 치환 규칙</a>
+        <a href="/bt4g_keywords">BT4G 키워드</a>
+        <a href="/logs" class="active">실행 로그</a>
+        <a href="/users">사용자 관리</a>
+        <a href="/settings">설정</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <main>
+    {% if not dir_mounted %}
+      <div class="banner warn">
+        ⚠ 로그 디렉토리({{ logs_dir }})가 컨테이너에 마운트되어 있지 않습니다.
+        docker-compose.yml의 media-router 서비스 volumes에 <code>./logs:/app/logs:ro</code> 를 추가하고
+        컨테이너를 재시작하세요.
+      </div>
+    {% elif not log_exists %}
+      <div class="banner warn">⚠ {{ selected_date }} 날짜의 run_all 로그가 아직 없습니다.</div>
+    {% endif %}
+
+    <div class="card">
+      <div class="section-title">배치 실행 로그 ({{ selected_date }})</div>
+
+      <div class="toolbar">
+        <div class="group">
+          <form id="dateForm" method="get" action="/logs">
+            <select name="date" onchange="this.form.submit()">
+              {% if today_str not in dates %}
+                <option value="{{ today_str }}" {{ 'selected' if selected_date == today_str else '' }}>{{ today_str }} (오늘, 로그 없음)</option>
+              {% endif %}
+              {% for d in dates %}
+                <option value="{{ d }}" {{ 'selected' if selected_date == d else '' }}>{{ d }}{{ ' (오늘)' if d == today_str else '' }}</option>
+              {% endfor %}
+            </select>
+          </form>
+          <span id="statusBadge" class="status-badge unknown"><span class="dot"></span>확인 중</span>
+          <label class="switch-label"><input type="checkbox" id="autoRefreshChk"> 실시간 갱신 (2초)</label>
+          <label class="switch-label"><input type="checkbox" id="autoScrollChk" checked> 자동 스크롤</label>
+        </div>
+        <div class="group">
+          <input type="text" id="searchInput" placeholder="로그 내용 검색...">
+          <button type="button" class="btn small" onclick="manualRefresh()">↻ 새로고침</button>
+          {% if log_exists %}
+            <a class="btn small" href="/logs/download?date={{ selected_date }}">⬇ 다운로드</a>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="tag-chips" id="tagChips" style="margin-bottom: 12px;"></div>
+
+      <div class="log-view" id="logView"><span class="empty">로딩 중...</span></div>
+      <div class="hint" style="margin-top:10px;">
+        태그 칩을 클릭하면 해당 종류의 로그만 필터링해서 볼 수 있습니다 (여러 개 선택 가능, 다시 클릭하면 해제).
+        <span class="path-tag">{{ logs_dir }}/run_all.{{ selected_date }}.log</span>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    var SELECTED_DATE = {{ selected_date|tojson }};
+    var TODAY_STR = {{ today_str|tojson }};
+    var offset = {{ initial_offset }};
+    var allLines = [];
+    var pendingPartial = "";
+    var tagFilters = new Set();
+    var searchTerm = "";
+    var stickToBottom = true;
+    var pollTimer = null;
+
+    var initialContent = {{ content|tojson }};
+
+    function escapeHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function lineTag(line) {
+      var m = line.match(/^\[([A-Za-z0-9_]+)\b/);
+      return m ? m[1] : null;
+    }
+
+    function ingest(chunk) {
+      if (!chunk) return;
+      var combined = pendingPartial + chunk;
+      var parts = combined.split("\n");
+      if (chunk.charAt(chunk.length - 1) !== "\n") {
+        pendingPartial = parts.pop();
+      } else {
+        pendingPartial = "";
+        parts.pop(); // 마지막 빈 문자열 제거
+      }
+      for (var i = 0; i < parts.length; i++) {
+        if (parts[i] !== "") allLines.push(parts[i]);
+      }
+    }
+
+    function rebuildTagChips() {
+      var seen = {};
+      allLines.forEach(function(l) {
+        var t = lineTag(l);
+        if (t) seen[t] = true;
+      });
+      var chips = document.getElementById("tagChips");
+      var tags = Object.keys(seen).sort();
+      chips.innerHTML = "";
+      tags.forEach(function(t) {
+        var chip = document.createElement("span");
+        chip.className = "tag-chip" + (tagFilters.has(t) ? " active" : "");
+        chip.textContent = t;
+        chip.onclick = function() {
+          if (tagFilters.has(t)) tagFilters.delete(t); else tagFilters.add(t);
+          render();
+          rebuildTagChips();
+        };
+        chips.appendChild(chip);
+      });
+    }
+
+    function colorizeLine(line) {
+      var esc = escapeHtml(line);
+      if (/RUN START|RUN END/.test(line)) {
+        return '<span class="l-run">' + esc + '</span>';
+      }
+      if (/오류|실패|error|Error/i.test(line)) {
+        return '<span class="l-err">' + esc + '</span>';
+      }
+      return esc.replace(/^(\[[A-Za-z0-9_]+[^\]]*\])/, '<span class="l-tag">$1</span>');
+    }
+
+    function render() {
+      var view = document.getElementById("logView");
+      var filtered = allLines.filter(function(l) {
+        if (tagFilters.size > 0) {
+          var t = lineTag(l);
+          if (!t || !tagFilters.has(t)) return false;
+        }
+        if (searchTerm && l.toLowerCase().indexOf(searchTerm) === -1) return false;
+        return true;
+      });
+      if (filtered.length === 0) {
+        view.innerHTML = '<span class="empty">표시할 로그가 없습니다.</span>';
+        return;
+      }
+      view.innerHTML = filtered.map(colorizeLine).join("\n");
+      if (stickToBottom) view.scrollTop = view.scrollHeight;
+    }
+
+    function updateStatusBadge() {
+      var badge = document.getElementById("statusBadge");
+      var lastRun = null;
+      for (var i = allLines.length - 1; i >= 0; i--) {
+        if (/RUN START|RUN END/.test(allLines[i])) { lastRun = allLines[i]; break; }
+      }
+      if (!lastRun || SELECTED_DATE !== TODAY_STR) {
+        badge.className = "status-badge unknown";
+        badge.innerHTML = '<span class="dot"></span>' + (SELECTED_DATE === TODAY_STR ? "대기 중" : "과거 로그");
+        return;
+      }
+      if (/RUN START/.test(lastRun)) {
+        badge.className = "status-badge running";
+        badge.innerHTML = '<span class="dot"></span>실행 중';
+      } else {
+        badge.className = "status-badge idle";
+        badge.innerHTML = '<span class="dot"></span>대기 중';
+      }
+    }
+
+    function onLogViewScroll() {
+      var view = document.getElementById("logView");
+      stickToBottom = (view.scrollTop + view.clientHeight >= view.scrollHeight - 40);
+    }
+
+    function poll() {
+      fetch("/logs/tail?date=" + encodeURIComponent(SELECTED_DATE) + "&offset=" + offset)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.error) return;
+          if (data.exists && data.content) {
+            ingest(data.content);
+            rebuildTagChips();
+            render();
+            updateStatusBadge();
+          }
+          if (typeof data.offset === "number") offset = data.offset;
+        })
+        .catch(function() {});
+    }
+
+    function manualRefresh() {
+      poll();
+    }
+
+    function setAutoRefresh(on) {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (on) pollTimer = setInterval(poll, 2000);
+    }
+
+    document.getElementById("autoScrollChk").addEventListener("change", function(e) {
+      stickToBottom = e.target.checked;
+    });
+    document.getElementById("autoRefreshChk").addEventListener("change", function(e) {
+      setAutoRefresh(e.target.checked);
+    });
+    document.getElementById("searchInput").addEventListener("input", function(e) {
+      searchTerm = e.target.value.trim().toLowerCase();
+      render();
+    });
+    document.getElementById("logView").addEventListener("scroll", onLogViewScroll);
+
+    // 초기 로딩
+    ingest(initialContent);
+    rebuildTagChips();
+    render();
+    updateStatusBadge();
+    if (SELECTED_DATE === TODAY_STR) {
+      document.getElementById("autoRefreshChk").checked = true;
+      setAutoRefresh(true);
+    }
+
+    // 상단 "배치 실행" 버튼
+    function showToast(message, type) {
+      var toast = document.getElementById('toast');
+      if (!toast) return;
+      toast.textContent = message;
+      toast.className = 'toast show' + (type ? ' ' + type : '');
+      clearTimeout(toast._hideTimer);
+      toast._hideTimer = setTimeout(function() { toast.className = 'toast'; }, 4000);
+    }
+
+    function runBatch() {
+      if (!confirm('media_router 배치(run_all.sh)를 지금 실행할까요?\n실제 파일 이동/이름변경이 즉시 진행됩니다.')) {
+        return;
+      }
+      var btn = document.getElementById('runBatchBtn');
+      var originalHTML = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> 요청 중...';
+
+      fetch('/run_batch', { method: 'POST' })
+        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
+        .then(function(res) {
+          showToast(res.data.message || (res.ok ? '요청 완료' : '요청 실패'), res.ok ? 'success' : 'error');
+          if (res.ok && SELECTED_DATE === TODAY_STR && !pollTimer) {
+            document.getElementById("autoRefreshChk").checked = true;
+            setAutoRefresh(true);
+          }
+        })
+        .catch(function(e) { showToast('요청 중 오류가 발생했습니다: ' + e, 'error'); })
+        .finally(function() {
+          setTimeout(function() { btn.disabled = false; btn.innerHTML = originalHTML; }, 3000);
+        });
+    }
+  </script>
+</body>
+</html>

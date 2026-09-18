@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>사용자 관리 - Media Router Web Admin</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --fg: #0f172a;
+      --muted: #64748b;
+      --bg: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+      --bg-solid: #f8fafc;
+      --bg-card: #ffffff;
+      --line: #e2e8f0;
+      --line-hover: #cbd5e1;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --accent-light: #eef2ff;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --danger-light: #fef2f2;
+      --success: #10b981;
+      --success-hover: #059669;
+      --success-light: #ecfdf5;
+      --warning: #f59e0b;
+      --warning-light: #fffbeb;
+      --purple: #8b5cf6;
+      --jellyfin: #00a4dc;
+      --plex: #e5a00d;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", Arial, sans-serif;
+      color: var(--fg);
+      background: var(--bg-solid);
+      background-image: var(--bg);
+      min-height: 100vh;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .topbar { position: sticky; top: 0; z-index: 100; background: var(--bg-solid); }
+    .topbar-inner { max-width: 1400px; margin: 0 auto; padding: 0 24px; }
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 28px 32px; box-shadow: var(--shadow-md);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    header > div { flex: 1; }
+    header h1 { margin: 0; font-size: 24px; font-weight: 700; color: #fff; letter-spacing: -0.02em; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
+    .summary-bar { display: flex; gap: 22px; }
+    .summary-item { text-align: right; color: #fff; }
+    .summary-num { font-size: 19px; font-weight: 700; font-family: ui-monospace, monospace; line-height: 1; }
+    .summary-label { font-size: 11px; opacity: 0.8; margin-top: 3px; }
+    .toast {
+      position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(16px);
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: #fff;
+      padding: 13px 22px; border-radius: 12px; font-size: 14px; font-weight: 600;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); opacity: 0; pointer-events: none;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1000; max-width: 90vw; text-align: center;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.success { background: linear-gradient(135deg, var(--success) 0%, var(--success-hover) 100%); }
+    .toast.error { background: linear-gradient(135deg, var(--danger) 0%, var(--danger-hover) 100%); }
+    .mode-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--line); background: var(--bg-solid); margin: 0; }
+    .mode-tabs a {
+      padding: 14px 24px; text-decoration: none; color: var(--muted); border-bottom: 3px solid transparent;
+      margin-bottom: -2px; font-weight: 500; font-size: 14px; transition: all 0.25s ease; display: inline-block;
+    }
+    .mode-tabs a:hover { color: var(--accent); }
+    .mode-tabs a.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 700; }
+    main { max-width: 1400px; margin: 0 auto; padding: 32px 24px; }
+    .users-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    @media (max-width: 900px) { .users-grid { grid-template-columns: 1fr; } }
+    .card { background: var(--bg-card); border: 1px solid var(--line); border-radius: 16px; padding: 0; box-shadow: var(--shadow); overflow: hidden; }
+    .card-header { padding: 16px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
+    .card-title { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+    .card-body { padding: 22px; }
+    .muted { color: var(--muted); }
+    .hint { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 9px 16px; font-size: 13.5px; font-weight: 600;
+      border: 1px solid var(--line); border-radius: 9px; background: var(--bg-card);
+      cursor: pointer; text-decoration: none; color: var(--fg);
+      transition: all 0.2s ease; white-space: nowrap; box-shadow: var(--shadow-sm);
+    }
+    .btn:hover { background: #f8fafc; border-color: var(--line-hover); transform: translateY(-1px); }
+    .btn.primary { background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%); color: #fff; border-color: var(--accent); box-shadow: 0 4px 14px rgba(99,102,241,0.25); }
+    .btn.primary:hover { background: linear-gradient(135deg, var(--accent-hover) 0%, #4338ca 100%); }
+    .btn.danger { background: #fff; color: var(--danger); border-color: #fecaca; }
+    .btn.danger:hover { background: var(--danger-light); border-color: var(--danger); }
+    .btn.ghost { background: transparent; box-shadow: none; }
+    .btn.small { padding: 6px 11px; font-size: 12.5px; }
+    input[type=text], select {
+      padding: 9px 11px; font-size: 13.5px; border: 2px solid var(--line); border-radius: 8px;
+      background: var(--bg-card); color: var(--fg); width: 100%; font-family: inherit;
+      transition: all 0.2s ease;
+    }
+    input[type=text]:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
+    label.field-label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+    .form-row { display: flex; gap: 10px; margin-bottom: 10px; }
+    .form-group { flex: 1; }
+    .divider { height: 1px; background: var(--line); margin: 16px 0; }
+    .empty-state { text-align: center; padding: 36px 20px; color: var(--muted); font-size: 13.5px; }
+
+    #personSearch { margin-bottom: 14px; }
+    .person-list { display: flex; flex-direction: column; gap: 8px; max-height: 560px; overflow-y: auto; }
+    .person-card { background: var(--bg-solid); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; cursor: pointer; transition: border-color 0.15s; }
+    .person-card:hover, .person-card.active { border-color: var(--accent); }
+    .person-card.active { background: var(--accent-light); }
+    .person-top { display: flex; align-items: center; justify-content: space-between; }
+    .person-name { font-weight: 700; font-size: 14px; }
+    .person-actions { display: flex; gap: 4px; }
+    .person-memo { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .person-accounts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; font-family: ui-monospace, monospace; }
+    .badge-jellyfin { background: rgba(0,164,220,0.12); color: var(--jellyfin); border: 1px solid rgba(0,164,220,0.3); }
+    .badge-plex { background: rgba(229,160,13,0.12); color: var(--plex); border: 1px solid rgba(229,160,13,0.3); }
+    .badge-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+    .account-item { background: var(--bg-solid); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+    .account-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .account-info { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+    .account-username { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .account-userid { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <header>
+      <div>
+        <h1>Media Router Web Admin</h1>
+      </div>
+      <div class="summary-bar" id="summaryBar">
+        <div class="summary-item"><div class="summary-num" id="sumPersons">-</div><div class="summary-label">사용자</div></div>
+        <div class="summary-item"><div class="summary-num" id="sumAccounts">-</div><div class="summary-label">연결 계정</div></div>
+        <div class="summary-item"><div class="summary-num" id="sumPlays">-</div><div class="summary-label">재생 기록</div></div>
+        <div class="summary-item"><div class="summary-num" id="sumUnmatched">-</div><div class="summary-label">미매핑</div></div>
+      </div>
+    </header>
+    <div class="topbar-inner">
+      <div class="mode-tabs">
+        <a href="/?mode=check">체크모드 (그저께+어제+오늘)</a>
+        <a href="/?mode=">전체 관리</a>
+        <a href="/rename_rules">파일명 치환 규칙</a>
+        <a href="/bt4g_keywords">BT4G 키워드</a>
+        <a href="/logs">실행 로그</a>
+        <a href="/users" class="active">사용자 관리</a>
+        <a href="/settings">설정</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <main>
+    <div class="users-grid">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">👤 사용자 목록</span>
+          <button class="btn primary small" onclick="showAddPerson()">+ 추가</button>
+        </div>
+        <div class="card-body">
+          <div id="addPersonForm" style="display:none; margin-bottom:16px;">
+            <div class="form-row">
+              <div class="form-group"><label class="field-label">이름</label><input type="text" id="newPersonName" placeholder="홍길동"></div>
+              <div class="form-group"><label class="field-label">메모</label><input type="text" id="newPersonMemo" placeholder="선택사항"></div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn primary small" onclick="addPerson()">저장</button>
+              <button class="btn ghost small" onclick="hideAddPerson()">취소</button>
+            </div>
+            <div class="divider"></div>
+          </div>
+
+          <input type="text" id="personSearch" placeholder="🔍 이름으로 검색..." oninput="renderPersonList()">
+
+          <div class="person-list" id="personList">
+            <div class="empty-state">불러오는 중...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title" id="accountPanelTitle">🔗 계정 관리</span></div>
+        <div class="card-body" id="accountPanel">
+          <div class="empty-state">왼쪽에서 사용자를 선택하세요</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let persons = [];
+    let selectedPersonId = null;
+
+    function showToast(message, type) {
+      var toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = 'toast show' + (type ? ' ' + type : '');
+      clearTimeout(toast._hideTimer);
+      toast._hideTimer = setTimeout(function() { toast.className = 'toast'; }, 3000);
+    }
+
+    async function fetchJSON(url, opts) {
+      opts = opts || {};
+      const res = await fetch(url, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
+      if (!res.ok) {
+        const err = await res.json().catch(function() { return {}; });
+        throw new Error(err.error || res.statusText);
+      }
+      return res.json();
+    }
+
+    async function loadSummary() {
+      const s = await fetchJSON('/api/users/summary');
+      document.getElementById('sumPersons').textContent = s.persons;
+      document.getElementById('sumAccounts').textContent = s.accounts;
+      document.getElementById('sumPlays').textContent = s.plays.toLocaleString();
+      document.getElementById('sumUnmatched').textContent = s.unmatched;
+    }
+
+    async function loadPersons() {
+      persons = await fetchJSON('/api/users/persons');
+      renderPersonList();
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function renderPersonList() {
+      const el = document.getElementById('personList');
+      if (!persons.length) {
+        el.innerHTML = '<div class="empty-state">등록된 사용자가 없습니다</div>';
+        return;
+      }
+      const query = (document.getElementById('personSearch').value || '').trim().toLowerCase();
+      const filtered = query ? persons.filter(function(p) { return p.name.toLowerCase().includes(query); }) : persons;
+      if (!filtered.length) {
+        el.innerHTML = '<div class="empty-state">"' + escapeHtml(query) + '"와(과) 일치하는 사용자가 없습니다</div>';
+        return;
+      }
+
+      el.innerHTML = filtered.map(function(p) {
+        const accounts = p.accounts || [];
+        const badges = accounts.map(function(a) {
+          return '<span class="badge badge-' + a.service + '"><span class="badge-dot"></span>' +
+            (a.service === 'jellyfin' ? 'JF' : 'PX') + ' ' + escapeHtml(a.username) + '</span>';
+        }).join('');
+        return (
+          '<div class="person-card' + (selectedPersonId === p.id ? ' active' : '') + '" onclick="selectPerson(' + p.id + ')">' +
+            '<div class="person-top">' +
+              '<span class="person-name">' + escapeHtml(p.name) + '</span>' +
+              '<div class="person-actions">' +
+                '<button class="btn ghost small" onclick="event.stopPropagation(); deletePerson(' + p.id + ', \'' + escapeHtml(p.name).replace(/'/g, "\\'") + '\')">✕</button>' +
+              '</div>' +
+            '</div>' +
+            '<div class="person-memo">' + escapeHtml(p.memo || '') + '</div>' +
+            '<div class="person-accounts">' + (badges || '<span style="font-size:11px;color:var(--muted)">연결된 계정 없음</span>') + '</div>' +
+          '</div>'
+        );
+      }).join('');
+    }
+
+    function selectPerson(id) {
+      selectedPersonId = id;
+      renderPersonList();
+      renderAccountPanel();
+    }
+
+    function renderAccountPanel() {
+      const person = persons.find(function(p) { return p.id === selectedPersonId; });
+      if (!person) return;
+
+      document.getElementById('accountPanelTitle').textContent = '🔗 ' + person.name + '의 계정';
+
+      const accounts = person.accounts || [];
+      const rows = accounts.map(function(a) {
+        return (
+          '<div class="account-item" id="account-item-' + a.id + '">' +
+            '<div class="account-row" id="account-view-' + a.id + '">' +
+              '<div class="account-info">' +
+                '<span class="badge badge-' + a.service + '"><span class="badge-dot"></span>' + (a.service === 'jellyfin' ? 'Jellyfin' : 'Plex') + '</span>' +
+                '<div><div class="account-username">' + escapeHtml(a.username) + '</div><div class="account-userid" title="' + escapeHtml(a.user_id) + '">' + escapeHtml(a.user_id) + '</div></div>' +
+              '</div>' +
+              '<div style="display:flex; gap:4px;">' +
+                '<button class="btn ghost small" onclick="startEditAccount(' + a.id + ')">✏️</button>' +
+                '<button class="btn danger small" onclick="deleteAccount(' + a.id + ')">✕</button>' +
+              '</div>' +
+            '</div>' +
+            '<div id="account-edit-' + a.id + '" style="display:none; margin-top:10px;">' +
+              '<div class="form-row" style="margin-bottom:6px;">' +
+                '<div class="form-group"><label class="field-label">서비스</label>' +
+                  '<select id="edit-account-service-' + a.id + '">' +
+                    '<option value="jellyfin"' + (a.service === 'jellyfin' ? ' selected' : '') + '>Jellyfin</option>' +
+                    '<option value="plex"' + (a.service === 'plex' ? ' selected' : '') + '>Plex</option>' +
+                  '</select>' +
+                '</div>' +
+                '<div class="form-group"><label class="field-label">사용자명</label><input type="text" id="edit-account-username-' + a.id + '" value="' + escapeHtml(a.username) + '"></div>' +
+              '</div>' +
+              '<div class="form-row" style="margin-bottom:6px;">' +
+                '<div class="form-group"><label class="field-label">User ID</label><input type="text" id="edit-account-userid-' + a.id + '" value="' + escapeHtml(a.user_id) + '"></div>' +
+              '</div>' +
+              '<div style="display:flex; gap:6px;">' +
+                '<button class="btn primary small" onclick="saveAccount(' + a.id + ', ' + person.id + ')">저장</button>' +
+                '<button class="btn ghost small" onclick="cancelEditAccount(' + a.id + ')">취소</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>'
+        );
+      }).join('');
+
+      document.getElementById('accountPanel').innerHTML =
+        (rows || '<div class="empty-state">연결된 계정 없음</div>') +
+        '<div class="divider"></div>' +
+        '<div style="font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:12px;">계정 추가</div>' +
+        '<div class="form-row">' +
+          '<div class="form-group"><label class="field-label">서비스</label><select id="newService"><option value="jellyfin">Jellyfin</option><option value="plex">Plex</option></select></div>' +
+          '<div class="form-group"><label class="field-label">사용자명</label><input type="text" id="newUsername" placeholder="서비스 내 표시 이름"></div>' +
+        '</div>' +
+        '<div class="form-row">' +
+          '<div class="form-group"><label class="field-label">User ID <span class="muted">(서비스 내부 ID)</span></label><input type="text" id="newUserId" placeholder="UUID 또는 숫자 ID"></div>' +
+        '</div>' +
+        '<button class="btn primary" onclick="addAccount(' + person.id + ')">계정 연결</button>';
+    }
+
+    function showAddPerson() {
+      document.getElementById('addPersonForm').style.display = 'block';
+      document.getElementById('newPersonName').focus();
+    }
+    function hideAddPerson() {
+      document.getElementById('addPersonForm').style.display = 'none';
+      document.getElementById('newPersonName').value = '';
+      document.getElementById('newPersonMemo').value = '';
+    }
+
+    async function addPerson() {
+      const name = document.getElementById('newPersonName').value.trim();
+      if (!name) { showToast('이름을 입력해주세요', 'error'); return; }
+      try {
+        await fetchJSON('/api/users/persons', { method: 'POST', body: JSON.stringify({ name: name, memo: document.getElementById('newPersonMemo').value }) });
+        showToast(name + ' 추가 완료', 'success');
+        hideAddPerson();
+        await loadPersons();
+        await loadSummary();
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function deletePerson(id, name) {
+      if (!confirm('"' + name + '"을(를) 삭제할까요?\n연결된 계정도 모두 삭제됩니다.')) return;
+      try {
+        await fetchJSON('/api/users/persons/' + id, { method: 'DELETE' });
+        if (selectedPersonId === id) {
+          selectedPersonId = null;
+          document.getElementById('accountPanel').innerHTML = '<div class="empty-state">왼쪽에서 사용자를 선택하세요</div>';
+          document.getElementById('accountPanelTitle').textContent = '🔗 계정 관리';
+        }
+        showToast(name + ' 삭제 완료', 'success');
+        await loadPersons();
+        await loadSummary();
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function addAccount(personId) {
+      const service = document.getElementById('newService').value;
+      const username = document.getElementById('newUsername').value.trim();
+      const user_id = document.getElementById('newUserId').value.trim();
+      if (!username || !user_id) { showToast('사용자명과 ID를 모두 입력해주세요', 'error'); return; }
+      try {
+        await fetchJSON('/api/users/accounts', { method: 'POST', body: JSON.stringify({ person_id: personId, service: service, username: username, user_id: user_id }) });
+        showToast('계정 연결 완료', 'success');
+        await loadPersons();
+        await loadSummary();
+        selectPerson(personId);
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    function startEditAccount(id) {
+      document.getElementById('account-view-' + id).style.display = 'none';
+      document.getElementById('account-edit-' + id).style.display = 'block';
+      document.getElementById('edit-account-username-' + id).focus();
+    }
+    function cancelEditAccount(id) {
+      document.getElementById('account-view-' + id).style.display = '';
+      document.getElementById('account-edit-' + id).style.display = 'none';
+    }
+
+    async function saveAccount(id, personId) {
+      const service = document.getElementById('edit-account-service-' + id).value;
+      const username = document.getElementById('edit-account-username-' + id).value.trim();
+      const user_id = document.getElementById('edit-account-userid-' + id).value.trim();
+      if (!username || !user_id) { showToast('사용자명과 ID를 모두 입력해주세요', 'error'); return; }
+      try {
+        await fetchJSON('/api/users/accounts/' + id, { method: 'PUT', body: JSON.stringify({ service: service, username: username, user_id: user_id }) });
+        showToast('계정 정보 수정 완료', 'success');
+        await loadPersons();
+        await loadSummary();
+        selectPerson(personId);
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    async function deleteAccount(id) {
+      if (!confirm('이 계정 연결을 해제할까요?')) return;
+      try {
+        await fetchJSON('/api/users/accounts/' + id, { method: 'DELETE' });
+        showToast('계정 연결 해제', 'success');
+        await loadPersons();
+        await loadSummary();
+        if (selectedPersonId) selectPerson(selectedPersonId);
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    Promise.all([loadPersons(), loadSummary()]);
+  </script>
+</body>
+</html>

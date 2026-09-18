@@ -11,8 +11,17 @@ services:
       - /volume1/web/video_auto:/volume1/web/video_auto
       - /volume1/web/Python/bt4g/bt4g_keywords.txt:/volume1/web/Python/bt4g/bt4g_keywords.txt
       - ./secrets:/app/secrets:ro
+      # run_all.sh(호스트에서 SSH 강제 명령/DSM 예약작업으로 실행)가 남기는
+      # 로그를 웹 관리자의 "실행 로그" 탭에서 읽기 위한 마운트
+      - ./logs:/app/logs:ro
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
       - RUN_BATCH_SSH_KEY=/app/secrets/run_batch_key
       - RUN_BATCH_SSH_PORT=202
+      # 사용자 관리 탭(media-stats postgres 연동, 2026-09-18)
+      - STATS_DB_HOST=${STATS_DB_HOST:-localhost}
+      - STATS_DB_PORT=${STATS_DB_PORT:-15433}
+      - STATS_DB_NAME=${STATS_DB_NAME:-media_stats}
+      - STATS_DB_USER=${STATS_DB_USER:-media_admin}
+      - STATS_DB_PASSWORD=${STATS_DB_PASSWORD:-}
