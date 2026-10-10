@@ -65,6 +65,12 @@ def sanitize_filename_for_plex(filename: str) -> str:
     """Plex TV 스캐너가 인식 못하는 토큰(예: .END) 제거"""
     return re.sub(r'(?i)\.END(?=\.[^.]+$)', '', filename)
 
+def strip_encoder_tag(filename: str) -> str:
+    """ShanaEncoder로 재인코딩하면 파일명 앞에 붙는 "[SHANA]" 태그 제거.
+    최종 라이브러리 폴더에는 원래 이름 그대로 들어가야 하므로, 이동 전에
+    카테고리 무관하게 항상 정리한다."""
+    return re.sub(r'^\[SHANA\]\s*', '', filename, flags=re.IGNORECASE)
+
 def _ensure_rule_updated_map(rule: Dict) -> None:
     """하위호환: 단일 updated → 요일별 updated_map으로 승격"""
     days = rule.get("days") or []
@@ -249,6 +255,110 @@ def safe_move_with_ownership(src: Path, dst_dir: Path,
     if do_acl: syno_enforce_inherit(dst)
     apply_extra_acl(dst, acl_entries or [])
     return dst
+
+FFMPEG_BIN = "/bin/ffmpeg"  # Synology DSM에 이미 설치돼 있음(별도 설치/빌드 불필요)
+_VIDEO_STREAM_RE = re.compile(
+    r"Video:\s*(?P<codec>\S+?)(?:\s*\([^)]*\))*\s*,\s*(?P<pixfmt>[\w]+)(?:\([^)]*\))?\s*,\s*(?P<width>\d+)x(?P<height>\d+)"
+)
+
+def probe_video_stream(path: Path) -> Optional[Dict]:
+    """ffmpeg -i 출력(stderr)에서 비디오 스트림 정보(코덱/해상도) 파싱.
+    별도 ffprobe/패키지 설치 없이 DSM에 이미 있는 /bin/ffmpeg만 사용한다.
+    ffmpeg -i는 출력파일을 안 주면 항상 exit code 1로 끝나므로 returncode는
+    확인하지 않고 stderr 텍스트만 본다. 실패하면 None."""
+    try:
+        out = subprocess.run([FFMPEG_BIN, "-i", str(path)], capture_output=True, text=True, timeout=30)
+        m = _VIDEO_STREAM_RE.search(out.stderr or "")
+        if not m:
+            log(f"ffmpeg probe: no video stream matched for {path}")
+            return None
+        return {"codec": m.group("codec"), "width": int(m.group("width")), "height": int(m.group("height"))}
+    except Exception as e:
+        log(f"ffmpeg probe error: {path} - {e}")
+        return None
+
+ENCODING_HOLD_DIR = Path("/volume1/homes/kck9010/Drive/인코딩")
+
+# check_variety_encoding이 "720p 아님"을 보류 사유로 판단하더라도, 그 쇼의
+# 규칙(rename_rules)에 설정된 "릴리즈 정보"에 이 토큰이 있으면 "이 쇼는
+# 1080p를 허용한다"는 뜻으로 보고 예외로 둔다(강제 인코딩 안 함, 최종 폴더로
+# 바로 이동). 파일명이 아니라 Web Admin에서 설정한 release 필드를 본다.
+# 기존 라이브러리 파일과 비교하는 방식(최근 수정된 파일을 기준으로 삼는
+# 방식)은 라이브러리에 아직 안 바뀐 구형 1080p 원본이 섞여있으면 정상 720p
+# 신규 파일까지 오탐하는 문제가 있어 폐기함(SNL 코리아 리부트, 2026-10-08)
+# — 이제는 비교 없이 파일 자신의 해상도 + 규칙의 release 설정으로 판단한다.
+VARIETY_1080_EXEMPT_TOKEN = "1080"
+
+def move_to_encoding_hold(cfg: Dict, f: Path, reason: str) -> Path | None:
+    """f를 ENCODING_HOLD_DIR(Drive/인코딩)로 옮기고 텔레그램으로 알린다.
+    성공하면 이동된 경로를, 실패하면 None을 돌려준다."""
+    try:
+        ENCODING_HOLD_DIR.mkdir(parents=True, exist_ok=True)
+        dst = ENCODING_HOLD_DIR / f.name
+        if dst.exists():
+            stem, suf, i = dst.stem, dst.suffix, 1
+            while True:
+                cand = ENCODING_HOLD_DIR / f"{stem}_{i}{suf}"
+                if not cand.exists():
+                    dst = cand
+                    break
+                i += 1
+        shutil.move(str(f), str(dst))
+    except Exception as e:
+        log(f"인코딩 보류 폴더로 이동 실패: {f} - {e}")
+        return None
+
+    log(f"ENCODING_HOLD: {f.name} ({reason}) -> {dst}")
+    tg_send(cfg, f"⚠️ 인코딩 보류: {f.name}\n{reason}\n{ENCODING_HOLD_DIR}로 옮겨뒀어요. PC에서 재인코딩 후 Drive에 다시 넣어주세요.")
+    return dst
+
+def mark_original_in_hold_done(f: Path) -> None:
+    """f(이번에 인코딩이 정상 확인되어 최종 폴더로 이동되는 파일)와 이름이
+    같은(확장자 제외) 원본이 ENCODING_HOLD_DIR(Drive/인코딩)에 아직 남아있으면
+    "[완료] " 접두사를 붙여, 재인코딩이 끝나서 더 이상 필요 없는 원본임을
+    표시해둔다. 삭제는 하지 않음 — 확인 후 사용자가 직접 지운다."""
+    try:
+        if not ENCODING_HOLD_DIR.exists():
+            return
+        for cand in ENCODING_HOLD_DIR.iterdir():
+            if not cand.is_file() or cand.name.startswith("[완료]"):
+                continue
+            if cand.stem == f.stem:
+                new_name = f"[완료] {cand.name}"
+                try:
+                    cand.rename(cand.with_name(new_name))
+                    log(f"ORIGINAL_MARKED_DONE: {cand.name} -> {new_name}")
+                except Exception as e:
+                    log(f"원본 완료 표시 실패: {cand} - {e}")
+    except Exception as e:
+        log(f"ENCODING_HOLD_DIR 스캔 실패: {e}")
+
+def check_variety_encoding(cfg: Dict, f: Path, release: str = "") -> bool:
+    """예능 파일 자신의 해상도만으로 판단한다(기존 라이브러리 파일과는
+    비교하지 않음 - 2026-10-08 SNL 오탐 사고 이후 정책 변경).
+    이미 720p면 통과, 아니면 이 쇼의 규칙에 설정된 release 문자열(Web
+    Admin에서 입력, 파일명이 아님)에 "1080"이 포함돼 있지 않은 한
+    ENCODING_HOLD_DIR(Drive/인코딩)로 보류하고 텔레그램으로 알린다.
+    사용자가 PC에서 재인코딩해서 다시 Drive에 넣으면 drama_name.sh →
+    media_router.py 파이프라인을 다시 타고 재검사된다(drama_name.sh는 이
+    ENCODING_HOLD_DIR만 훑지 않도록 제외돼 있음).
+    반환값이 True면 이미 이 함수 안에서 옮겼다는 뜻이니, 호출자는 추가로
+    최종 폴더로 이동시키지 말고 건너뛰어야 한다."""
+    info = probe_video_stream(f)
+    if not info:
+        return False  # 확인 불가 - 보수적으로 그냥 정상 이동시킴
+    if info.get("height") == 720:
+        # 가로폭은 정확히 1280이 아니어도(네이티브 720p 원본이 약간 다른
+        # 폭을 가질 수 있음) 통과시킨다. PC 인코더 출력은 항상 정확히
+        # 1280x720이라, 여기서 폭까지 엄격히 맞추면 폭만 살짝 다른 네이티브
+        # 720p 원본은 PC에서 다시 인코딩해도 똑같이 "폭이 다름"이 되어
+        # 영원히 통과를 못 하는 막다른 보류 루프가 될 수 있다.
+        return False  # 이미 표준 해상도 - 정상 이동
+    if VARIETY_1080_EXEMPT_TOKEN in (release or ""):
+        return False  # 이 쇼의 release 설정이 1080 허용 - 강제 인코딩 예외
+
+    reason = f"해상도 {info.get('width')}x{info.get('height')} (720p 아님)"
+    return move_to_encoding_hold(cfg, f, reason) is not None
 
 def reset_updated_for_today(cfg: Dict) -> bool:
     """오늘 날짜의 첫 실행에서 오늘 요일만 N으로 리셋 (요일별 독립 저장).
@@ -452,30 +562,59 @@ def main() -> None:
                     except ValueError:
                         pass
 
-                    # 예능: 동일 파일명이 이미 있으면 작은 파일만 남긴다.
+                    # ShanaEncoder로 재인코딩된 파일의 "[SHANA]" 접두사 제거
+                    stripped = strip_encoder_tag(f.name)
+                    if stripped != f.name:
+                        new_src = f.with_name(stripped)
+                        try:
+                            f.rename(new_src)
+                            log(f"RENAMED_STRIP_TAG: {f.name} -> {stripped}")
+                            f = new_src
+                        except Exception as e:
+                            log(f"Rename fail: {f} -> {new_src} ({e})")
+
+                    # 예능: 동일 파일명이 이미 있으면 둘 중 하나만 남긴다.
+                    # 해상도를 먼저 본다(720p인 쪽이 "인코딩 완료된 올바른 쪽"이라는
+                    # 뜻이므로 우선) - 파일 크기만 보면 "작은 쪽 = 인코딩됨"이라는
+                    # 우연한 상관관계에 의존하게 되어, 가끔 짧은 특집편처럼 원래도
+                    # 작은 1080p 원본이 끼면 잘못 판단할 수 있다. 둘 다 720p거나
+                    # 둘 다 아니거나 해상도 확인이 안 되면 기존처럼 크기로 판단.
                     skip_move_keep_existing = False
                     if category == "예능":
                         existing_dst = target_dir / f.name
                         if existing_dst.exists() and existing_dst.is_file():
                             try:
-                                src_size = f.stat().st_size
-                                dst_size = existing_dst.stat().st_size
-                                if src_size > dst_size:
-                                    # 들어온 파일이 더 크면 들어온 파일 삭제
-                                    f.unlink()
-                                    skip_move_keep_existing = True
-                                    log(f"DUPLICATE_SMALLER_KEPT: kept {existing_dst} ({dst_size}B), removed {f} ({src_size}B)")
-                                elif src_size < dst_size:
-                                    # 기존 파일이 더 크면 기존 파일 삭제 후 들어온 파일 이동
+                                existing_info = probe_video_stream(existing_dst)
+                                new_info = probe_video_stream(f)
+                                existing_is_720 = bool(existing_info) and existing_info.get("height") == 720
+                                new_is_720 = bool(new_info) and new_info.get("height") == 720
+
+                                if new_is_720 and not existing_is_720:
                                     existing_dst.unlink()
-                                    log(f"DUPLICATE_SMALLER_KEPT: kept incoming {f} ({src_size}B), removed {existing_dst} ({dst_size}B)")
-                                else:
-                                    # 크기가 같으면 기존 파일 유지, 들어온 파일 삭제
+                                    log(f"DUPLICATE_720P_KEPT: kept incoming {f}, removed {existing_dst} (720p 아님)")
+                                elif existing_is_720 and not new_is_720:
                                     f.unlink()
                                     skip_move_keep_existing = True
-                                    log(f"DUPLICATE_SAME_SIZE: kept {existing_dst}, removed {f}")
+                                    log(f"DUPLICATE_720P_KEPT: kept {existing_dst}, removed {f} (720p 아님)")
+                                else:
+                                    src_size = f.stat().st_size
+                                    dst_size = existing_dst.stat().st_size
+                                    if src_size > dst_size:
+                                        # 들어온 파일이 더 크면 들어온 파일 삭제
+                                        f.unlink()
+                                        skip_move_keep_existing = True
+                                        log(f"DUPLICATE_SMALLER_KEPT: kept {existing_dst} ({dst_size}B), removed {f} ({src_size}B)")
+                                    elif src_size < dst_size:
+                                        # 기존 파일이 더 크면 기존 파일 삭제 후 들어온 파일 이동
+                                        existing_dst.unlink()
+                                        log(f"DUPLICATE_SMALLER_KEPT: kept incoming {f} ({src_size}B), removed {existing_dst} ({dst_size}B)")
+                                    else:
+                                        # 크기가 같으면 기존 파일 유지, 들어온 파일 삭제
+                                        f.unlink()
+                                        skip_move_keep_existing = True
+                                        log(f"DUPLICATE_SAME_SIZE: kept {existing_dst}, removed {f}")
                             except Exception as e:
-                                log(f"Duplicate size-compare fail: {f} vs {existing_dst} ({e})")
+                                log(f"Duplicate compare fail: {f} vs {existing_dst} ({e})")
 
                     if skip_move_keep_existing:
                         tg_send(cfg, f"중복 정리: {f.name} (더 작은 기존 파일 유지)")
@@ -493,6 +632,23 @@ def main() -> None:
                                 f = new_src
                             except Exception as e:
                                 log(f"Rename fail: {f} -> {new_src} ({e})")
+
+                    # 예능: 720p가 아니면(이 쇼의 release 설정에 1080 허용이
+                    # 없는 한) 최종 폴더로 옮기지 않고 보류 폴더(Drive/인코딩)로
+                    # 옮긴 뒤 다음 파일로 넘어간다. 예전엔 "불꽃야구"를 해상도
+                    # 확인 없이 무조건 보류시키는 별도 규칙(FORCE_ENCODE_SHOWS)이
+                    # 있었는데, 그게 이미 720p로 재인코딩되어 돌아온 완성본까지
+                    # 다시 붙잡아 무한루프를 만들었다(2026-10-10 실제 발생).
+                    # check_variety_encoding이 이제 해상도를 직접 보니 그 규칙은
+                    # 필요 없어져서 제거함.
+                    if category == "예능":
+                        try:
+                            if check_variety_encoding(cfg, f, r.get("release", "")):
+                                continue
+                            else:
+                                mark_original_in_hold_done(f)
+                        except Exception as e:
+                            log(f"Encoding check fail: {f} - {e}")
 
                     if apply_own:
                         dst = safe_move_with_ownership(f, target_dir, uid, gid, file_mode, dir_mode, setgid_dirs, do_acl, acl_entries)

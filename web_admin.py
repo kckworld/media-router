@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
-import os, hashlib, hmac, re, secrets, subprocess, time, threading
+import os, hashlib, hmac, re, secrets, subprocess, time, threading, socket
 from flask import Flask, request, redirect, render_template, abort, make_response, jsonify, send_file
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -53,12 +53,320 @@ RUN_BATCH_SSH_PORT = os.getenv("RUN_BATCH_SSH_PORT", "202")
 RUN_BATCH_SSH_USER = os.getenv("RUN_BATCH_SSH_USER", "kck9010")
 _run_batch_state = {"lock": threading.Lock(), "last_triggered": 0}
 
+# PC(KCK-GAMING) Wake-on-LAN - 인코딩용 PC를 원격으로 켜기 위한 매직 패킷 전송.
+# 컨테이너가 network_mode: host라서 브로드캐스트가 실제 LAN(eth0)으로 그대로
+# 나간다(일반 bridge 네트워크였으면 NAT에 막혀 안 나갈 수 있음).
+WOL_MAC = os.getenv("WOL_MAC", "74:56:3C:69:5F:19")
+WOL_BROADCAST = os.getenv("WOL_BROADCAST", "192.168.50.255")
+_wol_state = {"lock": threading.Lock(), "last_triggered": 0}
+
+# 인코딩용 PC(KCK-GAMING)에 SSH로 encode_all.ps1을 원격 실행 + 켜져있는지 확인
+GAMING_PC_HOST = os.getenv("GAMING_PC_HOST", "192.168.50.102")
+GAMING_PC_USER = os.getenv("GAMING_PC_USER", "")
+GAMING_PC_SSH_KEY = os.getenv("GAMING_PC_SSH_KEY", "/app/secrets/kck_gaming_key")
+GAMING_PC_SCRIPT_PATH = os.getenv("GAMING_PC_SCRIPT_PATH", r"D:\SynologyDrive\encode_all.ps1")
+_run_encode_state = {"lock": threading.Lock(), "last_triggered": 0}
+_cancel_shutdown_state = {"lock": threading.Lock(), "last_triggered": 0}
+
+def _is_pc_online(host: str, port: int = 22, timeout: float = 2.0) -> bool:
+    """SSH 포트(22)로 TCP 연결이 되는지만 확인 — ping은 Windows 방화벽에
+    기본적으로 막혀있는 경우가 많아서 SSH 포트 직접 확인이 더 정확하다."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+def _send_wol_packet(mac: str, broadcast: str, port: int = 9) -> None:
+    mac_bytes = bytes.fromhex(mac.replace(":", "").replace("-", ""))
+    if len(mac_bytes) != 6:
+        raise ValueError(f"잘못된 MAC 주소: {mac}")
+    packet = b"\xff" * 6 + mac_bytes * 16
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.sendto(packet, (broadcast, port))
+
 # run_all.sh 실행 로그 - 호스트의 logs/ 디렉토리를 컨테이너에 마운트해서 읽는다
 # (docker-compose.yml의 ./logs:/app/logs:ro 참고)
 RUN_ALL_LOGS_DIR = Path(os.getenv("RUN_ALL_LOGS_DIR", "/app/logs"))
 RUN_ALL_LOG_NAME_RE = re.compile(r"^run_all\.(\d{4}-\d{2}-\d{2})\.log$")
 LOG_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 LOG_INITIAL_MAX_BYTES = 2 * 1024 * 1024  # 최초 로딩 시 파일 끝에서 최대 이만큼만
+ENCODE_LOG_PATH = Path(os.getenv("ENCODE_LOG_PATH", "/app/encode_logs/_encode_log.txt"))
+
+# "PC예약종료": 다운로드 중(.crdownload 등)인 파일이 없어지고, 인코딩 중인
+# 파일(.encoding.mp4)도 없을 때까지 기다렸다가 KCK-GAMING을 종료한다.
+DRIVE_ROOT_PATH = Path(os.getenv("DRIVE_ROOT_PATH", "/app/drive_root"))
+ENCODING_HOLD_PATH = DRIVE_ROOT_PATH / "인코딩"
+# [완료] 표시된 원본의 재인코딩 결과물을 찾을 때 뒤질 범위 - ENCODING_HOLD_PATH가
+# 예능 전용 보류함이라 예능 라이브러리만 보면 된다(전체 라이브러리를 훑으면
+# 느려짐). /volume1/video는 docker-compose에서 이미 ro로 마운트돼 있음.
+VARIETY_LIBRARY_ROOT = Path("/volume1/video/03.예능")
+
+
+def _find_library_output(stem: str) -> Path | None:
+    """ENCODING_HOLD_PATH의 "[완료] <이름>" 원본과 짝인 최종 결과물을 예능
+    라이브러리에서 stem(확장자 제외 파일명)으로 찾는다. 못 찾으면 None."""
+    try:
+        for p in VARIETY_LIBRARY_ROOT.rglob(f"{stem}.*"):
+            if p.is_file():
+                return p
+    except Exception:
+        app.logger.exception("라이브러리 결과물 탐색 실패")
+    return None
+
+
+def _encoding_hold_stats() -> dict:
+    """Drive/인코딩 폴더 현황: 대기중/완료표시 개수·용량 + 완료표시 원본과
+    실제 재인코딩 결과물의 전/후 용량 비교. 인코딩 로그 페이지의 가시성
+    배지용(2026-10-11 추가 - 불꽃야구 무한루프를 몇 시간 동안 못 알아챈
+    사고 이후, 큐가 쌓이는 걸 한눈에 보려는 목적)."""
+    pending_count = pending_bytes = done_count = done_bytes = 0
+    comparisons = []
+    try:
+        for p in ENCODING_HOLD_PATH.iterdir():
+            if not p.is_file():
+                continue
+            size = p.stat().st_size
+            if p.name.startswith("[완료] "):
+                done_count += 1
+                done_bytes += size
+                stem = Path(p.name[len("[완료] "):]).stem
+                out = _find_library_output(stem)
+                if out is not None:
+                    try:
+                        comparisons.append({
+                            "name": stem,
+                            "before": size,
+                            "after": out.stat().st_size,
+                        })
+                    except Exception:
+                        pass
+            else:
+                pending_count += 1
+                pending_bytes += size
+    except Exception:
+        app.logger.exception("인코딩 보류 폴더 통계 수집 실패")
+
+    total_before = sum(c["before"] for c in comparisons)
+    total_after = sum(c["after"] for c in comparisons)
+    return {
+        "pending_count": pending_count, "pending_bytes": pending_bytes,
+        "done_count": done_count, "done_bytes": done_bytes,
+        "comparisons": comparisons,
+        "total_before": total_before, "total_after": total_after,
+    }
+
+
+@app.route("/encode_hold_stats", methods=["GET"])
+def encode_hold_stats():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+    return jsonify({"success": True, **_encoding_hold_stats()})
+_PARTIAL_DOWNLOAD_EXTS = (".crdownload", ".part", ".tmp", ".!qb")
+_schedule_shutdown_state = {"lock": threading.Lock(), "active": False, "stop_event": None, "started_at": 0}
+
+
+def _has_partial_downloads() -> bool:
+    try:
+        for p in DRIVE_ROOT_PATH.iterdir():
+            if p.is_file() and p.name.lower().endswith(_PARTIAL_DOWNLOAD_EXTS):
+                return True
+    except Exception:
+        app.logger.exception("Drive 루트 다운로드 중 파일 확인 실패")
+    return False
+
+
+def _is_encoding_in_progress() -> bool:
+    # encode_all.ps1이 ".encoding.mp4" 임시파일을 "인코딩 완료" 폴더에 쓴다.
+    # 로그 파일은 2026-10-11에 Program/Log로 옮겨서 ENCODE_LOG_PATH.parent와
+    # 더 이상 같은 폴더가 아니므로, Drive 루트 마운트를 통해 직접 가리킨다.
+    try:
+        for p in (DRIVE_ROOT_PATH / "인코딩 완료").iterdir():
+            if p.is_file() and p.name.lower().endswith(".encoding.mp4"):
+                return True
+    except Exception:
+        app.logger.exception("인코딩 진행 여부 확인 실패")
+    return False
+
+
+def _tg_notify(text: str) -> None:
+    try:
+        from db import load_cfg as _load_cfg
+        tg = _load_cfg().get("telegram", {})
+        if not tg.get("enabled") or not tg.get("bot_token") or not tg.get("chat_id"):
+            return
+        requests.post(
+            f"https://api.telegram.org/bot{tg['bot_token']}/sendMessage",
+            json={"chat_id": tg["chat_id"], "text": text}, timeout=10,
+        )
+    except Exception:
+        app.logger.exception("PC예약종료 텔레그램 알림 실패")
+
+
+# 텔레그램으로 "인코딩"이라고 회신하면 KCK-GAMING에서 인코딩을 원격 시작한다.
+# PC가 꺼져있으면 먼저 WOL로 켜고 기다렸다가 시작한다. 인코딩이 끝나면
+# encode_all.ps1 자체의 shutdownAfter가 있어서 PC는 알아서 꺼지므로, 여기서는
+# 따로 종료를 예약하지 않는다. 인바운드 웹훅 없이 getUpdates 롱폴링만 쓰므로
+# 포트포워딩/공인 도메인/SSL 없이도 동작한다.
+_TG_ENCODE_TRIGGER_WORDS = ("인코딩",)
+
+
+def _ensure_pc_on_and_trigger_encode(progress=None) -> tuple[bool, str]:
+    """PC가 꺼져있으면 WOL로 켜고 최대 2분 기다렸다가, 켜지면(또는 이미
+    켜져있으면) 인코딩을 원격 시작한다. 웹 버튼과 텔레그램 트리거가 공유.
+    progress(선택): 중간 진행 상황을 알리고 싶을 때 쓰는 콜백(예: 텔레그램
+    알림). 웹 버튼처럼 최종 결과만 필요하면 생략."""
+    def _note(msg: str) -> None:
+        if progress:
+            progress(msg)
+
+    if not _is_pc_online(GAMING_PC_HOST):
+        _note("PC가 꺼져있어서 WOL로 켜는 중이에요. 부팅되면 인코딩을 시작할게요 (최대 2분 대기)...")
+        try:
+            _send_wol_packet(WOL_MAC, WOL_BROADCAST)
+        except Exception as e:
+            return False, f"WOL 패킷 전송 실패: {e}"
+        waited = 0
+        while waited < 120 and not _is_pc_online(GAMING_PC_HOST):
+            time.sleep(5)
+            waited += 5
+        if not _is_pc_online(GAMING_PC_HOST):
+            return False, "2분 기다렸는데 PC가 안 켜져요. 직접 확인해주세요."
+        _note("PC 켜졌어요. 인코딩 시작할게요.")
+        time.sleep(10)  # SSH 서비스가 완전히 올라올 시간 여유
+
+    return _trigger_remote_encode()
+
+
+def _handle_telegram_encode_request() -> None:
+    with _run_encode_state["lock"]:
+        elapsed = time.time() - _run_encode_state["last_triggered"]
+        if elapsed < 30:
+            _tg_notify(f"방금 요청했어요. {int(30 - elapsed)}초 후 다시 보내주세요.")
+            return
+        _run_encode_state["last_triggered"] = time.time()
+
+    ok, message = _ensure_pc_on_and_trigger_encode(progress=_tg_notify)
+    suffix = "\n끝나면 알아서 PC가 꺼질 거예요." if ok else ""
+    _tg_notify(("✅ " if ok else "❌ ") + message + suffix)
+
+
+def _telegram_listener_loop() -> None:
+    offset = 0
+    while True:
+        try:
+            from db import load_cfg as _load_cfg
+            tg = _load_cfg().get("telegram", {})
+            token = tg.get("bot_token")
+            allowed_chat_id = str(tg.get("chat_id") or "")
+            if not tg.get("enabled") or not token or not allowed_chat_id:
+                time.sleep(30)
+                continue
+
+            resp = requests.get(
+                f"https://api.telegram.org/bot{token}/getUpdates",
+                params={"offset": offset, "timeout": 25}, timeout=35,
+            )
+            data = resp.json()
+            if not data.get("ok"):
+                time.sleep(5)
+                continue
+
+            for upd in data.get("result", []):
+                offset = upd["update_id"] + 1
+                msg = upd.get("message") or {}
+                text = (msg.get("text") or "").strip()
+                chat_id = str((msg.get("chat") or {}).get("id") or "")
+                if chat_id != allowed_chat_id or not text:
+                    continue
+                if any(w in text for w in _TG_ENCODE_TRIGGER_WORDS):
+                    threading.Thread(target=_handle_telegram_encode_request, daemon=True).start()
+        except Exception:
+            app.logger.exception("텔레그램 리스너 오류")
+            time.sleep(10)
+
+
+threading.Thread(target=_telegram_listener_loop, daemon=True).start()
+
+
+def _schedule_shutdown_worker(stop_event: threading.Event) -> None:
+    try:
+        while not stop_event.is_set():
+            if not _has_partial_downloads() and not _is_encoding_in_progress():
+                if _is_pc_online(GAMING_PC_HOST):
+                    try:
+                        subprocess.run(
+                            [
+                                "ssh", "-i", GAMING_PC_SSH_KEY,
+                                "-o", "StrictHostKeyChecking=accept-new",
+                                "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                                f"{GAMING_PC_USER}@{GAMING_PC_HOST}",
+                                'shutdown /s /t 300 /c "다운로드/인코딩 완료로 예약 종료"',
+                            ],
+                            capture_output=True, text=True, timeout=20,
+                        )
+                        _tg_notify("✅ 다운로드/인코딩이 모두 끝나서 KCK-GAMING을 5분 후 종료합니다. 취소하려면 '인코딩 로그' 페이지의 'PC 종료 취소' 버튼을 누르세요.")
+                    except Exception:
+                        app.logger.exception("PC예약종료 - 종료 명령 전송 실패")
+                break
+            stop_event.wait(30)
+    finally:
+        with _schedule_shutdown_state["lock"]:
+            _schedule_shutdown_state["active"] = False
+            _schedule_shutdown_state["stop_event"] = None
+
+
+@app.route("/schedule_pc_shutdown", methods=["POST"])
+def schedule_pc_shutdown():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+
+    with _schedule_shutdown_state["lock"]:
+        if _schedule_shutdown_state["active"]:
+            return jsonify({"success": False, "message": "이미 예약되어 있어요."}), 409
+        stop_event = threading.Event()
+        _schedule_shutdown_state["active"] = True
+        _schedule_shutdown_state["stop_event"] = stop_event
+        _schedule_shutdown_state["started_at"] = time.time()
+
+    threading.Thread(target=_schedule_shutdown_worker, args=(stop_event,), daemon=True).start()
+    return jsonify({"success": True, "message": "예약했습니다. 다운로드/인코딩이 모두 끝나면 자동으로 PC를 종료해요."})
+
+
+@app.route("/schedule_pc_shutdown/cancel", methods=["POST"])
+def schedule_pc_shutdown_cancel():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+
+    with _schedule_shutdown_state["lock"]:
+        if not _schedule_shutdown_state["active"]:
+            return jsonify({"success": True, "message": "예약된 게 없어요.", "active": False})
+        if _schedule_shutdown_state["stop_event"] is not None:
+            _schedule_shutdown_state["stop_event"].set()
+        _schedule_shutdown_state["active"] = False
+        _schedule_shutdown_state["stop_event"] = None
+
+    return jsonify({"success": True, "message": "예약을 취소했습니다.", "active": False})
+
+
+@app.route("/schedule_pc_shutdown/status", methods=["GET"])
+def schedule_pc_shutdown_status():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+
+    with _schedule_shutdown_state["lock"]:
+        active = _schedule_shutdown_state["active"]
+        started_at = _schedule_shutdown_state["started_at"]
+    return jsonify({
+        "success": True, "active": active, "started_at": started_at,
+        "downloading": _has_partial_downloads() if active else None,
+        "encoding": _is_encoding_in_progress() if active else None,
+    })
 
 
 def _load_or_create_session_secret() -> str:
@@ -1209,6 +1517,143 @@ def run_batch():
     return jsonify({"success": True, "message": "배치 실행을 요청했습니다. 잠시 후 로그에서 진행 상황을 확인하세요."})
 
 
+@app.route("/wake_pc", methods=["POST"])
+def wake_pc():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+
+    with _wol_state["lock"]:
+        elapsed = time.time() - _wol_state["last_triggered"]
+        if elapsed < 10:
+            return jsonify({"success": False, "message": f"방금 요청했습니다. {int(10 - elapsed)}초 후 다시 시도하세요."}), 429
+        _wol_state["last_triggered"] = time.time()
+
+    try:
+        _send_wol_packet(WOL_MAC, WOL_BROADCAST)
+    except Exception as e:
+        app.logger.exception("WOL 패킷 전송 중 오류")
+        return jsonify({"success": False, "message": f"전송 실패: {e}"}), 500
+
+    return jsonify({"success": True, "message": "KCK-GAMING으로 WOL 패킷을 보냈습니다. 부팅까지 1~2분 정도 걸려요."})
+
+
+@app.route("/pc_status", methods=["GET"])
+def pc_status():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+
+    online = _is_pc_online(GAMING_PC_HOST)
+    return jsonify({"success": True, "online": online})
+
+
+def _trigger_remote_encode() -> tuple[bool, str]:
+    """KCK-GAMING에서 인코딩 스크립트를 원격으로 시작시킨다 (/run_encode 라우트와
+    텔레그램 리스너가 공유). PC가 켜져있어야 하고, SSH 키가 있어야 한다.
+
+    SSH 세션 안에서 Start-Process로 직접 띄우면, Windows에서 SSH 세션이
+    끊기는 순간 자식 프로세스까지 같이 종료/행(hang)되는 문제가 있어서
+    (실제로 재현됨: 프로세스는 떠있는데 CPU 0%, 로그도 전혀 안 남음) 대신
+    미리 등록해둔 작업 스케줄러 작업을 트리거만 한다. 작업 스케줄러로 뜬
+    프로세스는 SSH 세션과 완전히 독립적이라 이 문제가 없다.
+    (PC에서 한 번만 Register-ScheduledTask로 "EncodeAll" 작업을 만들어둬야 함)"""
+    if not Path(GAMING_PC_SSH_KEY).exists():
+        return False, "SSH 키가 설정되지 않았습니다 (secrets/kck_gaming_key 없음)."
+
+    if not _is_pc_online(GAMING_PC_HOST):
+        return False, "PC가 꺼져있는 것 같아요."
+
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-i", GAMING_PC_SSH_KEY,
+                "-o", "StrictHostKeyChecking=accept-new",
+                "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=8",
+                f"{GAMING_PC_USER}@{GAMING_PC_HOST}",
+                'schtasks /run /tn "EncodeAll"',
+            ],
+            capture_output=True, text=True, timeout=20,
+        )
+    except Exception as e:
+        app.logger.exception("인코딩 원격 실행 요청 중 오류")
+        return False, f"실행 요청 실패: {e}"
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()[:300]
+        return False, f"SSH 실행 실패(종료코드 {result.returncode}): {detail}"
+
+    return True, "KCK-GAMING에서 인코딩 스크립트를 시작했습니다."
+
+
+@app.route("/run_encode", methods=["POST"])
+def run_encode():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+
+    with _run_encode_state["lock"]:
+        elapsed = time.time() - _run_encode_state["last_triggered"]
+        if elapsed < 30:
+            return jsonify({"success": False, "message": f"방금 요청했습니다. {int(30 - elapsed)}초 후 다시 시도하세요."}), 429
+        _run_encode_state["last_triggered"] = time.time()
+
+    ok, message = _ensure_pc_on_and_trigger_encode()
+    return jsonify({"success": ok, "message": message}), (200 if ok else 500)
+
+
+@app.route("/cancel_shutdown", methods=["POST"])
+def cancel_shutdown():
+    """encode_all.ps1이 끝나면 5분 후 자동으로 PC를 끄는데(shutdownAfter),
+    인코딩이 끝났어도 PC를 계속 쓰고 싶을 때 그 예약 종료를 취소한다.
+    자주 쓰는 기능이 아니라 헤더 버튼이 아니라 인코딩 로그 페이지 본문에만
+    둔다."""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+
+    if not Path(GAMING_PC_SSH_KEY).exists():
+        return jsonify({"success": False, "message": "SSH 키가 설정되지 않았습니다 (secrets/kck_gaming_key 없음)."}), 500
+
+    with _cancel_shutdown_state["lock"]:
+        elapsed = time.time() - _cancel_shutdown_state["last_triggered"]
+        if elapsed < 10:
+            return jsonify({"success": False, "message": f"방금 요청했습니다. {int(10 - elapsed)}초 후 다시 시도하세요."}), 429
+        _cancel_shutdown_state["last_triggered"] = time.time()
+
+    if not _is_pc_online(GAMING_PC_HOST):
+        return jsonify({"success": False, "message": "PC가 꺼져있는 것 같아요."}), 409
+
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-i", GAMING_PC_SSH_KEY,
+                "-o", "StrictHostKeyChecking=accept-new",
+                "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=8",
+                f"{GAMING_PC_USER}@{GAMING_PC_HOST}",
+                "shutdown /a",
+            ],
+            capture_output=True, text=True, timeout=20,
+        )
+    except Exception as e:
+        app.logger.exception("종료 취소 요청 중 오류")
+        return jsonify({"success": False, "message": f"실행 요청 실패: {e}"}), 500
+
+    # shutdown /a는 예약된 종료가 없으면 종료코드 1089로 실패한다 - 이미 취소됐거나
+    # 원래 예약이 없었던 정상적인 상황이므로 에러로 취급하지 않는다.
+    if result.returncode not in (0, 1089):
+        detail = (result.stderr or result.stdout or "").strip()[:300]
+        return jsonify({"success": False, "message": f"SSH 실행 실패(종료코드 {result.returncode}): {detail}"}), 500
+
+    if result.returncode == 1089:
+        return jsonify({"success": True, "message": "예약된 종료가 없었어요(이미 취소됐거나 원래 없었음)."})
+    return jsonify({"success": True, "message": "KCK-GAMING의 예약 종료를 취소했습니다."})
+
+
 def _list_run_all_log_dates() -> list[str]:
     """logs/ 디렉토리에서 run_all.YYYY-MM-DD.log 파일들의 날짜 목록(최신순)을 반환."""
     if not RUN_ALL_LOGS_DIR.is_dir():
@@ -1323,6 +1768,85 @@ def logs_download():
         return abort(404)
 
     return send_file(path, mimetype="text/plain", as_attachment=True, download_name=path.name)
+
+
+@app.route("/encode_log", methods=["GET"])
+def encode_log_page():
+    """PC(KCK-GAMING)에서 encode_all.ps1이 Synology Drive로 동기화해주는
+    _encode_log.txt를 그대로 보여준다. run_all 로그와 달리 날짜별 파일이
+    아니라 계속 이어지는 단일 파일이라 날짜 선택 없이 전체를 tail한다."""
+    auth = authed(request)
+    if auth is not True:
+        return auth
+
+    dir_mounted = ENCODE_LOG_PATH.parent.is_dir()
+    content = ""
+    file_size = 0
+    log_exists = ENCODE_LOG_PATH.exists()
+    if log_exists:
+        file_size = ENCODE_LOG_PATH.stat().st_size
+        try:
+            with ENCODE_LOG_PATH.open("rb") as f:
+                if file_size > LOG_INITIAL_MAX_BYTES:
+                    f.seek(file_size - LOG_INITIAL_MAX_BYTES)
+                raw = f.read()
+            content = raw.decode("utf-8", errors="replace")
+        except Exception as e:
+            content = f"[로그 파일을 읽는 중 오류: {e}]"
+
+    return render_template(
+        "encode_log.html",
+        authed=True,
+        content=content,
+        initial_offset=file_size,
+        log_exists=log_exists,
+        dir_mounted=dir_mounted,
+        log_path=str(ENCODE_LOG_PATH),
+    )
+
+
+@app.route("/encode_log/tail", methods=["GET"])
+def encode_log_tail():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"error": "로그인이 필요합니다."}), 401
+
+    try:
+        offset = int(request.args.get("offset", "0"))
+    except ValueError:
+        offset = 0
+
+    if not ENCODE_LOG_PATH.exists():
+        return jsonify({"exists": False, "content": "", "offset": 0})
+
+    size = ENCODE_LOG_PATH.stat().st_size
+    if offset < 0 or offset > size:
+        offset = 0  # 파일이 교체되었거나 최초 조회
+
+    new_text = ""
+    if offset < size:
+        try:
+            with ENCODE_LOG_PATH.open("rb") as f:
+                f.seek(offset)
+                raw = f.read()
+            new_text = raw.decode("utf-8", errors="replace")
+        except Exception as e:
+            return jsonify({"error": f"로그 파일을 읽는 중 오류: {e}"}), 500
+
+    return jsonify({"exists": True, "content": new_text, "offset": size})
+
+
+@app.route("/encode_log/download", methods=["GET"])
+def encode_log_download():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+
+    if not ENCODE_LOG_PATH.exists():
+        return abort(404)
+
+    return send_file(ENCODE_LOG_PATH, mimetype="text/plain", as_attachment=True, download_name=ENCODE_LOG_PATH.name)
+
 
 @app.route("/search_tmdb", methods=["POST"])
 def search_tmdb():

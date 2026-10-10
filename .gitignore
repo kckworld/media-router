@@ -17,3 +17,4 @@ RESTART_GUIDE.md
 .env
 run.lock
 .omc/
+immich.conf

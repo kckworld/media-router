@@ -6,6 +6,7 @@
   <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
+    html { overflow-y: scroll; }
     :root {
       --fg: #0f172a;
       --muted: #64748b;
@@ -75,6 +76,7 @@
     .run-batch-btn:active:not(:disabled) { transform: translateY(0); }
     .run-batch-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
     .run-batch-btn .icon { font-size: 13px; line-height: 1; }
+    .header-btns { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
     .run-batch-btn .spinner {
       width: 13px; height: 13px; border: 2px solid rgba(255, 255, 255, 0.4);
       border-top-color: #fff; border-radius: 50%; display: inline-block;
@@ -97,6 +99,9 @@
       border-bottom: 2px solid var(--line);
       background: var(--bg-solid);
       margin: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
     }
     .mode-tabs a {
       padding: 14px 24px;
@@ -109,6 +114,11 @@
       transition: all 0.25s ease;
       display: inline-block;
       cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    @media (max-width: 480px) {
+      .mode-tabs a { padding: 12px 14px; font-size: 13px; }
     }
     .mode-tabs a:hover { color: var(--accent); }
     .mode-tabs a.active {
@@ -183,9 +193,20 @@
       <div>
         <h1>Media Router Web Admin</h1>
       </div>
-      <button type="button" class="run-batch-btn" id="runBatchBtn" onclick="runBatch()">
-        <span class="icon">▶</span> 배치 실행
-      </button>
+      <div class="header-btns">
+        <button type="button" class="run-batch-btn" id="runBatchBtn" onclick="runBatch()">
+          <span class="icon">▶</span> 배치 실행
+        </button>
+        <button type="button" class="run-batch-btn" id="wakePcBtn" onclick="wakePc()">
+          <span class="icon">⚡</span> PC 켜기
+        </button>
+        <button type="button" class="run-batch-btn" id="pcStatusBtn" onclick="checkPcStatus()">
+          <span class="icon" id="pcStatusIcon">❔</span> PC 상태
+        </button>
+        <button type="button" class="run-batch-btn" id="runEncodeBtn" onclick="runEncode()">
+          <span class="icon">🎬</span> 인코딩 시작
+        </button>
+      </div>
     </header>
     <div class="topbar-inner">
       <div class="mode-tabs">
@@ -194,6 +215,7 @@
         <a href="/rename_rules">파일명 치환 규칙</a>
         <a href="/bt4g_keywords" class="active">BT4G 키워드</a>
         <a href="/logs">실행 로그</a>
+        <a href="/encode_log">인코딩 로그</a>
         <a href="/users">사용자 관리</a>
         <a href="/settings">설정</a>
       </div>
@@ -377,6 +399,48 @@
             btn.innerHTML = originalHTML;
           }, 3000);
         });
+    }
+  
+    function wakePc() {
+      var btn = document.getElementById('wakePcBtn');
+      var originalHTML = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 전송 중...';
+      fetch('/wake_pc', { method: 'POST' })
+        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
+        .then(function(res) { showToast(res.data.message || (res.ok ? '요정 완성' : '요정 실패'), res.ok ? 'success' : 'error'); })
+        .catch(function(e) { showToast('요정 중 오다가 발생했습니다: ' + e, 'error'); })
+        .finally(function() { setTimeout(function() { btn.disabled = false; btn.innerHTML = originalHTML; }, 3000); });
+    }
+
+    function checkPcStatus() {
+      var btn = document.getElementById('pcStatusBtn');
+      var icon = document.getElementById('pcStatusIcon');
+      btn.disabled = true; icon.textContent = '⏳';
+      fetch('/pc_status', { method: 'GET' })
+        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
+        .then(function(res) {
+          if (res.ok && res.data.success) {
+            icon.textContent = res.data.online ? '🟢' : '🔴';
+            showToast(res.data.online ? 'PC 켜져있음' : 'PC 꾼져있음', res.data.online ? 'success' : 'error');
+          } else {
+            icon.textContent = '❔';
+            showToast(res.data.message || '확인 실패', 'error');
+          }
+        })
+        .catch(function(e) { icon.textContent = '❔'; showToast('요정 중 오다가 발생했습니다: ' + e, 'error'); })
+        .finally(function() { btn.disabled = false; });
+    }
+
+    function runEncode() {
+      if (!confirm('KCK-GAMING PC에서 인코딩 스크립트를 시작할까요?\nPC가 켜져있어야 하고, 완료까지 만은 시간 일릴 수 있습니다.')) return;
+      var btn = document.getElementById('runEncodeBtn');
+      var originalHTML = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 요정 중...';
+      fetch('/run_encode', { method: 'POST' })
+        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
+        .then(function(res) { showToast(res.data.message || (res.ok ? '요정 완성' : '요정 실패'), res.ok ? 'success' : 'error'); })
+        .catch(function(e) { showToast('요정 중 오다가 발생했습니다: ' + e, 'error'); })
+        .finally(function() { setTimeout(function() { btn.disabled = false; btn.innerHTML = originalHTML; }, 3000); });
     }
   </script>
 </body>

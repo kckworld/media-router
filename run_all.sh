@@ -2,18 +2,52 @@
 set -euo pipefail
 LOGDIR="/volume1/docker/media-router/logs"
 mkdir -p "$LOGDIR"
-exec >>"$LOGDIR/run_all.$(date +%F).log" 2>&1
+LOGFILE="$LOGDIR/run_all.$(date +%F).log"
+# 이 스크립트는 서로 다른 계정으로 실행된다: DSM 예약작업은 root로, 웹 관리자의
+# "배치 실행" 버튼은 SSH 강제 명령을 통해 kck9010으로 실행한다. 로그 파일은 그날
+# 처음 실행한 쪽의 계정 소유로 생성되는데, 기본 644 권한이면 소유자가 아닌 쪽은
+# append(exec >>)할 때 Permission denied로 죽어서 로그 한 줄도 안 남고 종료된다.
+# root가 만들면 그룹도 root가 되어서 kck9010은 664로도(그룹에 못 속해서) 못 쓴다
+# — 그래서 그룹이 아니라 "기타(other)" 쓰기 비트까지 열어주는 666이 필요하다.
+# 매 실행마다 이 권한을 보장해서 어느 쪽이 먼저 만들었든 둘 다 이어서 쓸 수 있게
+# 한다(chmod는 파일 소유자 또는 root만 가능하므로, 소유자가 아닌 쪽이 실행되는
+# 시점엔 이 chmod 자체도 실패하지만, 그다음 소유자 쪽 실행에서 다시 666으로
+# 고쳐지면서 그 이후로는 정상화된다).
+touch "$LOGFILE" 2>/dev/null || true
+chmod 666 "$LOGFILE" 2>/dev/null || true
+exec >>"$LOGFILE" 2>&1
+ra_ts() { echo "[run_all $(date '+%H:%M:%S')]"; }
+
 LOCKFILE="/volume1/docker/media-router/run.lock"
 exec 9>"$LOCKFILE"
-flock -n 9 || { echo "[run_all $(date '+%H:%M:%S')] 이미 실행중입니다."; exit 0; }
-
-ra_ts() { echo "[run_all $(date '+%H:%M:%S')]"; }
+flock -n 9 || { echo "$(ra_ts) 이미 실행중입니다."; exit 0; }
 
 # 30일 지난 로그 자동 정리 (run_all/generate_schedule_image/hwasung_alert 등
 # logs/ 아래 쌓이는 모든 *.log 대상). 삭제 없이는 무기한 누적되던 문제 방지.
 find "$LOGDIR" -maxdepth 1 -name "*.log" -mtime +30 -delete 2>/dev/null || true
 
-echo "$(ra_ts) RUN START"
+# 트리거 소스 구분: 웹 관리자의 "배치 실행" 버튼은 SSH 강제 명령으로
+# run_all.sh를 실행시키면서 클라이언트 커맨드로 "web-trigger"를 보낸다.
+# authorized_keys의 command=가 실제 실행 명령은 대체하지만 sshd가 클라이언트가
+# 원래 요청한 명령을 SSH_ORIGINAL_COMMAND 환경변수로 넘겨주므로, 이 값으로
+# 로그에서 웹 수동 실행과 DSM 예약 실행(cron)을 구분할 수 있다.
+TRIGGER_SOURCE="${SSH_ORIGINAL_COMMAND:-cron}"
+RUN_START_EPOCH=$(date +%s)
+
+# 실행 종료 시(정상/오류 모두) 소요 시간과 종료 상태를 반드시 한 줄 남긴다.
+# 이게 없으면 로그만 보고는 "지금 실행 중인지 / 중간에 죽었는지"를 알 수 없었다.
+finish() {
+    local status=$?
+    local elapsed=$(( $(date +%s) - RUN_START_EPOCH ))
+    if [ "$status" -eq 0 ]; then
+        echo "$(ra_ts) RUN END (소요 ${elapsed}s, 트리거: ${TRIGGER_SOURCE})"
+    else
+        echo "$(ra_ts) RUN END - 오류 종료 (exit=${status}, 소요 ${elapsed}s, 트리거: ${TRIGGER_SOURCE})"
+    fi
+}
+trap finish EXIT
+
+echo "$(ra_ts) RUN START (트리거: ${TRIGGER_SOURCE})"
 
 # 1. 드라마 이름 변경
 /volume1/web/video_auto/drama_name.sh || echo "$(ra_ts) drama_name.sh 실행 중 오류 발생 (계속 진행)"
@@ -42,7 +76,27 @@ fi
 /volume1/web/Python/bt4g/bt4g.sh || echo "$(ra_ts) bt4g.sh 실행 중 오류 발생 (계속 진행)"
 
 # 5. photo_move
-/volume1/web/video_auto/photo_move.sh || echo "$(ra_ts) photo_move.sh 실행 중 오류 발생 (계속 진행)"
+photo_move_output="$(/volume1/web/video_auto/photo_move.sh 2>&1)" || echo "$(ra_ts) photo_move.sh 실행 중 오류 발생 (계속 진행)"
+[ -n "$photo_move_output" ] && echo "$photo_move_output"
+
+# 5b. photo_move가 실제로 새 파일을 복사했으면(copied=0이 아니면) immich 라이브러리
+# 스캔을 트리거한다. immich는 기본 6시간 주기 스캔이라, 트리거 안 하면 새 사진이
+# 최대 6시간 늦게 보인다.
+if echo "$photo_move_output" | grep -q "copied=[1-9]"; then
+    IMMICH_API_KEY=""
+    IMMICH_LIBRARY_ID=""
+    IMMICH_BASE_URL=""
+    # shellcheck disable=SC1091
+    [ -f /volume1/docker/media-router/immich.conf ] && . /volume1/docker/media-router/immich.conf
+    if [ -n "$IMMICH_API_KEY" ] && [ -n "$IMMICH_LIBRARY_ID" ]; then
+        scan_http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            "${IMMICH_BASE_URL}/api/libraries/${IMMICH_LIBRARY_ID}/scan" \
+            -H "x-api-key: ${IMMICH_API_KEY}" -H "Content-Type: application/json" -d '{}' || echo "curl_failed")
+        echo "$(ra_ts) immich 라이브러리 스캔 트리거 http=${scan_http_code}"
+    else
+        echo "$(ra_ts) WARN: immich.conf 없음/키 없음 - 스캔 트리거 생략"
+    fi
+fi
 
 # 6. speedtest
 /volume1/web/Python/speedtest/speedtest.sh || echo "$(ra_ts) speedtest.sh 실행 중 오류 발생 (계속 진행)"
