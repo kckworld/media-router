@@ -668,25 +668,30 @@ def main() -> None:
                     log(f"MOVED: {f} -> {dst}")
                     tg_send(cfg, f"이동: {f.name} → {target_dir}")
 
-                    # 드라마인 경우 에피소드 번호 추출 및 저장
-                    new_episodes = 0
-                    if category == "드라마":
-                        episode_num = extract_episode_number(f.name)
-                        if episode_num is not None:
-                            received = r.get("received_episodes") or []
-                            if not isinstance(received, list):
-                                received = []
-                            if episode_num not in received:
-                                received.append(episode_num)
-                                received.sort()
-                                r["received_episodes"] = received
-                                update_rule_fields(r["id"], received_episodes=received)
-                                log(f"Episode {episode_num} recorded for {sub}")
-                                new_episodes = 1
+                    # 자막(.srt 등) 같은 비디오가 아닌 파일은 "완료" 체크를 건드리지
+                    # 않는다 - 영상은 인코딩 보류로 빠지고 자막만 먼저 최종 폴더에
+                    # 도착하는 경우, 자막만 보고 체크모드에서 "완료"로 잘못 표시되던
+                    # 문제가 있었다(2026-10-13, 불꽃야구에서 실제 발생).
+                    if f.suffix.lower() in VIDEO_EXTENSIONS:
+                        # 드라마인 경우 에피소드 번호 추출 및 저장
+                        new_episodes = 0
+                        if category == "드라마":
+                            episode_num = extract_episode_number(f.name)
+                            if episode_num is not None:
+                                received = r.get("received_episodes") or []
+                                if not isinstance(received, list):
+                                    received = []
+                                if episode_num not in received:
+                                    received.append(episode_num)
+                                    received.sort()
+                                    r["received_episodes"] = received
+                                    update_rule_fields(r["id"], received_episodes=received)
+                                    log(f"Episode {episode_num} recorded for {sub}")
+                                    new_episodes = 1
 
-                    # 요일별 Y 마킹: 드라마(하루 편수>1)는 요일별 카운터로 채우고,
-                    # 그 외에는 days 순서 폴백
-                    mark_rule_updated_map(r, new_episodes=new_episodes)
+                        # 요일별 Y 마킹: 드라마(하루 편수>1)는 요일별 카운터로 채우고,
+                        # 그 외에는 days 순서 폴백
+                        mark_rule_updated_map(r, new_episodes=new_episodes)
 
                 except Exception as e:
                     log(f"Move fail: {f} -> {target_dir} ({e})")
