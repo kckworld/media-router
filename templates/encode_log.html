@@ -256,7 +256,7 @@
         </div>
       </div>
       <table class="hold-table" id="holdCompareTable" style="display:none;">
-        <thead><tr><th>회차</th><th>원본 용량</th><th>인코딩 후</th><th>절감률</th></tr></thead>
+        <thead><tr><th>회차</th><th>원본 용량</th><th>인코딩 후</th><th>절감률</th><th>코덱 (전 → 후)</th><th>비트레이트 (전 → 후)</th></tr></thead>
         <tbody id="holdCompareBody"></tbody>
       </table>
       <div class="hint" id="holdCompareEmpty">완료표시된 원본과 라이브러리 결과물을 짝지을 수 있는 항목이 없습니다.</div>
@@ -559,7 +559,15 @@
     setInterval(pollScheduleShutdownStatus, 15000);
 
     function formatGB(bytes) { return (bytes / 1e9).toFixed(2) + ' GB'; }
+    // 코덱/비트레이트는 서버가 시간 예산 안에서만 새로 읽어서, 아직 못 읽은 건 null → '…'
+    function formatMbps(bps) { return bps ? (bps / 1e6).toFixed(1) : '…'; }
+    function codecPair(c) { return (c.before_codec || '…') + ' → ' + (c.after_codec || '…'); }
+    function bitratePair(c) {
+      if (!c.before_bitrate && !c.after_bitrate) return '…';
+      return formatMbps(c.before_bitrate) + ' → ' + formatMbps(c.after_bitrate) + ' Mbps';
+    }
 
+    var holdRetry = 0;
     function loadHoldStats() {
       fetch('/encode_hold_stats', { method: 'GET' })
         .then(function(r) { return r.json(); })
@@ -585,7 +593,7 @@
             comparisons.forEach(function(c) {
               var pct = c.before > 0 ? Math.round((1 - c.after / c.before) * 100) : 0;
               var tr = document.createElement('tr');
-              [c.name, formatGB(c.before), formatGB(c.after), pct + '%'].forEach(function(text) {
+              [c.name, formatGB(c.before), formatGB(c.after), pct + '%', codecPair(c), bitratePair(c)].forEach(function(text) {
                 var td = document.createElement('td');
                 td.textContent = text;
                 tr.appendChild(td);
@@ -594,6 +602,9 @@
             });
             table.style.display = '';
             empty.style.display = 'none';
+            // 서버가 이번 요청 시간 안에 다 못 읽은 항목이 있으면 잠시 뒤 다시 불러와 채운다(최대 5번)
+            var missing = comparisons.some(function(c) { return !c.before_codec || !c.after_codec; });
+            if (missing && holdRetry < 5) { holdRetry++; setTimeout(loadHoldStats, 3000); }
             var totalPct = data.total_before > 0 ? Math.round((1 - data.total_after / data.total_before) * 100) : 0;
             totalLine.textContent = '합계: ' + formatGB(data.total_before) + ' → ' + formatGB(data.total_after) + ' (절감 ' + totalPct + '%)';
           } else {

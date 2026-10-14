@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-client \
+# libmediainfo0v5: 인코딩 로그 페이지의 전/후 코덱·비트레이트 표시(pymediainfo)
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client libmediainfo0v5 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

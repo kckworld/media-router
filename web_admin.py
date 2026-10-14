@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
-import os, hashlib, hmac, re, secrets, subprocess, time, threading, socket
+import os, hashlib, hmac, json, re, secrets, subprocess, time, threading, socket
 from flask import Flask, request, redirect, render_template, abort, make_response, jsonify, send_file
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -130,6 +130,71 @@ def _find_library_output(stem: str) -> Path | None:
     return None
 
 
+# 인코딩 전/후 코덱·비트레이트(pymediainfo). NAS 디스크가 바빠 파일마다 헤더를
+# 읽는 비용이 커서, (크기, 수정시각)이 같으면 다시 읽지 않도록 data/에 캐시한다.
+MEDIA_PROBE_CACHE_PATH = DATA_DIR / "media_probe_cache.json"
+MEDIA_PROBE_BUDGET_SEC = 15  # 한 번의 요청에서 새로 읽는 데 쓸 최대 시간 (gunicorn timeout 60s)
+_CODEC_NAMES = {"AVC": "H.264", "HEVC": "H.265", "AV1": "AV1", "VP9": "VP9", "MPEG-4 Visual": "MPEG-4"}
+_probe_state = {"lock": threading.Lock(), "cache": None, "dirty": False}
+
+
+def _probe_cache() -> dict:
+    if _probe_state["cache"] is None:
+        try:
+            _probe_state["cache"] = json.loads(MEDIA_PROBE_CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            _probe_state["cache"] = {}
+    return _probe_state["cache"]
+
+
+def _media_brief(p: Path, deadline: float) -> dict | None:
+    """{"codec": "H.264", "bitrate": bps} 반환. 캐시에 없고 deadline이 지났으면 None
+    (화면에는 '…'로 보이고 다음 새로고침 때 채워짐)."""
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    sig = f"{st.st_size}:{int(st.st_mtime)}"
+    with _probe_state["lock"]:
+        hit = _probe_cache().get(str(p))
+        if hit and hit.get("sig") == sig:
+            return hit["info"]
+    if time.time() > deadline:
+        return None
+    info = {"codec": None, "bitrate": None}
+    try:
+        from pymediainfo import MediaInfo
+        mi = MediaInfo.parse(str(p))
+        general = next((t for t in mi.tracks if t.track_type == "General"), None)
+        video = next((t for t in mi.tracks if t.track_type == "Video"), None)
+        if video is not None and video.format:
+            info["codec"] = _CODEC_NAMES.get(video.format, video.format)
+        br = getattr(general, "overall_bit_rate", None) if general is not None else None
+        dur_ms = getattr(general, "duration", None) if general is not None else None
+        if not br and dur_ms:
+            br = st.st_size * 8 / (float(dur_ms) / 1000)
+        info["bitrate"] = int(float(br)) if br else None
+    except Exception:
+        app.logger.exception("미디어 정보 읽기 실패: %s", p)
+    with _probe_state["lock"]:
+        _probe_cache()[str(p)] = {"sig": sig, "info": info}
+        _probe_state["dirty"] = True
+    return info
+
+
+def _save_probe_cache() -> None:
+    with _probe_state["lock"]:
+        if not _probe_state["dirty"]:
+            return
+        try:
+            tmp = MEDIA_PROBE_CACHE_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(_probe_state["cache"], ensure_ascii=False), encoding="utf-8")
+            tmp.replace(MEDIA_PROBE_CACHE_PATH)
+            _probe_state["dirty"] = False
+        except Exception:
+            app.logger.exception("미디어 정보 캐시 저장 실패")
+
+
 def _encoding_hold_stats() -> dict:
     """Drive/인코딩 폴더 현황: 대기중/완료표시 개수·용량 + 완료표시 원본과
     실제 재인코딩 결과물의 전/후 용량 비교. 인코딩 로그 페이지의 가시성
@@ -137,6 +202,7 @@ def _encoding_hold_stats() -> dict:
     사고 이후, 큐가 쌓이는 걸 한눈에 보려는 목적)."""
     pending_count = pending_bytes = done_count = done_bytes = 0
     comparisons = []
+    probe_deadline = time.time() + MEDIA_PROBE_BUDGET_SEC
     try:
         for p in ENCODING_HOLD_PATH.iterdir():
             if not p.is_file():
@@ -149,10 +215,16 @@ def _encoding_hold_stats() -> dict:
                 out = _find_library_output(stem)
                 if out is not None:
                     try:
+                        before_info = _media_brief(p, probe_deadline) or {}
+                        after_info = _media_brief(out, probe_deadline) or {}
                         comparisons.append({
                             "name": stem,
                             "before": size,
                             "after": out.stat().st_size,
+                            "before_codec": before_info.get("codec"),
+                            "before_bitrate": before_info.get("bitrate"),
+                            "after_codec": after_info.get("codec"),
+                            "after_bitrate": after_info.get("bitrate"),
                         })
                     except Exception:
                         pass
@@ -161,6 +233,7 @@ def _encoding_hold_stats() -> dict:
                 pending_bytes += size
     except Exception:
         app.logger.exception("인코딩 보류 폴더 통계 수집 실패")
+    _save_probe_cache()
 
     total_before = sum(c["before"] for c in comparisons)
     total_after = sum(c["after"] for c in comparisons)
