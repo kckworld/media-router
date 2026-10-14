@@ -118,16 +118,24 @@ ENCODING_HOLD_PATH = DRIVE_ROOT_PATH / "인코딩"
 VARIETY_LIBRARY_ROOT = Path("/volume1/video/03.예능")
 
 
-def _find_library_output(stem: str) -> Path | None:
-    """ENCODING_HOLD_PATH의 "[완료] <이름>" 원본과 짝인 최종 결과물을 예능
-    라이브러리에서 stem(확장자 제외 파일명)으로 찾는다. 못 찾으면 None."""
+_VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".ts", ".m4v", ".mov", ".wmv", ".webm"}
+
+
+def _library_index() -> dict[str, Path]:
+    """예능 라이브러리를 한 번만 훑어 stem(확장자 제외 파일명) → 경로 사전을 만든다.
+    예전엔 "[완료]" 원본마다 rglob으로 라이브러리 전체를 다시 훑어서, [완료]가 58개
+    쌓이자 화면 한 번 여는 데 20~30초 걸렸다(2026-10-14)."""
+    index: dict[str, Path] = {}
     try:
-        for p in VARIETY_LIBRARY_ROOT.rglob(f"{stem}.*"):
-            if p.is_file():
-                return p
+        for dirpath, dirnames, filenames in os.walk(VARIETY_LIBRARY_ROOT):
+            dirnames[:] = [d for d in dirnames if d != "@eaDir"]
+            for fn in filenames:
+                base, ext = os.path.splitext(fn)
+                if ext.lower() in _VIDEO_EXTS:  # 같은 이름의 자막(.srt)이 짝으로 잡히지 않게
+                    index.setdefault(base, Path(dirpath) / fn)
     except Exception:
         app.logger.exception("라이브러리 결과물 탐색 실패")
-    return None
+    return index
 
 
 # 인코딩 전/후 코덱·비트레이트(pymediainfo). NAS 디스크가 바빠 파일마다 헤더를
@@ -203,6 +211,7 @@ def _encoding_hold_stats() -> dict:
     pending_count = pending_bytes = done_count = done_bytes = 0
     comparisons = []
     probe_deadline = time.time() + MEDIA_PROBE_BUDGET_SEC
+    library = None  # [완료] 원본이 있을 때만 한 번 만든다
     try:
         for p in ENCODING_HOLD_PATH.iterdir():
             if not p.is_file():
@@ -212,7 +221,9 @@ def _encoding_hold_stats() -> dict:
                 done_count += 1
                 done_bytes += size
                 stem = Path(p.name[len("[완료] "):]).stem
-                out = _find_library_output(stem)
+                if library is None:
+                    library = _library_index()
+                out = library.get(stem)
                 if out is not None:
                     try:
                         before_info = _media_brief(p, probe_deadline) or {}
