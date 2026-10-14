@@ -366,8 +366,14 @@
     // 평균이 다소 낙관적/비관적으로 튈 수 있는 추정치임.
     function updateEta() {
       var badge = document.getElementById("etaBadge");
+      // 로그는 회전 없이 계속 쌓이므로(2026-10-11~) 마지막 "인코딩 시작" 이후 줄만 본다.
+      // 안 그러면 며칠 전 실행의 첫 줄부터 평균을 내서 예상 완료가 하루 뒤로 튐(2026-10-14).
+      var runStart = 0;
+      for (var k = allLines.length - 1; k >= 0; k--) {
+        if (/인코딩 시작:/.test(allLines[k])) { runStart = k; break; }
+      }
       var starts = [];
-      for (var i = 0; i < allLines.length; i++) {
+      for (var i = runStart; i < allLines.length; i++) {
         var m = allLines[i].match(PROGRESS_LINE_RE);
         if (m) starts.push({ ts: parseTs(m[1]), idx: +m[2], total: +m[3] });
       }

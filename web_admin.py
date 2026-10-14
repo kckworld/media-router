@@ -64,6 +64,20 @@ _wol_state = {"lock": threading.Lock(), "last_triggered": 0}
 GAMING_PC_HOST = os.getenv("GAMING_PC_HOST", "192.168.50.102")
 GAMING_PC_USER = os.getenv("GAMING_PC_USER", "")
 GAMING_PC_SSH_KEY = os.getenv("GAMING_PC_SSH_KEY", "/app/secrets/kck_gaming_key")
+
+
+def _pc_text(raw) -> str:
+    """KCK-GAMING(Windows)에서 SSH로 받은 출력 해석. 한글 Windows의 cmd/shutdown
+    메시지는 CP949로 오기 때문에 text=True(UTF-8 고정)로 받으면 UnicodeDecodeError로
+    요청 자체가 실패했다(2026-10-14 '예약종료 취소'/'인코딩 시작'). UTF-8 → CP949 순으로 시도."""
+    if not raw:
+        return ""
+    for enc in ("utf-8", "cp949"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            pass
+    return raw.decode("utf-8", errors="replace")
 GAMING_PC_SCRIPT_PATH = os.getenv("GAMING_PC_SCRIPT_PATH", r"D:\SynologyDrive\encode_all.ps1")
 _run_encode_state = {"lock": threading.Lock(), "last_triggered": 0}
 _cancel_shutdown_state = {"lock": threading.Lock(), "last_triggered": 0}
@@ -305,7 +319,7 @@ def _schedule_shutdown_worker(stop_event: threading.Event) -> None:
                                 f"{GAMING_PC_USER}@{GAMING_PC_HOST}",
                                 'shutdown /s /t 300 /c "다운로드/인코딩 완료로 예약 종료"',
                             ],
-                            capture_output=True, text=True, timeout=20,
+                            capture_output=True, timeout=20,
                         )
                         _tg_notify("✅ 다운로드/인코딩이 모두 끝나서 KCK-GAMING을 5분 후 종료합니다. 취소하려면 '인코딩 로그' 페이지의 'PC 종료 취소' 버튼을 누르세요.")
                     except Exception:
@@ -1575,14 +1589,14 @@ def _trigger_remote_encode() -> tuple[bool, str]:
                 f"{GAMING_PC_USER}@{GAMING_PC_HOST}",
                 'schtasks /run /tn "EncodeAll"',
             ],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, timeout=20,
         )
     except Exception as e:
         app.logger.exception("인코딩 원격 실행 요청 중 오류")
         return False, f"실행 요청 실패: {e}"
 
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()[:300]
+        detail = (_pc_text(result.stderr) or _pc_text(result.stdout)).strip()[:300]
         return False, f"SSH 실행 실패(종료코드 {result.returncode}): {detail}"
 
     return True, "KCK-GAMING에서 인코딩 스크립트를 시작했습니다."
@@ -1637,7 +1651,7 @@ def cancel_shutdown():
                 f"{GAMING_PC_USER}@{GAMING_PC_HOST}",
                 "shutdown /a",
             ],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, timeout=20,
         )
     except Exception as e:
         app.logger.exception("종료 취소 요청 중 오류")
@@ -1646,7 +1660,7 @@ def cancel_shutdown():
     # shutdown /a는 예약된 종료가 없으면 종료코드 1089로 실패한다 - 이미 취소됐거나
     # 원래 예약이 없었던 정상적인 상황이므로 에러로 취급하지 않는다.
     if result.returncode not in (0, 1089):
-        detail = (result.stderr or result.stdout or "").strip()[:300]
+        detail = (_pc_text(result.stderr) or _pc_text(result.stdout)).strip()[:300]
         return jsonify({"success": False, "message": f"SSH 실행 실패(종료코드 {result.returncode}): {detail}"}), 500
 
     if result.returncode == 1089:
