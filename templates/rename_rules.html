@@ -191,6 +191,8 @@
       .rule-row td { padding: 6px 2px; }
       .col-arrow { display: none; }
     }
+    /* 안내 문구(placeholder)는 새로 추가한 줄에만 두고, 입력하려고 클릭하면 숨긴다 */
+    input:focus::placeholder, textarea:focus::placeholder { color: transparent; }
   </style>
 </head>
 <body>
@@ -275,10 +277,10 @@
             {% for r in rules %}
             <tr class="rule-row">
               <td class="col-num">{{ loop.index }}</td>
-              <td><input type="text" name="row_keyword" value="{{ r.keyword }}" placeholder="예: 불꽃야구"></td>
-              <td><input type="text" name="row_from" value="{{ r.from_prefix }}" placeholder="찾을 문자열"></td>
+              <td><input type="text" name="row_keyword" value="{{ r.keyword }}"></td>
+              <td><input type="text" name="row_from" value="{{ r.from_prefix }}"></td>
               <td class="col-arrow">→</td>
-              <td><input type="text" name="row_to" value="{{ r.to_prefix }}" placeholder="바꿀 문자열 (선택)"></td>
+              <td><input type="text" name="row_to" value="{{ r.to_prefix }}"></td>
               <td class="col-actions">
                 <button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>
                 <button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>
