@@ -29,11 +29,15 @@ services:
       - WOL_MAC=74:56:3C:69:5F:19
       - WOL_BROADCAST=192.168.50.255
       - GAMING_PC_HOST=192.168.50.102
-      - GAMING_PC_USER=김창기
+      - GAMING_PC_USER=kck  # 2026-10-13 Windows 로그인ID 변경(김창기→kck, 브라우저 RDP용)
       - GAMING_PC_SSH_KEY=/app/secrets/kck_gaming_key
       - GAMING_PC_SCRIPT_PATH=D:\SynologyDrive\인코딩\Program\encode_all.ps1
       - ENCODE_LOG_PATH=/app/encode_logs/_encode_log.txt
       - DRIVE_ROOT_PATH=/app/drive_root
+      # 다운로드 현황 탭(qBittorrent WebUI API, 보기 전용, 2026-10-14). 계정은 .env
+      - QBIT_URL=http://127.0.0.1:8080
+      - QBIT_USERNAME=${QBIT_USERNAME:-}
+      - QBIT_PASSWORD=${QBIT_PASSWORD:-}
       # 사용자 관리 탭(media-stats postgres 연동, 2026-09-18)
       - STATS_DB_HOST=${STATS_DB_HOST:-localhost}
       - STATS_DB_PORT=${STATS_DB_PORT:-15433}

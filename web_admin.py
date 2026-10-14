@@ -1784,6 +1784,74 @@ def logs_download():
     return send_file(path, mimetype="text/plain", as_attachment=True, download_name=path.name)
 
 
+QBIT_URL = os.getenv("QBIT_URL", "http://127.0.0.1:8080").rstrip("/")
+QBIT_USERNAME = os.getenv("QBIT_USERNAME", "")
+QBIT_PASSWORD = os.getenv("QBIT_PASSWORD", "")
+# qBittorrent는 로그인 실패가 반복되면 그 IP를 차단한다. 이 컨테이너의 요청은
+# DSM 역방향 프록시(bit.kckworld.com)와 같은 docker 게이트웨이 IP로 들어가므로,
+# 비밀번호가 틀린 채 폴링을 계속하면 bit.kckworld.com까지 막힌다 → 실패 후 5분 쉼.
+QBIT_LOGIN_BACKOFF_SEC = 300
+_qbit_state = {"lock": threading.Lock(), "session": None, "login_failed_at": 0.0}
+
+
+def _qbit_get(path: str, params: dict | None = None):
+    """qBittorrent WebUI API GET. 세션 쿠키를 재사용하고 만료(403)되면 한 번 재로그인."""
+    if not QBIT_USERNAME or not QBIT_PASSWORD:
+        raise RuntimeError("qBittorrent 계정이 설정되지 않았습니다 (.env의 QBIT_USERNAME/QBIT_PASSWORD).")
+    with _qbit_state["lock"]:
+        for _ in range(2):
+            sess = _qbit_state["session"]
+            if sess is None:
+                wait = QBIT_LOGIN_BACKOFF_SEC - (time.time() - _qbit_state["login_failed_at"])
+                if wait > 0:
+                    raise RuntimeError(f"qBittorrent 로그인 실패 후 대기 중입니다 ({int(wait)}초 후 재시도).")
+                sess = requests.Session()
+                r = sess.post(
+                    f"{QBIT_URL}/api/v2/auth/login",
+                    data={"username": QBIT_USERNAME, "password": QBIT_PASSWORD},
+                    headers={"Referer": QBIT_URL},
+                    timeout=8,
+                )
+                if r.status_code != 200 or r.text.strip() != "Ok.":
+                    _qbit_state["login_failed_at"] = time.time()
+                    raise RuntimeError("qBittorrent 로그인 실패 - 계정 정보를 확인하세요.")
+                _qbit_state["session"] = sess
+            r = sess.get(f"{QBIT_URL}{path}", params=params, timeout=8)
+            if r.status_code == 403:
+                _qbit_state["session"] = None
+                continue
+            r.raise_for_status()
+            return r.json()
+    raise RuntimeError("qBittorrent 인증이 반복해서 거부됐습니다.")
+
+
+@app.route("/downloads", methods=["GET"])
+def downloads_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("downloads.html", authed=True, qbit_public_url="https://bit.kckworld.com/")
+
+
+@app.route("/downloads/data", methods=["GET"])
+def downloads_data():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+    try:
+        info = _qbit_get("/api/v2/transfer/info")
+        torrents = _qbit_get("/api/v2/torrents/info", {"sort": "added_on", "reverse": "true"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 502
+    keys = ("hash", "name", "size", "progress", "dlspeed", "upspeed", "eta", "state",
+            "num_seeds", "num_leechs", "added_on", "completion_on", "category", "ratio", "downloaded")
+    return jsonify({
+        "success": True,
+        "transfer": {k: info.get(k) for k in ("dl_info_speed", "up_info_speed", "connection_status", "dht_nodes")},
+        "torrents": [{k: t.get(k) for k in keys} for t in torrents],
+    })
+
+
 @app.route("/encode_log", methods=["GET"])
 def encode_log_page():
     """PC(KCK-GAMING)에서 encode_all.ps1이 Synology Drive로 동기화해주는
