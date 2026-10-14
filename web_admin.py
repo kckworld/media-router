@@ -1812,7 +1812,8 @@ def _qbit_get(path: str, params: dict | None = None):
                     headers={"Referer": QBIT_URL},
                     timeout=8,
                 )
-                if r.status_code != 200 or r.text.strip() != "Ok.":
+                # qBittorrent 5.2+는 성공 시 빈 본문(204), 예전 버전은 "Ok.", 실패는 "Fails."/401
+                if r.status_code not in (200, 204) or r.text.strip() == "Fails." or not sess.cookies:
                     _qbit_state["login_failed_at"] = time.time()
                     raise RuntimeError("qBittorrent 로그인 실패 - 계정 정보를 확인하세요.")
                 _qbit_state["session"] = sess
