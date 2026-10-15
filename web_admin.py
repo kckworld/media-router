@@ -81,6 +81,7 @@ def _pc_text(raw) -> str:
 GAMING_PC_SCRIPT_PATH = os.getenv("GAMING_PC_SCRIPT_PATH", r"D:\SynologyDrive\encode_all.ps1")
 _run_encode_state = {"lock": threading.Lock(), "last_triggered": 0}
 _cancel_shutdown_state = {"lock": threading.Lock(), "last_triggered": 0}
+_shutdown_pc_state = {"lock": threading.Lock(), "last_triggered": 0}
 
 def _is_pc_online(host: str, port: int = 22, timeout: float = 2.0) -> bool:
     """SSH 포트(22)로 TCP 연결이 되는지만 확인 — ping은 Windows 방화벽에
@@ -405,7 +406,7 @@ def _schedule_shutdown_worker(stop_event: threading.Event) -> None:
                             ],
                             capture_output=True, timeout=20,
                         )
-                        _tg_notify("✅ 다운로드/인코딩이 모두 끝나서 KCK-GAMING을 5분 후 종료합니다. 취소하려면 '인코딩 로그' 페이지의 'PC 종료 취소' 버튼을 누르세요.")
+                        _tg_notify("✅ 다운로드/인코딩이 모두 끝나서 KCK-GAMING을 5분 후 종료합니다. 취소하려면 '인코딩 관리' 페이지의 'PC 종료 취소' 버튼을 누르세요.")
                     except Exception:
                         app.logger.exception("PC예약종료 - 종료 명령 전송 실패")
                 break
@@ -1706,7 +1707,7 @@ def run_encode():
 def cancel_shutdown():
     """encode_all.ps1이 끝나면 5분 후 자동으로 PC를 끄는데(shutdownAfter),
     인코딩이 끝났어도 PC를 계속 쓰고 싶을 때 그 예약 종료를 취소한다.
-    자주 쓰는 기능이 아니라 헤더 버튼이 아니라 인코딩 로그 페이지 본문에만
+    자주 쓰는 기능이 아니라 헤더 버튼이 아니라 인코딩 관리 페이지 본문에만
     둔다."""
     auth = authed(request)
     if auth is not True:
@@ -1750,6 +1751,59 @@ def cancel_shutdown():
     if result.returncode == 1089:
         return jsonify({"success": True, "message": "예약된 종료가 없었어요(이미 취소됐거나 원래 없었음)."})
     return jsonify({"success": True, "message": "KCK-GAMING의 예약 종료를 취소했습니다."})
+
+
+@app.route("/shutdown_pc", methods=["POST"])
+def shutdown_pc():
+    """헤더 "PC 끄기" 버튼. 바로 끄지 않고 1분 유예를 줘서, 잘못 눌렀으면
+    인코딩 관리 페이지의 'PC 종료 취소'(shutdown /a)로 되돌릴 수 있게 한다.
+    인코딩 중이면 409로 한 번 돌려보내고, 화면에서 다시 확인받으면 force로 끈다."""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+
+    if not Path(GAMING_PC_SSH_KEY).exists():
+        return jsonify({"success": False, "message": "SSH 키가 설정되지 않았습니다 (secrets/kck_gaming_key 없음)."}), 500
+
+    if not _is_pc_online(GAMING_PC_HOST):
+        return jsonify({"success": False, "message": "PC가 이미 꺼져있는 것 같아요."}), 409
+
+    force = bool((request.get_json(silent=True) or {}).get("force"))
+    if not force and _is_encoding_in_progress():
+        return jsonify({"success": False, "encoding": True, "message": "지금 인코딩이 진행 중이에요. 끄면 진행 중인 파일은 처음부터 다시 해야 해요."}), 409
+
+    # 인코딩 확인 뒤에 둬야 "그래도 끌까요?" 재요청이 쿨다운에 막히지 않는다
+    with _shutdown_pc_state["lock"]:
+        elapsed = time.time() - _shutdown_pc_state["last_triggered"]
+        if elapsed < 10:
+            return jsonify({"success": False, "message": f"방금 요청했습니다. {int(10 - elapsed)}초 후 다시 시도하세요."}), 429
+        _shutdown_pc_state["last_triggered"] = time.time()
+
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-i", GAMING_PC_SSH_KEY,
+                "-o", "StrictHostKeyChecking=accept-new",
+                "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=8",
+                f"{GAMING_PC_USER}@{GAMING_PC_HOST}",
+                'shutdown /s /t 60 /c "Media Router에서 PC 끄기 요청"',
+            ],
+            capture_output=True, timeout=20,
+        )
+    except Exception as e:
+        app.logger.exception("PC 끄기 요청 중 오류")
+        return jsonify({"success": False, "message": f"실행 요청 실패: {e}"}), 500
+
+    # 1190: 이미 종료가 예약돼 있음(인코딩 후 자동 종료 등) - 어차피 꺼지므로 실패로 보지 않는다
+    if result.returncode == 1190:
+        return jsonify({"success": True, "message": "이미 종료가 예약돼 있어요. 곧 꺼집니다."})
+    if result.returncode != 0:
+        detail = (_pc_text(result.stderr) or _pc_text(result.stdout)).strip()[:300]
+        return jsonify({"success": False, "message": f"SSH 실행 실패(종료코드 {result.returncode}): {detail}"}), 500
+
+    return jsonify({"success": True, "message": "KCK-GAMING을 1분 후 종료합니다. 취소하려면 인코딩 관리의 'PC 종료 취소'를 누르세요."})
 
 
 def _list_run_all_log_dates() -> list[str]:

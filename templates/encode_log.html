@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>인코딩 로그 - Media Router Web Admin</title>
+  <title>인코딩 관리 - Media Router Web Admin</title>
   <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
@@ -72,6 +72,9 @@
       animation: run-batch-spin 0.7s linear infinite;
     }
     @keyframes run-batch-spin { to { transform: rotate(360deg); } }
+    /* 헤더에서 본문 툴바로 옮긴 실행 버튼 - 흰 카드 위라 헤더와 같은 그라데이션을 직접 칠한다 */
+    .toolbar .run-batch-btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-color: transparent; padding: 8px 16px; }
+    .toolbar .run-batch-btn:hover:not(:disabled) { background: linear-gradient(135deg, #5a6fd6 0%, #6a4392 100%); border-color: transparent; }
     .header-btns { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
     .toast {
       position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(16px);
@@ -174,17 +177,14 @@
     <header>
       <div><h1>Media Router Web Admin</h1></div>
       <div class="header-btns">
-        <button type="button" class="run-batch-btn" id="runBatchBtn" onclick="runBatch()">
-          <span class="icon">▶</span> 배치 실행
-        </button>
         <button type="button" class="run-batch-btn" id="wakePcBtn" onclick="wakePc()">
           <span class="icon">⚡</span> PC 켜기
         </button>
         <button type="button" class="run-batch-btn" id="pcStatusBtn" onclick="checkPcStatus()">
           <span class="icon" id="pcStatusIcon">❔</span> PC 상태
         </button>
-        <button type="button" class="run-batch-btn" id="runEncodeBtn" onclick="runEncode()">
-          <span class="icon">🎬</span> 인코딩 시작
+        <button type="button" class="run-batch-btn" id="shutdownPcBtn" onclick="shutdownPc()">
+          <span class="icon">⏻</span> PC 끄기
         </button>
       </div>
     </header>
@@ -194,8 +194,8 @@
         <a href="/?mode=">전체 관리</a>
         <a href="/rename_rules">파일명 치환 규칙</a>
         <a href="/bt4g_keywords">BT4G 키워드</a>
-        <a href="/logs">실행 로그</a>
-        <a href="/encode_log" class="active">인코딩 로그</a>
+        <a href="/logs">배치 관리</a>
+        <a href="/encode_log" class="active">인코딩 관리</a>
         <a href="/downloads">다운로드 현황</a>
         <a href="/users">사용자 관리</a>
         <a href="/settings">설정</a>
@@ -227,6 +227,9 @@
           <label class="switch-label"><input type="checkbox" id="autoScrollChk" checked> 자동 스크롤</label>
         </div>
         <div class="group">
+          <button type="button" class="run-batch-btn" id="runEncodeBtn" onclick="runEncode()">
+            <span class="icon">🎬</span> 인코딩 시작
+          </button>
           <input type="text" id="searchInput" placeholder="로그 내용 검색...">
           <button type="button" class="btn small" onclick="manualRefresh()">↻ 새로고침</button>
           {% if log_exists %}
@@ -463,18 +466,6 @@
       toast._hideTimer = setTimeout(function() { toast.className = 'toast'; }, 4000);
     }
 
-    function runBatch() {
-      if (!confirm('media_router 배치(run_all.sh)를 지금 실행할까요?\n실제 파일 이동/이름변경이 즉시 진행됩니다.')) return;
-      var btn = document.getElementById('runBatchBtn');
-      var originalHTML = btn.innerHTML;
-      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 요청 중...';
-      fetch('/run_batch', { method: 'POST' })
-        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
-        .then(function(res) { showToast(res.data.message || (res.ok ? '요청 완료' : '요청 실패'), res.ok ? 'success' : 'error'); })
-        .catch(function(e) { showToast('요청 중 오류가 발생했습니다: ' + e, 'error'); })
-        .finally(function() { setTimeout(function() { btn.disabled = false; btn.innerHTML = originalHTML; }, 3000); });
-    }
-
     function wakePc() {
       var btn = document.getElementById('wakePcBtn');
       var originalHTML = btn.innerHTML;
@@ -503,6 +494,26 @@
         })
         .catch(function(e) { icon.textContent = '❔'; showToast('요청 중 오류가 발생했습니다: ' + e, 'error'); })
         .finally(function() { btn.disabled = false; });
+    }
+
+    // "PC 끄기" 버튼: 1분 유예로 종료 예약(인코딩 관리의 'PC 종료 취소'로 되돌릴 수 있음).
+    // 인코딩 중이면 서버가 409로 알려주고, 한 번 더 확인받으면 force로 다시 보낸다.
+    function shutdownPc(force) {
+      if (!force && !confirm('KCK-GAMING PC를 끌까요?\n1분 후 종료되고, 그 전에 인코딩 관리의 \'PC 종료 취소\'로 막을 수 있어요.')) return;
+      var btn = document.getElementById('shutdownPcBtn');
+      var originalHTML = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 요청 중...';
+      fetch('/shutdown_pc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) })
+        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
+        .then(function(res) {
+          btn.disabled = false; btn.innerHTML = originalHTML;
+          if (!res.ok && res.data.encoding) {
+            if (confirm(res.data.message + '\n그래도 끌까요?')) shutdownPc(true);
+            return;
+          }
+          showToast(res.data.message || (res.ok ? '요청 완료' : '요청 실패'), res.ok ? 'success' : 'error');
+        })
+        .catch(function(e) { btn.disabled = false; btn.innerHTML = originalHTML; showToast('요청 중 오류가 발생했습니다: ' + e, 'error'); });
     }
 
     var scheduleShutdownActive = false;
