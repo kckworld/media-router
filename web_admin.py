@@ -326,7 +326,9 @@ TG_BTN_ENCODE = "🎬 인코딩 시작"
 TG_BTN_BATCH = "▶ 배치 실행"
 TG_BTN_WAKE = "⚡ PC 켜기"
 TG_BTN_STATUS = "❔ PC 상태"
-TG_BTN_OFF = "⏻ PC 끄기"
+TG_BTN_OFF = "🔌 PC 끄기"
+# 아이콘을 ⏻에서 바꾸기 전(10-15)에 띄운 메뉴가 대화창에 남아 있을 수 있어 옛 글자도 받는다
+_TG_BTN_OFF_LEGACY = "⏻ PC 끄기"
 TG_MENU = {
     "keyboard": [
         [{"text": TG_BTN_ENCODE}, {"text": TG_BTN_BATCH}],
@@ -419,7 +421,7 @@ def _tg_pc_status_text() -> str:
 def _tg_shutdown(force: bool) -> None:
     ok, message, _code, encoding = _request_pc_shutdown(force)
     if encoding:
-        _tg_notify("⚠ " + message + "\n그래도 끌까요?", _tg_confirm(("⏻ 그래도 끄기", "off_force"), ("취소", "dismiss")))
+        _tg_notify("⚠ " + message + "\n그래도 끌까요?", _tg_confirm(("🔌 그래도 끄기", "off_force"), ("취소", "dismiss")))
     elif ok:
         _tg_result(True, message, _tg_confirm(("⏸ PC 종료 취소", "cancel_off")))
     else:
@@ -435,7 +437,7 @@ def _handle_telegram_text(text: str) -> None:
         _tg_result(ok, message)
     elif text == TG_BTN_STATUS:
         _tg_notify(_tg_pc_status_text())
-    elif text == TG_BTN_OFF:
+    elif text in (TG_BTN_OFF, _TG_BTN_OFF_LEGACY):
         _tg_shutdown(force=False)
     elif text == TG_BTN_ENCODE or any(w in text for w in _TG_ENCODE_TRIGGER_WORDS):
         _handle_telegram_encode_request()
