@@ -47,6 +47,33 @@
   // 뒤로가기(bfcache)로 돌아오면 밀려나간 상태 그대로 복원되므로 원위치
   window.addEventListener('pageshow', function (e) { if (e.persisted) clearMain(); });
 
+  // 탭 바가 가로로 넘칠 때 현재 탭을 가운데로. 이전 페이지의 스크롤 위치에서 출발해
+  // 부드럽게 옮겨서, 탭 바가 매번 맨 왼쪽에서 튀어오르지 않게 한다.
+  var BAR_KEY = 'tabBarScroll';
+  var bar = document.querySelector('.mode-tabs');
+  var activeTab = bar && bar.querySelector('a.active');
+  if (bar && activeTab && bar.scrollWidth > bar.clientWidth) {
+    var prev = null;
+    try {
+      prev = JSON.parse(sessionStorage.getItem(BAR_KEY) || 'null');
+      sessionStorage.removeItem(BAR_KEY);
+    } catch (e) {}
+    var br = bar.getBoundingClientRect(), ar = activeTab.getBoundingClientRect();
+    var center = bar.scrollLeft + (ar.left - br.left) - (bar.clientWidth - ar.width) / 2;
+    center = Math.max(0, Math.min(center, bar.scrollWidth - bar.clientWidth));
+    if (prev && Date.now() - prev.t < 5000 && !reduce && bar.scrollTo) {
+      bar.scrollLeft = prev.x;
+      requestAnimationFrame(function () { bar.scrollTo({ left: center, behavior: 'smooth' }); });
+    } else {
+      bar.scrollLeft = center;
+    }
+  }
+  function saveBar() {
+    if (!bar) return;
+    try { sessionStorage.setItem(BAR_KEY, JSON.stringify({ x: bar.scrollLeft, t: Date.now() })); } catch (e) {}
+  }
+  if (bar) bar.addEventListener('click', function (e) { if (e.target.closest('a')) saveBar(); });
+
   if (!('ontouchstart' in window) || !window.matchMedia('(pointer: coarse)').matches) return;
 
   var tabs = Array.prototype.slice.call(document.querySelectorAll('.mode-tabs a'));
@@ -105,6 +132,7 @@
     try {
       sessionStorage.setItem(KEY, JSON.stringify({ dir: dx < 0 ? 'next' : 'prev', t: Date.now() }));
     } catch (e) {}
+    saveBar();
     if (!main || reduce) { window.location.href = t.href; return; }
     main.style.transition = 'transform ' + OUT_MS + 'ms ' + EASE + ', opacity ' + OUT_MS + 'ms ' + EASE;
     main.style.transform = 'translateX(' + (dx < 0 ? '-' : '') + '100%)';
