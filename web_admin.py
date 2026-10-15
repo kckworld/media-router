@@ -350,7 +350,8 @@ def _tg_menu_marker(token: str) -> Path:
 # 정의가 끝난 뒤(파일 맨 끝에서 set)에야 업데이트를 처리한다
 _tg_ready = threading.Event()
 # 확인 버튼 연타 시 같은 메시지의 버튼이 두 번 실행되지 않게
-_tg_handled = {"lock": threading.Lock(), "messages": set(), "menu_tried": set(), "conflict_logged": set()}
+_tg_handled = {"lock": threading.Lock(), "messages": set(), "menu_tried": {}, "conflict_logged": set(), "unknown_chats": set()}
+TG_MENU_RETRY_SEC = 300
 
 
 def _tg_confirm(*buttons: tuple[str, str]) -> dict:
@@ -481,13 +482,14 @@ def _tg_show_menu_once(token: str) -> None:
     그 서비스의 메뉴를 덮어쓰게 되므로(2026-10-15 nas-bot 사고) 보내지 않는다."""
     key = _tg_bot_key(token)
     marker = _tg_menu_marker(token)
-    if key in _tg_handled["menu_tried"] or marker.exists():
+    if marker.exists() or time.time() - _tg_handled["menu_tried"].get(key, 0) < TG_MENU_RETRY_SEC:
         return
-    _tg_handled["menu_tried"].add(key)  # 기록 파일을 못 써도 재시작 전까지는 다시 안 보낸다
+    # 실패하면(예: 새 봇에서 아직 Start를 안 눌러 "chat not found") 5분 뒤 다시 시도
+    _tg_handled["menu_tried"][key] = time.time()
     # getUpdates가 성공한 바로 그 토큰으로 보낸다 (그 사이 설정이 바뀌어도 엉뚱한 봇에 안 가게)
     _tg_call("setMyCommands", {"commands": [{"command": "menu", "description": "버튼 메뉴 열기"}]}, token)
     if not _tg_notify("이제 아래 버튼으로 인코딩·배치·PC 켜기/끄기를 할 수 있어요.\n메뉴가 안 보이면 /menu 를 보내세요.", TG_MENU, token):
-        return  # 다음 재시작 때 다시 시도 (그 전에도 /menu로 열 수 있음)
+        return  # 5분 뒤 다시 시도 (그 전에도 봇에 아무 메시지나 보내면 메뉴가 뜸)
     try:
         marker.touch()
     except OSError:
@@ -530,7 +532,8 @@ def _telegram_listener_loop() -> None:
                 # error_code/description에는 토큰이 없다. 409 = 다른 서비스가 같은 봇을
                 # 웹훅/폴링으로 쓰는 중 → 버튼 수신 불가. 설정에서 전용 봇으로 바꿔야 하므로
                 # 5분마다만 다시 보고, 로그는 봇마다 한 번만 남긴다.
-                if data.get("error_code") == 409:
+                # 409라도 "terminated by other getUpdates"는 잠깐 겹친 폴링이라 오래 쉴 필요 없다
+                if data.get("error_code") == 409 and "webhook" in str(data.get("description")).lower():
                     if offset_bot not in _tg_handled["conflict_logged"]:
                         _tg_handled["conflict_logged"].add(offset_bot)
                         app.logger.warning("텔레그램 봇을 다른 서비스가 쓰고 있어 버튼을 받을 수 없음: %s", str(data.get("description"))[:200])
@@ -555,7 +558,13 @@ def _telegram_listener_loop() -> None:
                 msg = upd.get("message") or {}
                 text = (msg.get("text") or "").strip()
                 chat_id = str((msg.get("chat") or {}).get("id") or "")
-                if chat_id != allowed_chat_id or not text:
+                if chat_id != allowed_chat_id:
+                    # 설정의 Chat ID가 틀렸을 때 원인을 알 수 있게, 채팅마다 한 번 끝 4자리만 남긴다
+                    if chat_id and chat_id not in _tg_handled["unknown_chats"]:
+                        _tg_handled["unknown_chats"].add(chat_id)
+                        app.logger.warning("텔레그램: 설정에 없는 채팅(ID 끝자리 …%s)에서 온 메시지 무시", chat_id[-4:])
+                    continue
+                if not text:
                     continue
                 threading.Thread(target=_tg_safe, args=(_handle_telegram_text, text), daemon=True).start()
         except Exception as e:
