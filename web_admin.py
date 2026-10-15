@@ -728,6 +728,56 @@ def safe_int(value, default):
     except (TypeError, ValueError):
         return default
 
+
+_MODE_INPUT_RE = re.compile(r"^(?:0o|0)?([0-7]{3,4})$")
+
+
+def parse_mode_input(value) -> str | None:
+    """설정 화면의 권한 입력("664", "0664", "0o664")을 "0o664" 문자열로 정규화.
+    예전엔 safe_int로 int("664")=십진수 664를 저장했는데, media_router.parse_mode는
+    int를 이미 8진 모드값으로 보고 그대로 써서 664 → 0o1230 같은 엉뚱한 권한이
+    될 수 있었다. 문자열로 저장하면 parse_mode가 int(…, 8)로 올바르게 읽는다."""
+    m = _MODE_INPUT_RE.match(str(value or "").strip().lower())
+    return f"0o{m.group(1)}" if m else None
+
+
+def mode_display(value, default: str) -> str:
+    """저장된 권한값(int 0o664 또는 "0o664" 문자열)을 화면용 "664"로."""
+    if isinstance(value, int):
+        return format(value, "o")
+    m = _MODE_INPUT_RE.match(str(value or "").strip().lower())
+    return m.group(1) if m else default
+
+
+def _container_mount_points() -> list[str]:
+    try:
+        with open("/proc/self/mounts", encoding="utf-8") as f:
+            # 공백은 \040처럼 8진 이스케이프로 나온다
+            points = [re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), line.split()[1]) for line in f]
+    except OSError:
+        return []
+    return [p for p in points if p != "/"]
+
+
+def check_dir_path(path: str, mounts: list[str]) -> dict:
+    """설정 경로가 실제로 있는지. 배치(media_router.py)는 호스트에서 돌고 이 웹은
+    컨테이너라, 컨테이너에 마운트 안 된 경로(/volume2 등)는 "없음"이 아니라
+    "확인 불가"로 구분해야 오해가 없다."""
+    p = (path or "").strip()
+    if not p.startswith("/"):
+        return {"path": p, "state": "invalid", "message": "/로 시작하는 절대 경로여야 해요"}
+    target = Path(p)
+    try:
+        if target.is_dir():
+            return {"path": p, "state": "ok", "message": "폴더 있음"}
+        if target.exists():
+            return {"path": p, "state": "invalid", "message": "폴더가 아니라 파일이에요"}
+    except OSError:
+        pass
+    if any(p == m or p.startswith(m.rstrip("/") + "/") for m in mounts):
+        return {"path": p, "state": "missing", "message": "폴더가 없어요"}
+    return {"path": p, "state": "unknown", "message": "웹 컨테이너에 연결 안 된 위치라 확인 불가 (배치는 호스트에서 돌아서 정상일 수 있음)"}
+
 def parse_rename_rules_conf(path: Path):
     """rename_rules.conf(keyword|from_prefix|to_prefix 형식)를 파싱.
     drama_name.sh의 apply_rename_rules()와 동일한 규칙으로 라인을 해석한다:
@@ -1330,29 +1380,131 @@ def settings():
                 if v:
                     base_paths[cat] = v
             cfg["base_paths"] = base_paths
-            # ownership (빈 값/비숫자 입력이 와도 기존 값 또는 기본값으로 안전하게 대체)
+            # ownership - 권한값은 잘못 들어오면 조용히 넘기지 않고 저장 자체를 막는다
             old_ownership = cfg.get("ownership") or {}
+            file_mode = parse_mode_input(request.form.get("own_file_mode"))
+            dir_mode = parse_mode_input(request.form.get("own_dir_mode"))
+            if file_mode is None or dir_mode is None:
+                raise ValueError("권한은 664, 775처럼 0~7 숫자 3~4자리로 입력하세요.")
             cfg["ownership"] = {
                 "apply": request.form.get("own_apply") == "1",
-                "user": request.form.get("own_user", "").strip(),
-                "group": request.form.get("own_group", "").strip(),
-                "file_mode": safe_int(request.form.get("own_file_mode"), old_ownership.get("file_mode", 664)),
-                "dir_mode": safe_int(request.form.get("own_dir_mode"), old_ownership.get("dir_mode", 775)),
+                "user": request.form.get("own_user", "").strip() or old_ownership.get("user", "plex"),
+                "group": request.form.get("own_group", "").strip() or old_ownership.get("group", "users"),
+                "file_mode": file_mode,
+                "dir_mode": dir_mode,
                 "setgid_dirs": request.form.get("own_setgid") == "1",
                 "enforce_inherit": request.form.get("own_enforce") == "1",
             }
             save_cfg(cfg)
             saved = True
         except Exception as e:
-            app.logger.exception("설정 저장 중 오류")
+            if isinstance(e, ValueError):
+                app.logger.warning("설정 저장 거부: %s", e)
+            else:
+                app.logger.exception("설정 저장 중 오류")
             error = str(e)
+            cfg = load_cfg()  # 반쯤 바뀐 cfg가 화면에 저장된 것처럼 보이지 않게
+    own = cfg.get("ownership") or {}
     return render_template("index.html",
+        own_file_mode=mode_display(own.get("file_mode"), "664"),
+        own_dir_mode=mode_display(own.get("dir_mode"), "775"),
+        tmdb_env_override=bool(os.getenv("TMDB_API_KEY", "").strip()),
         authed=True, cfg=cfg, weekdays=WEEKDAYS,
         selected_day="", selected_cat="", hide_no_days="1",
         rules=[], mode="settings",
         today_name=WEEKDAYS[current_weekday()], yest_name=WEEKDAYS[(current_weekday()-1)%7],
         two_days_ago_name=WEEKDAYS[(current_weekday()-2)%7], categories=CATEGORIES,
         sort_key="default", sort_dir="asc", edit_id=None, saved=saved, error=error)
+
+@app.route("/settings/check_paths", methods=["POST"])
+def settings_check_paths():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+    paths = (request.get_json(silent=True) or {}).get("paths") or []
+    mounts = _container_mount_points()
+    return jsonify({"success": True, "results": [check_dir_path(str(p), mounts) for p in paths[:50]]})
+
+
+@app.route("/settings/test_telegram", methods=["POST"])
+def settings_test_telegram():
+    """입력칸에 새 값이 있으면 그걸로, 비어 있으면 저장된 값으로 테스트 메시지를 보낸다."""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+    body = request.get_json(silent=True) or {}
+    saved_tg = load_cfg().get("telegram") or {}
+    token = (body.get("bot_token") or "").strip() or saved_tg.get("bot_token", "")
+    chat_id = (body.get("chat_id") or "").strip() or saved_tg.get("chat_id", "")
+    if not token or not chat_id:
+        return jsonify({"success": False, "message": "Bot Token과 Chat ID가 모두 있어야 해요."}), 400
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": "✅ Media Router 설정 화면에서 보낸 테스트 메시지입니다."},
+            timeout=10,
+        )
+        data = r.json()
+    except Exception as e:
+        # 예외 메시지에는 토큰이 든 URL이 섞일 수 있어서 종류만 알려준다
+        return jsonify({"success": False, "message": f"텔레그램 서버에 연결하지 못했어요 ({type(e).__name__})."}), 502
+    if data.get("ok"):
+        note = "" if saved_tg.get("enabled") else " (알림이 꺼져 있어서 평소 알림은 안 가요 - '활성화' 체크 후 저장하세요)"
+        return jsonify({"success": True, "message": "테스트 메시지를 보냈어요. 텔레그램을 확인하세요." + note})
+    desc = str(data.get("description") or f"HTTP {r.status_code}")[:200]
+    return jsonify({"success": False, "message": f"전송 실패: {desc}"}), 400
+
+
+@app.route("/settings/test_tmdb", methods=["POST"])
+def settings_test_tmdb():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+    typed = ((request.get_json(silent=True) or {}).get("api_key") or "").strip()
+    api_key = typed or get_tmdb_api_key()
+    if not api_key:
+        return jsonify({"success": False, "message": "확인할 TMDB 키가 없어요."}), 400
+    try:
+        r = requests.get("https://api.themoviedb.org/3/configuration", params={"api_key": api_key}, timeout=8)
+    except Exception as e:
+        return jsonify({"success": False, "message": f"TMDB 서버에 연결하지 못했어요 ({type(e).__name__})."}), 502
+    which = "입력한 키" if typed else (".env의 키" if os.getenv("TMDB_API_KEY", "").strip() else "저장된 키")
+    if r.status_code == 200:
+        return jsonify({"success": True, "message": f"{which}가 정상이에요."})
+    if r.status_code == 401:
+        return jsonify({"success": False, "message": f"{which}가 유효하지 않아요."}), 400
+    return jsonify({"success": False, "message": f"TMDB 응답 오류 (HTTP {r.status_code})"}), 502
+
+
+@app.route("/settings/status", methods=["GET"])
+def settings_status():
+    """.env/docker-compose.yml로만 바꿀 수 있는 연동 설정을 읽기 전용으로 보여준다.
+    비밀값(비밀번호·키 내용)은 내보내지 않고 '설정됨' 여부만 준다."""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+
+    qbit = {"url": QBIT_URL, "account_set": bool(QBIT_USERNAME and QBIT_PASSWORD), "ok": False}
+    try:
+        info = _qbit_get("/api/v2/transfer/info")
+        qbit["ok"] = True
+        qbit["message"] = f"연결됨 (네트워크: {info.get('connection_status', '?')})"
+    except Exception as e:
+        qbit["message"] = str(e)[:200]
+
+    return jsonify({
+        "success": True,
+        "pc": {
+            "host": GAMING_PC_HOST, "user": GAMING_PC_USER, "mac": WOL_MAC, "wol_broadcast": WOL_BROADCAST,
+            "script_path": GAMING_PC_SCRIPT_PATH,
+            "ssh_key": Path(GAMING_PC_SSH_KEY).exists(),
+            "online": _is_pc_online(GAMING_PC_HOST),
+        },
+        "batch": {"ssh_key": Path(RUN_BATCH_SSH_KEY).exists(), "host": f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}:{RUN_BATCH_SSH_PORT}"},
+        "qbit": qbit,
+        "tmdb_source": "env" if os.getenv("TMDB_API_KEY", "").strip() else ("settings" if (load_cfg().get("tmdb_api_key") or "").strip() else "none"),
+    })
+
 
 @app.route("/rename_rules", methods=["GET", "POST"])
 def rename_rules():
