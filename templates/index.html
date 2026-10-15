@@ -1535,7 +1535,7 @@
           </div>
         </div>
         <div class="set-result" id="tgResult"></div>
-        <div class="set-hint">빈 칸은 저장된 값을 그대로 써요. 테스트 메시지도 입력한 값이 있으면 그 값으로, 없으면 저장된 값으로 보내요.</div>
+        <div class="set-hint">빈 칸은 저장된 값을 그대로 써요. 테스트 메시지도 입력한 값이 있으면 그 값으로, 없으면 저장된 값으로 보내요.<br>버튼 메뉴를 쓰려면 <strong>Media Router 전용 봇</strong>이어야 해요. 다른 서비스(nas-bot 등)와 같은 봇이면 그 서비스가 메시지를 가져가서 버튼이 동작하지 않아요.</div>
       </section>
 
       <section class="card set-card">
@@ -1614,6 +1614,7 @@
           <button type="button" class="btn small" id="statusRefreshBtn" onclick="loadSettingsStatus()">↻ 새로고침</button>
         </div>
         <div class="status-grid" id="statusGrid">
+          <div class="status-box"><div class="status-name">텔레그램 봇</div><dl id="statusTg"><dt>상태</dt><dd>확인 중...</dd></dl></div>
           <div class="status-box"><div class="status-name">인코딩 PC (KCK-GAMING)</div><dl id="statusPc"><dt>상태</dt><dd>확인 중...</dd></dl></div>
           <div class="status-box"><div class="status-name">qBittorrent</div><dl id="statusQbit"><dt>상태</dt><dd>확인 중...</dd></dl></div>
           <div class="status-box"><div class="status-name">배치 실행 (호스트 SSH)</div><dl id="statusBatch"><dt>상태</dt><dd>확인 중...</dd></dl></div>
@@ -2070,6 +2071,13 @@
         .then(function(r) { return r.json(); })
         .then(function(d) {
           if (!d.success) throw new Error(d.message || '확인 실패');
+          var t = d.telegram || {};
+          statusRows(document.getElementById('statusTg'), !t.configured ? [['봇', '<span class="muted">설정 안 됨</span>']] : [
+            ['봇', t.ok ? '<span class="ps-ok">✓ @' + escapeHtml(t.username || '?') + '</span>' : '<span class="ps-missing">✗ 토큰 확인 필요</span>'],
+            ['버튼 메뉴', !t.ok ? '-' : t.webhook_host
+              ? '<span class="ps-missing">✗ 다른 서비스(' + escapeHtml(t.webhook_host) + ')가 이 봇을 쓰고 있어 버튼이 동작하지 않아요. Media Router 전용 봇 토큰으로 바꿔주세요.</span>'
+              : (t.enabled ? '<span class="ps-ok">✓ 사용 가능</span>' : '<span class="muted">알림이 꺼져 있음</span>')]
+          ]);
           statusRows(document.getElementById('statusPc'), [
             ['전원', d.pc.online ? '<span class="ps-ok">🟢 켜짐</span>' : '<span class="muted">🔴 꺼짐</span>'],
             ['주소', escapeHtml(d.pc.user + '@' + d.pc.host)],

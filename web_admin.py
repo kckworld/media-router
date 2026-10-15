@@ -8,6 +8,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import requests
 import psycopg2
 from contextlib import contextmanager
+from urllib.parse import urlparse
 from db import load_cfg, save_cfg, DATA_DIR
 
 # 사용자 관리 탭 - media-stats postgres 연동 (2026-09-18, media_stats_admin에서 이식)
@@ -307,14 +308,15 @@ def _tg_call(method: str, payload: dict, token: str | None = None) -> dict | Non
         return None
 
 
-def _tg_notify(text: str, reply_markup: dict | None = None) -> bool:
+def _tg_notify(text: str, reply_markup: dict | None = None, token: str | None = None) -> bool:
     tg = _tg_cfg()
-    if not tg.get("enabled") or not tg.get("bot_token") or not tg.get("chat_id"):
+    token = token or tg.get("bot_token")
+    if not tg.get("enabled") or not token or not tg.get("chat_id"):
         return False
     payload = {"chat_id": tg["chat_id"], "text": text}
     if reply_markup:
         payload["reply_markup"] = reply_markup
-    return bool((_tg_call("sendMessage", payload, tg["bot_token"]) or {}).get("ok"))
+    return bool((_tg_call("sendMessage", payload, token) or {}).get("ok"))
 
 
 # 텔레그램 대화창 하단 고정 메뉴. 버튼을 누르면 그 글자가 메시지로 오므로
@@ -337,12 +339,18 @@ TG_MENU = {
 _TG_ENCODE_TRIGGER_WORDS = ("인코딩",)
 # 확인 버튼(인라인)은 오래된 걸 실수로 누르지 않게 5분 지나면 무시
 TG_CONFIRM_TTL_SEC = 300
-_TG_MENU_MARKER = DATA_DIR / "telegram_menu_v1.sent"
+# 메뉴 안내는 봇마다 한 번 - 토큰을 바꾸면(새 봇) 그 봇에도 한 번 띄운다
+def _tg_bot_key(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+
+
+def _tg_menu_marker(token: str) -> Path:
+    return DATA_DIR / f"telegram_menu_{_tg_bot_key(token)}.sent"
 # 리스너 스레드는 모듈 중간에서 시작되므로, 아래쪽 라우트 헬퍼(_request_*)까지
 # 정의가 끝난 뒤(파일 맨 끝에서 set)에야 업데이트를 처리한다
 _tg_ready = threading.Event()
 # 확인 버튼 연타 시 같은 메시지의 버튼이 두 번 실행되지 않게
-_tg_handled = {"lock": threading.Lock(), "messages": set(), "menu_tried": False}
+_tg_handled = {"lock": threading.Lock(), "messages": set(), "menu_tried": set(), "conflict_logged": set()}
 
 
 def _tg_confirm(*buttons: tuple[str, str]) -> dict:
@@ -467,16 +475,21 @@ def _handle_telegram_callback(cq: dict) -> None:
         _tg_result(ok, message)
 
 
-def _tg_show_menu_once() -> None:
-    """버튼 메뉴 도입 후 처음 한 번만 메뉴를 띄워준다 (재시작마다 보내면 스팸)."""
-    if _tg_handled["menu_tried"] or _TG_MENU_MARKER.exists():
+def _tg_show_menu_once(token: str) -> None:
+    """봇마다 처음 한 번만 메뉴를 띄워준다 (재시작마다 보내면 스팸).
+    getUpdates가 성공한 뒤에만 부른다 - 다른 서비스가 웹훅으로 쓰는 봇이면
+    그 서비스의 메뉴를 덮어쓰게 되므로(2026-10-15 nas-bot 사고) 보내지 않는다."""
+    key = _tg_bot_key(token)
+    marker = _tg_menu_marker(token)
+    if key in _tg_handled["menu_tried"] or marker.exists():
         return
-    _tg_handled["menu_tried"] = True  # 기록 파일을 못 써도 재시작 전까지는 다시 안 보낸다
-    _tg_call("setMyCommands", {"commands": [{"command": "menu", "description": "버튼 메뉴 열기"}]})
-    if not _tg_notify("이제 아래 버튼으로 인코딩·배치·PC 켜기/끄기를 할 수 있어요.\n메뉴가 안 보이면 /menu 를 보내세요.", TG_MENU):
+    _tg_handled["menu_tried"].add(key)  # 기록 파일을 못 써도 재시작 전까지는 다시 안 보낸다
+    # getUpdates가 성공한 바로 그 토큰으로 보낸다 (그 사이 설정이 바뀌어도 엉뚱한 봇에 안 가게)
+    _tg_call("setMyCommands", {"commands": [{"command": "menu", "description": "버튼 메뉴 열기"}]}, token)
+    if not _tg_notify("이제 아래 버튼으로 인코딩·배치·PC 켜기/끄기를 할 수 있어요.\n메뉴가 안 보이면 /menu 를 보내세요.", TG_MENU, token):
         return  # 다음 재시작 때 다시 시도 (그 전에도 /menu로 열 수 있음)
     try:
-        _TG_MENU_MARKER.touch()
+        marker.touch()
     except OSError:
         app.logger.warning("텔레그램 메뉴 표시 기록 실패")
 
@@ -492,6 +505,7 @@ def _tg_safe(handler, *args) -> None:
 
 def _telegram_listener_loop() -> None:
     offset = 0
+    offset_bot = None
     _tg_ready.wait()
     while True:
         try:
@@ -501,7 +515,9 @@ def _telegram_listener_loop() -> None:
             if not tg.get("enabled") or not token or not allowed_chat_id:
                 time.sleep(30)
                 continue
-            _tg_show_menu_once()
+            if offset_bot != _tg_bot_key(token):
+                # 봇을 바꾸면 update_id 체계가 달라서, 예전 봇의 offset을 쓰면 새 봇 메시지가 무시될 수 있다
+                offset, offset_bot = 0, _tg_bot_key(token)
 
             resp = requests.get(
                 f"https://api.telegram.org/bot{token}/getUpdates",
@@ -511,10 +527,23 @@ def _telegram_listener_loop() -> None:
             )
             data = resp.json()
             if not data.get("ok"):
-                # error_code/description에는 토큰이 없다 (409면 다른 곳에서 같은 봇을 폴링 중)
-                app.logger.warning("텔레그램 getUpdates 실패: %s %s", data.get("error_code"), str(data.get("description"))[:200])
-                time.sleep(5)
+                # error_code/description에는 토큰이 없다. 409 = 다른 서비스가 같은 봇을
+                # 웹훅/폴링으로 쓰는 중 → 버튼 수신 불가. 설정에서 전용 봇으로 바꿔야 하므로
+                # 5분마다만 다시 보고, 로그는 봇마다 한 번만 남긴다.
+                if data.get("error_code") == 409:
+                    if offset_bot not in _tg_handled["conflict_logged"]:
+                        _tg_handled["conflict_logged"].add(offset_bot)
+                        app.logger.warning("텔레그램 봇을 다른 서비스가 쓰고 있어 버튼을 받을 수 없음: %s", str(data.get("description"))[:200])
+                    # 5분 대기 중에도 설정에서 토큰을 바꾸면 바로 새 봇으로 넘어가게 5초씩 쪼개서 잔다
+                    for _ in range(60):
+                        time.sleep(5)
+                        if _tg_bot_key(_tg_cfg().get("bot_token") or "") != offset_bot:
+                            break
+                else:
+                    app.logger.warning("텔레그램 getUpdates 실패: %s %s", data.get("error_code"), str(data.get("description"))[:200])
+                    time.sleep(5)
                 continue
+            _tg_show_menu_once(token)
 
             for upd in data.get("result", []):
                 offset = upd["update_id"] + 1
@@ -1641,8 +1670,22 @@ def settings_status():
     except Exception as e:
         qbit["message"] = str(e)[:200]
 
+    tg_status = {"configured": False}
+    tg = load_cfg().get("telegram") or {}
+    if tg.get("bot_token"):
+        tg_status["configured"] = True
+        me = _tg_call("getMe", {}, tg["bot_token"]) or {}
+        hook = _tg_call("getWebhookInfo", {}, tg["bot_token"]) or {}
+        tg_status["ok"] = bool(me.get("ok"))
+        tg_status["username"] = (me.get("result") or {}).get("username")
+        hook_url = (hook.get("result") or {}).get("url") or ""
+        # 웹훅이 걸려 있으면 다른 서비스가 이 봇의 메시지를 가져가서 버튼이 동작하지 않는다
+        tg_status["webhook_host"] = (urlparse(hook_url).hostname or "?") if hook_url else ""
+        tg_status["enabled"] = bool(tg.get("enabled"))
+
     return jsonify({
         "success": True,
+        "telegram": tg_status,
         "pc": {
             "host": GAMING_PC_HOST, "user": GAMING_PC_USER, "mac": WOL_MAC, "wol_broadcast": WOL_BROADCAST,
             "script_path": GAMING_PC_SCRIPT_PATH,
