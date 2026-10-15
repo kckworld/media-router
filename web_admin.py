@@ -290,26 +290,64 @@ def _is_encoding_in_progress() -> bool:
     return False
 
 
-def _tg_notify(text: str) -> None:
+def _tg_cfg() -> dict:
+    from db import load_cfg as _load_cfg
+    return _load_cfg().get("telegram") or {}
+
+
+def _tg_call(method: str, payload: dict, token: str | None = None) -> dict | None:
+    """텔레그램 Bot API 호출. 예외 메시지에는 토큰이 든 URL이 섞이므로 종류만 로그에 남긴다."""
+    token = token or _tg_cfg().get("bot_token")
+    if not token:
+        return None
     try:
-        from db import load_cfg as _load_cfg
-        tg = _load_cfg().get("telegram", {})
-        if not tg.get("enabled") or not tg.get("bot_token") or not tg.get("chat_id"):
-            return
-        requests.post(
-            f"https://api.telegram.org/bot{tg['bot_token']}/sendMessage",
-            json={"chat_id": tg["chat_id"], "text": text}, timeout=10,
-        )
-    except Exception:
-        app.logger.exception("PC예약종료 텔레그램 알림 실패")
+        return requests.post(f"https://api.telegram.org/bot{token}/{method}", json=payload, timeout=10).json()
+    except Exception as e:
+        app.logger.warning("텔레그램 %s 호출 실패: %s", method, type(e).__name__)
+        return None
 
 
-# 텔레그램으로 "인코딩"이라고 회신하면 KCK-GAMING에서 인코딩을 원격 시작한다.
-# PC가 꺼져있으면 먼저 WOL로 켜고 기다렸다가 시작한다. 인코딩이 끝나면
-# encode_all.ps1 자체의 shutdownAfter가 있어서 PC는 알아서 꺼지므로, 여기서는
-# 따로 종료를 예약하지 않는다. 인바운드 웹훅 없이 getUpdates 롱폴링만 쓰므로
-# 포트포워딩/공인 도메인/SSL 없이도 동작한다.
+def _tg_notify(text: str, reply_markup: dict | None = None) -> bool:
+    tg = _tg_cfg()
+    if not tg.get("enabled") or not tg.get("bot_token") or not tg.get("chat_id"):
+        return False
+    payload = {"chat_id": tg["chat_id"], "text": text}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    return bool((_tg_call("sendMessage", payload, tg["bot_token"]) or {}).get("ok"))
+
+
+# 텔레그램 대화창 하단 고정 메뉴. 버튼을 누르면 그 글자가 메시지로 오므로
+# 아래 리스너가 글자로 구분해서 처리한다. 인바운드 웹훅 없이 getUpdates
+# 롱폴링만 쓰므로 포트포워딩/공인 도메인/SSL 없이도 동작한다.
+TG_BTN_ENCODE = "🎬 인코딩 시작"
+TG_BTN_BATCH = "▶ 배치 실행"
+TG_BTN_WAKE = "⚡ PC 켜기"
+TG_BTN_STATUS = "❔ PC 상태"
+TG_BTN_OFF = "⏻ PC 끄기"
+TG_MENU = {
+    "keyboard": [
+        [{"text": TG_BTN_ENCODE}, {"text": TG_BTN_BATCH}],
+        [{"text": TG_BTN_WAKE}, {"text": TG_BTN_STATUS}, {"text": TG_BTN_OFF}],
+    ],
+    "resize_keyboard": True,
+    "is_persistent": True,
+}
+# 메뉴 도입 전처럼 "인코딩"이 들어간 아무 메시지로도 인코딩을 시작할 수 있게 유지
 _TG_ENCODE_TRIGGER_WORDS = ("인코딩",)
+# 확인 버튼(인라인)은 오래된 걸 실수로 누르지 않게 5분 지나면 무시
+TG_CONFIRM_TTL_SEC = 300
+_TG_MENU_MARKER = DATA_DIR / "telegram_menu_v1.sent"
+# 리스너 스레드는 모듈 중간에서 시작되므로, 아래쪽 라우트 헬퍼(_request_*)까지
+# 정의가 끝난 뒤(파일 맨 끝에서 set)에야 업데이트를 처리한다
+_tg_ready = threading.Event()
+# 확인 버튼 연타 시 같은 메시지의 버튼이 두 번 실행되지 않게
+_tg_handled = {"lock": threading.Lock(), "messages": set(), "menu_tried": False}
+
+
+def _tg_confirm(*buttons: tuple[str, str]) -> dict:
+    now = int(time.time())
+    return {"inline_keyboard": [[{"text": label, "callback_data": f"{action}:{now}"} for label, action in buttons]]}
 
 
 def _ensure_pc_on_and_trigger_encode(progress=None) -> tuple[bool, str]:
@@ -352,38 +390,148 @@ def _handle_telegram_encode_request() -> None:
     _tg_notify(("✅ " if ok else "❌ ") + message + suffix)
 
 
+def _tg_result(ok: bool, message: str, reply_markup: dict | None = None) -> None:
+    _tg_notify(("✅ " if ok else "❌ ") + message, reply_markup)
+
+
+def _tg_pc_status_text() -> str:
+    online = _is_pc_online(GAMING_PC_HOST)
+    lines = ["🟢 KCK-GAMING 켜져 있어요" if online else "🔴 KCK-GAMING 꺼져 있어요"]
+    if _is_encoding_in_progress():
+        lines.append("🎬 인코딩 진행 중")
+    if _has_partial_downloads():
+        lines.append("⬇ Drive로 다운로드 중인 파일 있음")
+    with _schedule_shutdown_state["lock"]:
+        if _schedule_shutdown_state["active"]:
+            lines.append("⏳ PC예약종료 대기 중 (다운로드·인코딩 끝나면 종료)")
+    return "\n".join(lines)
+
+
+def _tg_shutdown(force: bool) -> None:
+    ok, message, _code, encoding = _request_pc_shutdown(force)
+    if encoding:
+        _tg_notify("⚠ " + message + "\n그래도 끌까요?", _tg_confirm(("⏻ 그래도 끄기", "off_force"), ("취소", "dismiss")))
+    elif ok:
+        _tg_result(True, message, _tg_confirm(("⏸ PC 종료 취소", "cancel_off")))
+    else:
+        _tg_result(False, message)
+
+
+def _handle_telegram_text(text: str) -> None:
+    if text == TG_BTN_BATCH:
+        _tg_notify("배치(run_all.sh)를 지금 실행할까요?\n파일 이동·이름변경이 바로 진행돼요.",
+                   _tg_confirm(("▶ 실행", "batch"), ("취소", "dismiss")))
+    elif text == TG_BTN_WAKE:
+        ok, message, _code = _request_wol()
+        _tg_result(ok, message)
+    elif text == TG_BTN_STATUS:
+        _tg_notify(_tg_pc_status_text())
+    elif text == TG_BTN_OFF:
+        _tg_shutdown(force=False)
+    elif text == TG_BTN_ENCODE or any(w in text for w in _TG_ENCODE_TRIGGER_WORDS):
+        _handle_telegram_encode_request()
+    else:
+        # /start, /menu, 그 밖의 아무 메시지 → 메뉴를 다시 띄워준다 (키보드를 닫았을 때 대비)
+        _tg_notify("아래 버튼으로 조작할 수 있어요.", TG_MENU)
+
+
+def _handle_telegram_callback(cq: dict) -> None:
+    """인라인 확인 버튼. 누른 메시지의 버튼은 지우고, 결과는 새 메시지로 보낸다."""
+    action, _, ts = (cq.get("data") or "").partition(":")
+    msg = cq.get("message") or {}
+    chat_id = (msg.get("chat") or {}).get("id")
+    expired = action != "cancel_off" and (not ts.isdigit() or time.time() - int(ts) > TG_CONFIRM_TTL_SEC)
+    key = (chat_id, msg.get("message_id"))
+    with _tg_handled["lock"]:
+        duplicate = key in _tg_handled["messages"]
+        _tg_handled["messages"].add(key)
+        if len(_tg_handled["messages"]) > 200:
+            _tg_handled["messages"].clear()
+    if duplicate:
+        _tg_call("answerCallbackQuery", {"callback_query_id": cq.get("id"), "text": "이미 처리했어요."})
+        return
+    _tg_call("answerCallbackQuery", {"callback_query_id": cq.get("id"),
+                                     "text": "만료된 버튼이에요. 메뉴에서 다시 눌러주세요." if expired else ""})
+    if chat_id and msg.get("message_id"):
+        _tg_call("editMessageReplyMarkup", {"chat_id": chat_id, "message_id": msg["message_id"],
+                                            "reply_markup": {"inline_keyboard": []}})
+    if expired or action == "dismiss":
+        return
+    if action == "batch":
+        ok, message, _code = _request_batch_run("telegram-trigger")
+        _tg_result(ok, message)
+    elif action == "off_force":
+        _tg_shutdown(force=True)
+    elif action == "cancel_off":
+        ok, message, _code = _request_cancel_shutdown()
+        _tg_result(ok, message)
+
+
+def _tg_show_menu_once() -> None:
+    """버튼 메뉴 도입 후 처음 한 번만 메뉴를 띄워준다 (재시작마다 보내면 스팸)."""
+    if _tg_handled["menu_tried"] or _TG_MENU_MARKER.exists():
+        return
+    _tg_handled["menu_tried"] = True  # 기록 파일을 못 써도 재시작 전까지는 다시 안 보낸다
+    _tg_call("setMyCommands", {"commands": [{"command": "menu", "description": "버튼 메뉴 열기"}]})
+    if not _tg_notify("이제 아래 버튼으로 인코딩·배치·PC 켜기/끄기를 할 수 있어요.\n메뉴가 안 보이면 /menu 를 보내세요.", TG_MENU):
+        return  # 다음 재시작 때 다시 시도 (그 전에도 /menu로 열 수 있음)
+    try:
+        _TG_MENU_MARKER.touch()
+    except OSError:
+        app.logger.warning("텔레그램 메뉴 표시 기록 실패")
+
+
+def _tg_safe(handler, *args) -> None:
+    """핸들러 스레드에서 예외가 나도 조용히 죽지 않게 - 로그엔 종류만, 사용자에겐 짧게 알림."""
+    try:
+        handler(*args)
+    except Exception as e:
+        app.logger.warning("텔레그램 버튼 처리 오류(%s): %s", handler.__name__, type(e).__name__)
+        _tg_notify(f"❌ 처리 중 오류가 났어요 ({type(e).__name__}). 웹 화면에서 다시 시도해주세요.")
+
+
 def _telegram_listener_loop() -> None:
     offset = 0
+    _tg_ready.wait()
     while True:
         try:
-            from db import load_cfg as _load_cfg
-            tg = _load_cfg().get("telegram", {})
+            tg = _tg_cfg()
             token = tg.get("bot_token")
             allowed_chat_id = str(tg.get("chat_id") or "")
             if not tg.get("enabled") or not token or not allowed_chat_id:
                 time.sleep(30)
                 continue
+            _tg_show_menu_once()
 
             resp = requests.get(
                 f"https://api.telegram.org/bot{token}/getUpdates",
-                params={"offset": offset, "timeout": 25}, timeout=35,
+                params={"offset": offset, "timeout": 25,
+                        "allowed_updates": json.dumps(["message", "callback_query"])},
+                timeout=35,
             )
             data = resp.json()
             if not data.get("ok"):
+                # error_code/description에는 토큰이 없다 (409면 다른 곳에서 같은 봇을 폴링 중)
+                app.logger.warning("텔레그램 getUpdates 실패: %s %s", data.get("error_code"), str(data.get("description"))[:200])
                 time.sleep(5)
                 continue
 
             for upd in data.get("result", []):
                 offset = upd["update_id"] + 1
+                cq = upd.get("callback_query")
+                if cq:
+                    if str(((cq.get("message") or {}).get("chat") or {}).get("id") or "") == allowed_chat_id:
+                        threading.Thread(target=_tg_safe, args=(_handle_telegram_callback, cq), daemon=True).start()
+                    continue
                 msg = upd.get("message") or {}
                 text = (msg.get("text") or "").strip()
                 chat_id = str((msg.get("chat") or {}).get("id") or "")
                 if chat_id != allowed_chat_id or not text:
                     continue
-                if any(w in text for w in _TG_ENCODE_TRIGGER_WORDS):
-                    threading.Thread(target=_handle_telegram_encode_request, daemon=True).start()
-        except Exception:
-            app.logger.exception("텔레그램 리스너 오류")
+                threading.Thread(target=_tg_safe, args=(_handle_telegram_text, text), daemon=True).start()
+        except Exception as e:
+            # traceback에는 토큰이 든 요청 URL이 찍히므로 예외 종류만 남긴다
+            app.logger.warning("텔레그램 리스너 오류: %s", type(e).__name__)
             time.sleep(10)
 
 
@@ -406,7 +554,8 @@ def _schedule_shutdown_worker(stop_event: threading.Event) -> None:
                             ],
                             capture_output=True, timeout=20,
                         )
-                        _tg_notify("✅ 다운로드/인코딩이 모두 끝나서 KCK-GAMING을 5분 후 종료합니다. 취소하려면 '인코딩 관리' 페이지의 'PC 종료 취소' 버튼을 누르세요.")
+                        _tg_notify("✅ 다운로드/인코딩이 모두 끝나서 KCK-GAMING을 5분 후 종료합니다. 계속 쓰려면 아래 'PC 종료 취소'를 누르세요.",
+                                   _tg_confirm(("⏸ PC 종료 취소", "cancel_off")))
                     except Exception:
                         app.logger.exception("PC예약종료 - 종료 명령 전송 실패")
                 break
@@ -1728,19 +1877,15 @@ def edit():
         redirect_url = "/" + ("?" + "&".join(params) if params else "")
         return redirect(redirect_url)
 
-@app.route("/run_batch", methods=["POST"])
-def run_batch():
-    auth = authed(request)
-    if auth is not True:
-        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
-
+def _request_batch_run(trigger: str = "web-trigger") -> tuple[bool, str, int]:
+    """run_all.sh를 호스트에서 실행 요청 (웹 버튼·텔레그램 공용). (성공, 메시지, HTTP 코드)"""
     if not Path(RUN_BATCH_SSH_KEY).exists():
-        return jsonify({"success": False, "message": "SSH 키가 설정되지 않았습니다 (secrets/run_batch_key 없음)."}), 500
+        return False, "SSH 키가 설정되지 않았습니다 (secrets/run_batch_key 없음).", 500
 
     with _run_batch_state["lock"]:
         elapsed = time.time() - _run_batch_state["last_triggered"]
         if elapsed < 30:
-            return jsonify({"success": False, "message": f"방금 요청했습니다. {int(30 - elapsed)}초 후 다시 시도하세요."}), 429
+            return False, f"방금 요청했습니다. {int(30 - elapsed)}초 후 다시 시도하세요.", 429
         _run_batch_state["last_triggered"] = time.time()
 
     try:
@@ -1756,16 +1901,41 @@ def run_batch():
                 # 강제 명령(authorized_keys의 command=)이 실제로 실행되는 명령을
                 # 대체하지만, sshd는 클라이언트가 요청한 원본 명령을
                 # SSH_ORIGINAL_COMMAND 환경변수로 넘겨준다. run_all.sh가 이 값을
-                # 읽어 로그에 "웹에서 수동 실행"임을 남길 수 있게 표시값을 보낸다.
-                "web-trigger",
+                # 읽어 로그에 어디서 수동 실행했는지(web/telegram-trigger) 남긴다.
+                trigger,
             ],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception as e:
         app.logger.exception("배치 실행 요청 중 오류")
-        return jsonify({"success": False, "message": f"실행 요청 실패: {e}"}), 500
+        return False, f"실행 요청 실패: {e}", 500
 
-    return jsonify({"success": True, "message": "배치 실행을 요청했습니다. 잠시 후 로그에서 진행 상황을 확인하세요."})
+    return True, "배치 실행을 요청했습니다. 잠시 후 로그에서 진행 상황을 확인하세요.", 200
+
+
+@app.route("/run_batch", methods=["POST"])
+def run_batch():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+    ok, message, code = _request_batch_run()
+    return jsonify({"success": ok, "message": message}), code
+
+
+def _request_wol() -> tuple[bool, str, int]:
+    with _wol_state["lock"]:
+        elapsed = time.time() - _wol_state["last_triggered"]
+        if elapsed < 10:
+            return False, f"방금 요청했습니다. {int(10 - elapsed)}초 후 다시 시도하세요.", 429
+        _wol_state["last_triggered"] = time.time()
+
+    try:
+        _send_wol_packet(WOL_MAC, WOL_BROADCAST)
+    except Exception as e:
+        app.logger.exception("WOL 패킷 전송 중 오류")
+        return False, f"전송 실패: {e}", 500
+
+    return True, "KCK-GAMING으로 WOL 패킷을 보냈습니다. 부팅까지 1~2분 정도 걸려요.", 200
 
 
 @app.route("/wake_pc", methods=["POST"])
@@ -1773,20 +1943,8 @@ def wake_pc():
     auth = authed(request)
     if auth is not True:
         return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
-
-    with _wol_state["lock"]:
-        elapsed = time.time() - _wol_state["last_triggered"]
-        if elapsed < 10:
-            return jsonify({"success": False, "message": f"방금 요청했습니다. {int(10 - elapsed)}초 후 다시 시도하세요."}), 429
-        _wol_state["last_triggered"] = time.time()
-
-    try:
-        _send_wol_packet(WOL_MAC, WOL_BROADCAST)
-    except Exception as e:
-        app.logger.exception("WOL 패킷 전송 중 오류")
-        return jsonify({"success": False, "message": f"전송 실패: {e}"}), 500
-
-    return jsonify({"success": True, "message": "KCK-GAMING으로 WOL 패킷을 보냈습니다. 부팅까지 1~2분 정도 걸려요."})
+    ok, message, code = _request_wol()
+    return jsonify({"success": ok, "message": message}), code
 
 
 @app.route("/pc_status", methods=["GET"])
@@ -1855,6 +2013,52 @@ def run_encode():
     return jsonify({"success": ok, "message": message}), (200 if ok else 500)
 
 
+def _pc_ssh(command: str):
+    return subprocess.run(
+        [
+            "ssh",
+            "-i", GAMING_PC_SSH_KEY,
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=8",
+            f"{GAMING_PC_USER}@{GAMING_PC_HOST}",
+            command,
+        ],
+        capture_output=True, timeout=20,
+    )
+
+
+def _request_cancel_shutdown() -> tuple[bool, str, int]:
+    """KCK-GAMING에 예약된 종료(인코딩 후 자동 종료, PC 끄기의 1분 유예)를 취소한다."""
+    if not Path(GAMING_PC_SSH_KEY).exists():
+        return False, "SSH 키가 설정되지 않았습니다 (secrets/kck_gaming_key 없음).", 500
+
+    with _cancel_shutdown_state["lock"]:
+        elapsed = time.time() - _cancel_shutdown_state["last_triggered"]
+        if elapsed < 10:
+            return False, f"방금 요청했습니다. {int(10 - elapsed)}초 후 다시 시도하세요.", 429
+        _cancel_shutdown_state["last_triggered"] = time.time()
+
+    if not _is_pc_online(GAMING_PC_HOST):
+        return False, "PC가 꺼져있는 것 같아요.", 409
+
+    try:
+        result = _pc_ssh("shutdown /a")
+    except Exception as e:
+        app.logger.exception("종료 취소 요청 중 오류")
+        return False, f"실행 요청 실패: {e}", 500
+
+    # shutdown /a는 예약된 종료가 없으면 종료코드 1089로 실패한다 - 이미 취소됐거나
+    # 원래 예약이 없었던 정상적인 상황이므로 에러로 취급하지 않는다.
+    if result.returncode not in (0, 1089):
+        detail = (_pc_text(result.stderr) or _pc_text(result.stdout)).strip()[:300]
+        return False, f"SSH 실행 실패(종료코드 {result.returncode}): {detail}", 500
+
+    if result.returncode == 1089:
+        return True, "예약된 종료가 없었어요(이미 취소됐거나 원래 없었음).", 200
+    return True, "KCK-GAMING의 예약 종료를 취소했습니다.", 200
+
+
 @app.route("/cancel_shutdown", methods=["POST"])
 def cancel_shutdown():
     """encode_all.ps1이 끝나면 5분 후 자동으로 PC를 끄는데(shutdownAfter),
@@ -1864,45 +2068,43 @@ def cancel_shutdown():
     auth = authed(request)
     if auth is not True:
         return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+    ok, message, code = _request_cancel_shutdown()
+    return jsonify({"success": ok, "message": message}), code
 
+
+def _request_pc_shutdown(force: bool) -> tuple[bool, str, int, bool]:
+    """1분 유예로 PC 종료를 예약한다 (웹 "PC 끄기"·텔레그램 공용).
+    (성공, 메시지, HTTP 코드, 인코딩 중이라 확인이 필요한지)"""
     if not Path(GAMING_PC_SSH_KEY).exists():
-        return jsonify({"success": False, "message": "SSH 키가 설정되지 않았습니다 (secrets/kck_gaming_key 없음)."}), 500
-
-    with _cancel_shutdown_state["lock"]:
-        elapsed = time.time() - _cancel_shutdown_state["last_triggered"]
-        if elapsed < 10:
-            return jsonify({"success": False, "message": f"방금 요청했습니다. {int(10 - elapsed)}초 후 다시 시도하세요."}), 429
-        _cancel_shutdown_state["last_triggered"] = time.time()
+        return False, "SSH 키가 설정되지 않았습니다 (secrets/kck_gaming_key 없음).", 500, False
 
     if not _is_pc_online(GAMING_PC_HOST):
-        return jsonify({"success": False, "message": "PC가 꺼져있는 것 같아요."}), 409
+        return False, "PC가 이미 꺼져있는 것 같아요.", 409, False
+
+    if not force and _is_encoding_in_progress():
+        return False, "지금 인코딩이 진행 중이에요. 끄면 진행 중인 파일은 처음부터 다시 해야 해요.", 409, True
+
+    # 인코딩 확인 뒤에 둬야 "그래도 끌까요?" 재요청이 쿨다운에 막히지 않는다
+    with _shutdown_pc_state["lock"]:
+        elapsed = time.time() - _shutdown_pc_state["last_triggered"]
+        if elapsed < 10:
+            return False, f"방금 요청했습니다. {int(10 - elapsed)}초 후 다시 시도하세요.", 429, False
+        _shutdown_pc_state["last_triggered"] = time.time()
 
     try:
-        result = subprocess.run(
-            [
-                "ssh",
-                "-i", GAMING_PC_SSH_KEY,
-                "-o", "StrictHostKeyChecking=accept-new",
-                "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=8",
-                f"{GAMING_PC_USER}@{GAMING_PC_HOST}",
-                "shutdown /a",
-            ],
-            capture_output=True, timeout=20,
-        )
+        result = _pc_ssh('shutdown /s /t 60 /c "Media Router에서 PC 끄기 요청"')
     except Exception as e:
-        app.logger.exception("종료 취소 요청 중 오류")
-        return jsonify({"success": False, "message": f"실행 요청 실패: {e}"}), 500
+        app.logger.exception("PC 끄기 요청 중 오류")
+        return False, f"실행 요청 실패: {e}", 500, False
 
-    # shutdown /a는 예약된 종료가 없으면 종료코드 1089로 실패한다 - 이미 취소됐거나
-    # 원래 예약이 없었던 정상적인 상황이므로 에러로 취급하지 않는다.
-    if result.returncode not in (0, 1089):
+    # 1190: 이미 종료가 예약돼 있음(인코딩 후 자동 종료 등) - 어차피 꺼지므로 실패로 보지 않는다
+    if result.returncode == 1190:
+        return True, "이미 종료가 예약돼 있어요. 곧 꺼집니다.", 200, False
+    if result.returncode != 0:
         detail = (_pc_text(result.stderr) or _pc_text(result.stdout)).strip()[:300]
-        return jsonify({"success": False, "message": f"SSH 실행 실패(종료코드 {result.returncode}): {detail}"}), 500
+        return False, f"SSH 실행 실패(종료코드 {result.returncode}): {detail}", 500, False
 
-    if result.returncode == 1089:
-        return jsonify({"success": True, "message": "예약된 종료가 없었어요(이미 취소됐거나 원래 없었음)."})
-    return jsonify({"success": True, "message": "KCK-GAMING의 예약 종료를 취소했습니다."})
+    return True, "KCK-GAMING을 1분 후 종료합니다. 취소하려면 'PC 종료 취소'를 누르세요.", 200, False
 
 
 @app.route("/shutdown_pc", methods=["POST"])
@@ -1913,49 +2115,12 @@ def shutdown_pc():
     auth = authed(request)
     if auth is not True:
         return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
-
-    if not Path(GAMING_PC_SSH_KEY).exists():
-        return jsonify({"success": False, "message": "SSH 키가 설정되지 않았습니다 (secrets/kck_gaming_key 없음)."}), 500
-
-    if not _is_pc_online(GAMING_PC_HOST):
-        return jsonify({"success": False, "message": "PC가 이미 꺼져있는 것 같아요."}), 409
-
     force = bool((request.get_json(silent=True) or {}).get("force"))
-    if not force and _is_encoding_in_progress():
-        return jsonify({"success": False, "encoding": True, "message": "지금 인코딩이 진행 중이에요. 끄면 진행 중인 파일은 처음부터 다시 해야 해요."}), 409
-
-    # 인코딩 확인 뒤에 둬야 "그래도 끌까요?" 재요청이 쿨다운에 막히지 않는다
-    with _shutdown_pc_state["lock"]:
-        elapsed = time.time() - _shutdown_pc_state["last_triggered"]
-        if elapsed < 10:
-            return jsonify({"success": False, "message": f"방금 요청했습니다. {int(10 - elapsed)}초 후 다시 시도하세요."}), 429
-        _shutdown_pc_state["last_triggered"] = time.time()
-
-    try:
-        result = subprocess.run(
-            [
-                "ssh",
-                "-i", GAMING_PC_SSH_KEY,
-                "-o", "StrictHostKeyChecking=accept-new",
-                "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=8",
-                f"{GAMING_PC_USER}@{GAMING_PC_HOST}",
-                'shutdown /s /t 60 /c "Media Router에서 PC 끄기 요청"',
-            ],
-            capture_output=True, timeout=20,
-        )
-    except Exception as e:
-        app.logger.exception("PC 끄기 요청 중 오류")
-        return jsonify({"success": False, "message": f"실행 요청 실패: {e}"}), 500
-
-    # 1190: 이미 종료가 예약돼 있음(인코딩 후 자동 종료 등) - 어차피 꺼지므로 실패로 보지 않는다
-    if result.returncode == 1190:
-        return jsonify({"success": True, "message": "이미 종료가 예약돼 있어요. 곧 꺼집니다."})
-    if result.returncode != 0:
-        detail = (_pc_text(result.stderr) or _pc_text(result.stdout)).strip()[:300]
-        return jsonify({"success": False, "message": f"SSH 실행 실패(종료코드 {result.returncode}): {detail}"}), 500
-
-    return jsonify({"success": True, "message": "KCK-GAMING을 1분 후 종료합니다. 취소하려면 인코딩 관리의 'PC 종료 취소'를 누르세요."})
+    ok, message, code, encoding = _request_pc_shutdown(force)
+    body = {"success": ok, "message": message}
+    if encoding:
+        body["encoding"] = True
+    return jsonify(body), code
 
 
 def _list_run_all_log_dates() -> list[str]:
@@ -2394,6 +2559,10 @@ def api_users_accounts_delete(account_id):
     with _stats_db() as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM service_accounts WHERE id=%s", (account_id,))
     return jsonify({"ok": True})
+
+
+# 모든 함수·라우트 정의가 끝났으니 텔레그램 리스너가 업데이트를 처리해도 된다
+_tg_ready.set()
 
 
 if __name__=="__main__":
