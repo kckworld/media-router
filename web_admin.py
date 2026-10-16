@@ -1130,6 +1130,14 @@ def add_security_headers(r):
 @app.route("/health")
 def health(): return "ok", 200
 
+# 브라우저·아이폰은 페이지의 <link>와 상관없이 루트 경로로 아이콘을 찾기도 해서 static 파일을 그대로 준다
+@app.route("/favicon.ico")
+def favicon(): return app.send_static_file("favicon.ico")
+
+@app.route("/apple-touch-icon.png")
+@app.route("/apple-touch-icon-precomposed.png")
+def apple_touch_icon(): return app.send_static_file("apple-touch-icon.png")
+
 @app.route("/", methods=["GET"])
 def index():
     auth = authed(request)
