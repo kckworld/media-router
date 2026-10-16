@@ -1138,102 +1138,119 @@ def index():
 
     cfg = load_cfg()
     mode = request.args.get("mode", "check").strip()
-    sort_key = request.args.get("sort", "default").strip()
-    sort_dir = request.args.get("dir", "asc").strip()
-    if sort_dir not in ("asc","desc"): sort_dir = "asc"
-
     w_today = current_weekday()
     today_name, yest_name = WEEKDAYS[w_today], WEEKDAYS[(w_today-1)%7]
     two_days_ago_name = WEEKDAYS[(w_today-2)%7]
     selected_day = request.args.get("day","").strip()
     selected_cat = request.args.get("cat","").strip()
-    hide_no_days = request.args.get("hide_no_days", "1").strip()  # 기본값: 숨김
+    hide_no_days = request.args.get("hide_no_days", "1").strip()  # 기본값: 요일 없는 규칙 숨김
     edit_id_raw = request.args.get("edit_id", "").strip()
     try:
         edit_id = int(edit_id_raw) if edit_id_raw else None
     except ValueError:
         edit_id = None
     rules = cfg.get("rules", [])
-    
-    # 전체관리 모드 기본값 설정
-    if mode != "check":
-        if not selected_day:
-            selected_day = "전체"
-        if not selected_cat:
-            selected_cat = "전체"
 
     if mode == "check":
-        # 그저께+어제+오늘 중 미처리 항목을 '요일별 항목'으로 분해
-        if selected_day in ("", "__three__"):
-            days_to_show, selected_ui = [two_days_ago_name, yest_name, today_name], "__three__"
-        else:
-            days_to_show=[selected_day] if selected_day in WEEKDAYS else [today_name]
-            selected_ui=selected_day if selected_day in WEEKDAYS else today_name
+        entries, selected_ui = _check_entries(rules, selected_day)
+        return render_template("today.html",
+            weekdays=WEEKDAYS, selected_day=selected_ui, rules=entries,
+            today_name=today_name, yest_name=yest_name, two_days_ago_name=two_days_ago_name,
+            rule_count=len(rules), today_label=_today_label())
 
-        entries=[]
-        for i, r in enumerate(rules):
-            days = r.get("days") or []
-            if not days: continue
-            umap = r.get("updated_map") or {}
-            for d in days_to_show:
-                if d not in days: continue
-                if umap.get(d, "N") != "Y":
-                    item = dict(r)
-                    item["rkday"] = f"{rule_key(r)}|{d}"
-                    item["day"] = d
-                    item["_idx"] = r.get("id", i)  # DB id 우선 사용 (점검/삭제 정확도 보장)
-                    item["next_episode"] = get_next_episode(r)  # 다음 에피소드 번호
-                    # 릴리즈 정보도 포함 (dict(r)로 복사되지만 명시적으로 확인)
-                    if "release" in r:
-                        item["release"] = r["release"]
-                    entries.append(item)
+    # 분류 규칙: 목록 필터·정렬·검색은 화면(JS)에서 한다. 처음 필터 값만 넘겨준다.
+    listed = [{**r, "_idx": r["id"], "next_episode": get_next_episode(r)} for r in rules]
+    listed = sort_rules_for_list(listed, "default", "asc")
+    return render_template("rules.html",
+        weekdays=WEEKDAYS, categories=CATEGORIES, rules=listed,
+        init_day=selected_day if selected_day in WEEKDAYS else "",
+        init_cat=selected_cat if selected_cat in CATEGORIES else "",
+        init_show_no_days=(hide_no_days == "0"), edit_id=edit_id)
 
-        # 체크모드는 고정 정렬(그제→어제→오늘 순서, 오늘이 항상 마지막)
-        def check_key(x):
-            day = x.get("day")
-            # 오늘 요일이면 가장 큰 값으로 설정하여 마지막에 오도록
-            if day == today_name:
-                day_order = 999
-            # 그제 요일이면 가장 작은 값
-            elif day == two_days_ago_name:
-                day_order = 0
-            # 어제 요일이면 중간 값
-            elif day == yest_name:
-                day_order = 1
-            # 그 외 요일은 일반 순서 사용
-            else:
-                day_order = DAY_ORDER.get(day, 998)
-            return (day_order, (x.get("category") or ""), (x.get("subfolder") or ""))
-        entries = sorted(entries, key=check_key)
-        return render_template("index.html",
-            authed=True, cfg=cfg, weekdays=WEEKDAYS,
-            selected_day=selected_ui, selected_cat=selected_cat,
-            rules=entries, mode="check",
-            today_name=today_name, yest_name=yest_name, two_days_ago_name=two_days_ago_name, categories=CATEGORIES,
-            sort_key=sort_key, sort_dir=sort_dir, edit_id=edit_id)
 
-    # 전체 관리: 필터링 + 정렬
-    def rule_match(r):
+def _today_label() -> str:
+    now = datetime.now(APP_TZ)
+    return f"{now.month}월 {now.day}일 {WEEKDAYS[now.weekday()]}요일"
+
+
+def _check_entries(rules, selected_day=""):
+    """체크 목록: 고른 요일(기본은 그저께+어제+오늘)의 미처리 항목을 '요일별 항목'으로 펼친다.
+    반환: (항목 목록, 화면에 표시할 선택값)"""
+    w_today = current_weekday()
+    today_name, yest_name = WEEKDAYS[w_today], WEEKDAYS[(w_today-1)%7]
+    two_days_ago_name = WEEKDAYS[(w_today-2)%7]
+    if selected_day in ("", "__three__"):
+        days_to_show, selected_ui = [two_days_ago_name, yest_name, today_name], "__three__"
+    else:
+        days_to_show = [selected_day] if selected_day in WEEKDAYS else [today_name]
+        selected_ui = selected_day if selected_day in WEEKDAYS else today_name
+
+    rel = {two_days_ago_name: "two", yest_name: "yest", today_name: "today"}
+    entries = []
+    for i, r in enumerate(rules):
         days = r.get("days") or []
-        has_no_days = len(days) == 0
-        
-        # 요일이 없는 규칙 숨김 처리
-        if hide_no_days == "1" and has_no_days:
-            return False
-        
-        day_ok=(not selected_day or selected_day=="전체" or (days and selected_day in days))
-        cat_ok=(not selected_cat or selected_cat=="전체" or r.get("category")==selected_cat)
-        return day_ok and cat_ok
+        if not days:
+            continue
+        umap = r.get("updated_map") or {}
+        for d in days_to_show:
+            if d not in days or umap.get(d, "N") == "Y":
+                continue
+            item = dict(r)
+            item["rkday"] = f"{rule_key(r)}|{d}"
+            item["day"] = d
+            item["rel"] = rel.get(d, "")
+            item["_idx"] = r.get("id", i)  # DB id 우선 사용 (점검/삭제 정확도 보장)
+            item["next_episode"] = get_next_episode(r)
+            entries.append(item)
 
-    filtered=[{**r,"_idx":r["id"]} for r in rules if rule_match(r)]
-    filtered=sort_rules_for_list(filtered, sort_key, sort_dir)
+    # 고정 정렬: 그저께 → 어제 → 오늘 (오늘이 항상 마지막)
+    def check_key(x):
+        day = x.get("day")
+        order = {two_days_ago_name: 0, yest_name: 1, today_name: 999}.get(day, DAY_ORDER.get(day, 998))
+        return (order, (x.get("category") or ""), (x.get("subfolder") or ""))
+    return sorted(entries, key=check_key), selected_ui
 
-    return render_template("index.html",
-        authed=True, cfg=cfg, weekdays=WEEKDAYS,
-        selected_day=selected_day, selected_cat=selected_cat, hide_no_days=hide_no_days,
-        rules=filtered, mode="",
-        today_name=today_name, yest_name=yest_name, two_days_ago_name=two_days_ago_name, categories=CATEGORIES,
-        sort_key=sort_key, sort_dir=sort_dir, edit_id=edit_id)
+
+@app.route("/api/gulbang", methods=["GET"])
+def api_gulbang():
+    """체크 목록 항목들의 결방 여부 (네이버 방송 정보 기준, 3시간 캐시)."""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"error": "로그인이 필요합니다."}), 401
+    import gulbang
+    entries, _ = _check_entries(load_cfg().get("rules", []), request.args.get("day", "").strip())
+    items = [{"rkday": e["rkday"], "subfolder": e.get("subfolder", ""), "day": e["day"]} for e in entries]
+    try:
+        result = gulbang.check_items(items, today=datetime.now(APP_TZ).date(),
+                                     cache_file=DATA_DIR / "gulbang_cache.json")
+    except Exception as e:
+        app.logger.exception("결방 확인 실패")
+        return jsonify({"error": f"결방 확인 실패: {e}"}), 500
+    return jsonify({"items": result})
+
+
+@app.route("/api/check", methods=["POST"])
+def api_check():
+    """체크 목록 항목을 받음/결방 처리 (해당 요일을 Y로). body: {"rkday": [...]}"""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"error": "로그인이 필요합니다."}), 401
+    keys = set((request.get_json(silent=True) or {}).get("rkday") or [])
+    if not keys:
+        return jsonify({"error": "처리할 항목이 없습니다."}), 400
+    cfg = load_cfg()
+    count = 0
+    for r in cfg["rules"]:
+        rk = rule_key(r)
+        umap = r.get("updated_map") or {}
+        for wd in WEEKDAYS:
+            if f"{rk}|{wd}" in keys and umap.get(wd) != "Y":
+                umap[wd] = "Y"
+                count += 1
+        r["updated_map"] = umap
+    if count:
+        save_cfg(cfg)
+    return jsonify({"ok": True, "count": count})
 
 @app.route("/check", methods=["POST"])
 def check_action():
@@ -1594,16 +1611,11 @@ def settings():
             error = str(e)
             cfg = load_cfg()  # 반쯤 바뀐 cfg가 화면에 저장된 것처럼 보이지 않게
     own = cfg.get("ownership") or {}
-    return render_template("index.html",
+    return render_template("settings.html",
         own_file_mode=mode_display(own.get("file_mode"), "664"),
         own_dir_mode=mode_display(own.get("dir_mode"), "775"),
         tmdb_env_override=bool(os.getenv("TMDB_API_KEY", "").strip()),
-        authed=True, cfg=cfg, weekdays=WEEKDAYS,
-        selected_day="", selected_cat="", hide_no_days="1",
-        rules=[], mode="settings",
-        today_name=WEEKDAYS[current_weekday()], yest_name=WEEKDAYS[(current_weekday()-1)%7],
-        two_days_ago_name=WEEKDAYS[(current_weekday()-2)%7], categories=CATEGORIES,
-        sort_key="default", sort_dir="asc", edit_id=None, saved=saved, error=error)
+        cfg=cfg, categories=CATEGORIES, saved=saved, error=error)
 
 @app.route("/settings/check_paths", methods=["POST"])
 def settings_check_paths():

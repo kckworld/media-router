@@ -1,0 +1,368 @@
+{# 오늘: 그저께~오늘 받을 회차 체크 목록 + 요약 + 결방 자동 확인 (2026-10-16 개편 2단계) #}
+{% set active_page = 'check' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .today-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; }
+    .today-head p { margin: 0; color: var(--muted); }
+    .today-head select { min-height: 36px; }
+    .list-card { padding: 0; overflow: hidden; }
+    .list-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 18px 12px; flex-wrap: wrap; }
+    .list-card-head .section-title { margin: 0; }
+    .list-card .chip-row { padding: 0 18px 12px; }
+    .check-row { display: flex; align-items: flex-start; gap: 6px; padding: 10px 16px 10px 6px; transition: opacity .25s, background .15s; }
+    .check-row:hover { background: var(--surface-2); }
+    .check-row.done { opacity: 0; }
+    .check-box { width: 44px; height: 44px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    .check-box input { width: 20px; height: 20px; margin: 0; cursor: pointer; }
+    .check-main { flex: 1; min-width: 0; padding-top: 4px; display: flex; flex-direction: column; gap: 3px; }
+    .check-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .check-title a { color: inherit; text-decoration: none; }
+    .check-title a:hover { color: var(--accent); text-decoration: underline; }
+    .check-meta { font-size: 12.5px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .check-meta code { font-family: var(--mono); font-size: 12px; background: var(--chip); padding: 0 5px; border-radius: 4px; color: var(--chip-text); }
+    .gb { font-size: 12.5px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; color: var(--muted); }
+    .gb .news { flex-basis: 100%; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .gb a { font-size: 12px; }
+    .check-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; padding-top: 6px; }
+    .check-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .check-row.is-gulbang { background: var(--warn-soft); }
+    .empty { padding: 32px 18px; text-align: center; color: var(--muted); }
+    .today-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+    .today-foot .muted { font-size: 13px; }
+    @media (max-width: 640px) {
+      .check-row { flex-wrap: wrap; padding-right: 12px; }
+      .check-side { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; padding: 0 0 0 44px; }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  {% macro pattern_text(r) -%}
+  {{ r.pattern }}{% if r.pattern2 %} + {{ r.pattern2 }}{% endif %}{% if r.pattern_or %} 또는 {{ r.pattern_or }}{% if r.pattern2_or %} + {{ r.pattern2_or }}{% endif %}{% endif %}
+  {%- endmacro %}
+  {% set rel_label = {'two': '그저께', 'yest': '어제', 'today': '오늘'} %}
+  <div class="today-head">
+    <p>{{ today_label }} · {{ '그저께부터 오늘까지' if selected_day == '__three__' else selected_day ~ '요일만' }}</p>
+    <form method="get" action="/">
+      <input type="hidden" name="mode" value="check">
+      <label class="muted" for="daySel" style="font-size:13px; margin-right:6px;">요일</label>
+      <select id="daySel" name="day" onchange="this.form.submit()">
+        <option value="__three__" {{ 'selected' if selected_day == '__three__' else '' }}>그저께~오늘</option>
+        {% for d in weekdays %}
+          <option value="{{ d }}" {{ 'selected' if selected_day == d else '' }}>{{ d }}요일</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  <div class="tiles">
+    <div class="tile">
+      <span class="tile-label">확인할 회차</span>
+      <span class="tile-value" id="pendingCount">{{ rules|length }}</span>
+      <span class="tile-sub">분류 규칙 {{ rule_count }}개 중</span>
+    </div>
+    <a class="tile" href="/downloads">
+      <span class="tile-label">다운로드</span>
+      <span class="tile-value" id="dlValue">–</span>
+      <span class="tile-sub" id="dlSub">불러오는 중</span>
+    </a>
+    <div class="tile" id="gbTile">
+      <span class="tile-label">결방</span>
+      <span class="tile-value" id="gbCount">–</span>
+      <span class="tile-sub" id="gbSub">네이버에서 확인 중</span>
+      <button type="button" class="btn small" id="gbAllBtn" hidden onclick="markAllGulbang()">결방 모두 처리</button>
+    </div>
+  </div>
+
+  <form method="post" action="/check" id="checkForm">
+    <input type="hidden" name="day" value="{{ selected_day }}">
+    <section class="card list-card">
+      <div class="list-card-head">
+        <h2 class="section-title">체크 목록</h2>
+        {% if rules %}
+        <label class="muted" style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="selectAll" style="width:18px; height:18px;"> 보이는 항목 전체 선택
+        </label>
+        {% endif %}
+      </div>
+      {% if rules and selected_day == '__three__' %}
+      <div class="chip-row" role="group" aria-label="날짜로 거르기">
+        <button type="button" class="chip" data-filter="all" aria-pressed="true">전체 <span class="n" data-count="all"></span></button>
+        <button type="button" class="chip" data-filter="two" aria-pressed="false">그저께 ({{ two_days_ago_name }}) <span class="n" data-count="two"></span></button>
+        <button type="button" class="chip" data-filter="yest" aria-pressed="false">어제 ({{ yest_name }}) <span class="n" data-count="yest"></span></button>
+        <button type="button" class="chip" data-filter="today" aria-pressed="false">오늘 ({{ today_name }}) <span class="n" data-count="today"></span></button>
+        <button type="button" class="chip" data-filter="gulbang" aria-pressed="false" hidden>결방 <span class="n" data-count="gulbang"></span></button>
+      </div>
+      {% endif %}
+
+      {% if not rules %}
+        <div class="empty">확인할 회차가 없어요. 다 받았어요!</div>
+      {% else %}
+      <ul class="list" id="checkList">
+        {% for r in rules %}
+        <li class="check-row" data-rel="{{ r.rel }}" data-rkday="{{ r.rkday }}" data-idx="{{ r._idx }}">
+          <label class="check-box"><input type="checkbox" name="rkday" value="{{ r.rkday }}" aria-label="{{ r.subfolder }} 선택"></label>
+          <div class="check-main">
+            <div class="check-title">
+              <a href="#" onclick='searchNamu({{ r.subfolder|tojson }}); return false;' title="나무위키에서 보기">{{ r.subfolder }}</a>
+            </div>
+            <div class="check-meta">
+              <span>{{ r.category }}</span>
+              <code>{{ pattern_text(r) }}</code>
+              {% if r.exclude_pattern %}<span class="tag danger">✕ {{ r.exclude_pattern }}</span>{% endif %}
+              {% if r.next_episode %}<span class="tag warn">다음 E{{ r.next_episode }}</span>{% endif %}
+              {% if r.release %}<span class="tag accent">{{ r.release }}</span>{% endif %}
+              {% if r.episodes_per_day and r.episodes_per_day > 1 %}<span class="tag ok">하루 {{ r.episodes_per_day }}편</span>{% endif %}
+            </div>
+            <div class="gb" data-gb hidden></div>
+          </div>
+          <div class="check-side">
+            <span class="badge-day {{ r.rel }}">{{ rel_label.get(r.rel, '') }}{{ ' · ' if r.rel else '' }}{{ r.day }}</span>
+            <div class="check-actions">
+              <button type="button" class="btn small primary" data-gb-btn hidden onclick="markGulbang(this)">결방 처리</button>
+              {% if r.category == '드라마' or r.category == '예능' %}
+              <button type="button" class="btn small" onclick="checkEpisodes({{ r._idx }}, this)">에피소드 점검</button>
+              {% endif %}
+              <a class="btn small" href="/?mode=&edit_id={{ r._idx }}">편집</a>
+            </div>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+  </form>
+
+  <div class="today-foot">
+    <form method="post" action="/reset_day" onsubmit="return confirm('어제({{ yest_name }}) 체크한 항목을 모두 다시 미처리로 되돌릴까요?');">
+      <input type="hidden" name="target_day" value="{{ yest_name }}">
+      <input type="hidden" name="day" value="{{ selected_day }}">
+      <button class="btn small" type="submit">어제({{ yest_name }}) 체크 초기화</button>
+    </form>
+    <span class="muted">체크하면 그 요일 회차를 받은 것으로 표시해요.</span>
+  </div>
+
+  <div class="selbar" id="selBar" hidden>
+    <span class="count" id="selCount">0개 선택</span>
+    <button type="submit" form="checkForm" class="btn primary">받음 처리</button>
+    <button type="button" class="btn" onclick="deleteSelectedRules()">규칙 삭제</button>
+    <button type="button" class="btn" onclick="clearSelection()" aria-label="선택 해제">✕</button>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var DAY_PARAM = {{ selected_day|tojson }};
+
+    function rows() { return Array.prototype.slice.call(document.querySelectorAll('#checkList .check-row')); }
+    function visibleRows() { return rows().filter(function (r) { return !r.hidden; }); }
+
+    // ── 날짜 칩 필터 ─────────────────────────────
+    var currentFilter = 'all';
+    function applyFilter(f) {
+      currentFilter = f;
+      document.querySelectorAll('.chip[data-filter]').forEach(function (c) {
+        c.setAttribute('aria-pressed', c.dataset.filter === f ? 'true' : 'false');
+      });
+      rows().forEach(function (r) {
+        var show = f === 'all' || (f === 'gulbang' ? r.classList.contains('is-gulbang') : r.dataset.rel === f);
+        r.hidden = !show;
+        if (!show) r.querySelector('input[name=rkday]').checked = false;
+      });
+      updateSelection();
+    }
+    function updateCounts() {
+      var all = rows();
+      var c = { all: all.length, two: 0, yest: 0, today: 0, gulbang: 0 };
+      all.forEach(function (r) {
+        if (c[r.dataset.rel] !== undefined) c[r.dataset.rel]++;
+        if (r.classList.contains('is-gulbang')) c.gulbang++;
+      });
+      document.querySelectorAll('[data-count]').forEach(function (el) { el.textContent = c[el.dataset.count]; });
+      document.querySelectorAll('.chip[data-filter="two"],.chip[data-filter="yest"],.chip[data-filter="today"]').forEach(function (chip) {
+        chip.hidden = c[chip.dataset.filter] === 0;
+      });
+      var gbChip = document.querySelector('.chip[data-filter="gulbang"]');
+      if (gbChip) gbChip.hidden = c.gulbang === 0;
+      document.getElementById('pendingCount').textContent = all.length;
+      if (!all.length) {
+        var list = document.getElementById('checkList');
+        if (list) list.outerHTML = '<div class="empty">확인할 회차가 없어요. 다 받았어요!</div>';
+      }
+    }
+    document.querySelectorAll('.chip[data-filter]').forEach(function (c) {
+      c.addEventListener('click', function () { applyFilter(c.dataset.filter); });
+    });
+
+    // ── 선택 바 ─────────────────────────────────
+    function updateSelection() {
+      var n = document.querySelectorAll('#checkList input[name=rkday]:checked').length;
+      document.getElementById('selBar').hidden = n === 0;
+      document.getElementById('selCount').textContent = n + '개 선택';
+      var all = document.getElementById('selectAll');
+      if (all) {
+        var vis = visibleRows();
+        all.checked = vis.length > 0 && vis.every(function (r) { return r.querySelector('input[name=rkday]').checked; });
+      }
+    }
+    function clearSelection() {
+      document.querySelectorAll('#checkList input[name=rkday]').forEach(function (cb) { cb.checked = false; });
+      updateSelection();
+    }
+    document.addEventListener('change', function (e) {
+      if (e.target.matches('#checkList input[name=rkday]')) updateSelection();
+      if (e.target.id === 'selectAll') {
+        visibleRows().forEach(function (r) { r.querySelector('input[name=rkday]').checked = e.target.checked; });
+        updateSelection();
+      }
+    });
+
+    // ── 처리 후 행 사라지기 ─────────────────────
+    function removeRows(rkdays) {
+      rkdays.forEach(function (k) {
+        var row = document.querySelector('.check-row[data-rkday="' + CSS.escape(k) + '"]');
+        if (!row) return;
+        row.classList.add('done');
+        setTimeout(function () { row.remove(); updateCounts(); updateGulbangTile(); updateSelection(); }, 260);
+      });
+    }
+
+    function postCheck(rkdays) {
+      return fetch('/api/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rkday: rkdays }) })
+        .then(mrJson);
+    }
+
+    // ── 결방 자동 확인 ──────────────────────────
+    var gulbangKeys = [];
+    function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function fmt(d) { var p = d.split('-'); return (+p[1]) + '.' + (+p[2]); }
+
+    function renderGulbang(row, g) {
+      var box = row.querySelector('[data-gb]');
+      var btn = row.querySelector('[data-gb-btn]');
+      var html = '';
+      if (g.status === 'gulbang') {
+        html = '<span class="tag warn">결방</span><span>' + fmt(g.expected) + ' 방송 없음 · 다음 방송 ' + fmt(g.next) +
+               (g.next_no ? ' (' + g.next_no + '회)' : '') + '</span>';
+        if (g.news) html += '<span class="news">“' + escapeHtml(g.news) + '”</span>';
+        row.classList.add('is-gulbang');
+        btn.hidden = false;
+      } else if (g.status === 'aired') {
+        html = '<span class="tag">방송됨</span><span>' + fmt(g.date) + ' 방송 · 아직 안 받음</span>';
+      } else if (g.status === 'scheduled') {
+        html = '<span class="tag accent">오늘 방송</span><span>방송 후에 받아져요</span>';
+      } else {
+        html = '<span>결방 여부 확인 불가 (' + escapeHtml(g.why || '') + ')</span> <a href="' + g.search_url + '" target="_blank" rel="noopener">네이버에서 보기</a>';
+      }
+      box.innerHTML = html;
+      box.hidden = false;
+    }
+
+    function updateGulbangTile() {
+      var n = document.querySelectorAll('.check-row.is-gulbang').length;
+      gulbangKeys = Array.prototype.map.call(document.querySelectorAll('.check-row.is-gulbang'), function (r) { return r.dataset.rkday; });
+      document.getElementById('gbCount').textContent = n;
+      document.getElementById('gbSub').textContent = n ? '네이버 방송일 기준' : '결방 없음';
+      document.getElementById('gbAllBtn').hidden = n < 2;
+    }
+
+    function loadGulbang() {
+      if (!rows().length) { document.getElementById('gbCount').textContent = 0; document.getElementById('gbSub').textContent = '확인할 항목 없음'; return; }
+      fetch('/api/gulbang?day=' + encodeURIComponent(DAY_PARAM))
+        .then(mrJson)
+        .then(function (res) {
+          if (!res.ok) throw new Error(res.data.error || '확인 실패');
+          var items = res.data.items || {};
+          rows().forEach(function (row) { var g = items[row.dataset.rkday]; if (g) renderGulbang(row, g); });
+          updateGulbangTile();
+          updateCounts();
+        })
+        .catch(function (e) {
+          document.getElementById('gbCount').textContent = '?';
+          document.getElementById('gbSub').textContent = '확인 실패: ' + e.message;
+        });
+    }
+
+    function markGulbang(btn) {
+      var row = btn.closest('.check-row');
+      var done = mrBusy(btn, '처리 중');
+      postCheck([row.dataset.rkday]).then(function (res) {
+        if (!res.ok) { done(); showToast(res.data.error || '처리하지 못했어요', 'error'); return; }
+        showToast('결방으로 처리했어요', 'success');
+        removeRows([row.dataset.rkday]);
+      }).catch(function (e) { done(); showToast('오류: ' + e, 'error'); });
+    }
+
+    function markAllGulbang() {
+      if (!gulbangKeys.length) return;
+      if (!confirm('결방으로 확인된 ' + gulbangKeys.length + '개를 모두 처리할까요?')) return;
+      var keys = gulbangKeys.slice();
+      var done = mrBusy(document.getElementById('gbAllBtn'), '처리 중');
+      postCheck(keys).then(function (res) {
+        done();
+        if (!res.ok) { showToast(res.data.error || '처리하지 못했어요', 'error'); return; }
+        showToast(keys.length + '개를 결방으로 처리했어요', 'success');
+        removeRows(keys);
+      }).catch(function (e) { done(); showToast('오류: ' + e, 'error'); });
+    }
+
+    // ── 다운로드 요약 ───────────────────────────
+    function fmtSpeed(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + 'MB/s' : Math.round(b / 1024) + 'KB/s'; }
+    function loadDownloads() {
+      fetch('/downloads/data').then(mrJson).then(function (res) {
+        if (!res.ok || !res.data.success) throw new Error(res.data.message || '연결 안 됨');
+        var active = (res.data.torrents || []).filter(function (t) { return t.progress < 1 && !/^(paused|stopped)/i.test(t.state || ''); });
+        document.getElementById('dlValue').textContent = active.length;
+        document.getElementById('dlSub').textContent = active.length ? '받는 중 · ↓ ' + fmtSpeed(res.data.transfer.dl_info_speed || 0) : '받는 중인 파일 없음';
+      }).catch(function () {
+        document.getElementById('dlValue').textContent = '–';
+        document.getElementById('dlSub').textContent = 'qBittorrent 연결 안 됨';
+      });
+    }
+
+    // ── 기존 동작 ───────────────────────────────
+    function checkEpisodes(idx, button) {
+      var done = mrBusy(button, '점검 중');
+      var fd = new FormData(); fd.append('idx', idx);
+      fetch('/check_episodes', { method: 'POST', body: fd })
+        .then(function (r) { return r.json().catch(function () { return { success: false, message: '서버 오류가 발생했어요.' }; }); })
+        .then(function (data) {
+          if (data.success) {
+            alert(data.message + (data.episodes ? '\n발견된 에피소드: ' + data.episodes.join(', ') : ''));
+            location.reload();
+          } else { done(); alert(data.message || '에피소드 점검 실패'); }
+        })
+        .catch(function (e) { done(); alert('오류가 발생했어요: ' + e); });
+    }
+
+    function searchNamu(subfolder) {
+      var name = subfolder.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      if (name.indexOf('/') !== -1) name = name.split('/')[0].trim();
+      window.open('https://namu.wiki/w/' + encodeURIComponent(name), '_blank', 'noopener');
+    }
+
+    // 선택한 항목의 '규칙'을 삭제 (회차 체크가 아니라 규칙 자체가 지워짐)
+    function deleteSelectedRules() {
+      var ids = [];
+      document.querySelectorAll('#checkList input[name=rkday]:checked').forEach(function (cb) {
+        var id = cb.closest('.check-row').dataset.idx;
+        if (ids.indexOf(id) === -1) ids.push(id);
+      });
+      if (!ids.length) return;
+      if (!confirm('선택한 항목의 분류 규칙 ' + ids.length + '개를 삭제할까요?\n규칙 자체가 지워지고 되돌릴 수 없어요.')) return;
+      (function next(i) {
+        if (i >= ids.length) { location.reload(); return; }
+        var fd = new FormData(); fd.append('idx', ids[i]); fd.append('mode', 'check');
+        fetch('/delete', { method: 'POST', body: fd }).then(function () { next(i + 1); })
+          .catch(function (e) { alert('삭제 중 오류: ' + e); location.reload(); });
+      })(0);
+    }
+
+    updateCounts();
+    updateSelection();
+    loadGulbang();
+    loadDownloads();
+  </script>
+{% endblock %}

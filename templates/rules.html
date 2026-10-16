@@ -1,0 +1,394 @@
+{# 규칙 > 분류 규칙: 목록(검색·분류·요일 거르기, 정렬) + 오른쪽 편집 패널 하나로 추가/수정 (2026-10-16 개편 2단계)
+   예전에는 규칙마다 숨겨진 편집 폼을 하나씩 그려서 페이지가 290KB였다. #}
+{% set active_page = 'rules' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .rules-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+    .rules-toolbar .search { flex: 1 1 260px; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px;
+      border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--muted); }
+    .rules-toolbar .search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .rules-toolbar .search input { flex: 1; min-width: 0; border: 0; outline: 0; box-shadow: none; padding: 0; min-height: 0; background: transparent; }
+    .rules-toolbar .chip-row { flex: 1 1 100%; order: 3; }
+    .rules-toolbar select { min-height: 40px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+    .list-card { padding: 0; overflow: hidden; }
+    .rule-grid { display: grid; grid-template-columns: minmax(0, 2.2fr) 92px minmax(0, 1.7fr) 110px minmax(0, 1fr); gap: 12px; align-items: center; }
+    .rule-head { padding: 10px 18px; background: var(--surface-2); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); }
+    .rule-head button { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
+    .rule-head button:hover, .rule-head button[aria-sort] { color: var(--text); }
+    .rule-row { width: 100%; text-align: left; padding: 12px 18px; border: 0; background: transparent; font: inherit; color: inherit; cursor: pointer; }
+    .rule-row:hover { background: var(--surface-2); }
+    .rule-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .rule-row.flash { animation: mr-flash 1.6s ease; }
+    @keyframes mr-flash { 0%, 40% { background: var(--accent-soft); } 100% { background: transparent; } }
+    .rule-name { font-weight: 600; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rule-cat { color: var(--muted); font-size: 13px; }
+    .rule-pat { font-family: var(--mono); font-size: 12.5px; color: var(--chip-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rule-days { display: flex; gap: 4px; flex-wrap: wrap; }
+    .rule-extra { display: flex; gap: 4px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+    .rule-sub { display: none; }
+    #ruleEmpty { padding: 32px 18px; text-align: center; color: var(--muted); }
+    .rule-count { font-size: 13px; color: var(--muted); }
+
+    @media (max-width: 899px) {
+      .rule-head { display: none; }
+      .rule-grid { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
+      .rule-row .rule-cat, .rule-row .rule-pat, .rule-row .rule-extra { display: none; }
+      .rule-sub { display: block; grid-column: 1 / -1; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .rule-sub code { font-family: var(--mono); }
+    }
+
+    .tmdb-box { padding: 14px; border-radius: 12px; background: var(--accent-soft); display: flex; flex-direction: column; gap: 8px; }
+    .tmdb-box .row { display: flex; gap: 8px; }
+    .tmdb-box input { flex: 1; min-width: 0; }
+    .tmdb-result { font-size: 12.5px; color: var(--chip-text); line-height: 1.5; }
+    .or-sep { font-size: 12px; font-weight: 700; color: var(--accent); }
+    .rule-stats { font-size: 12.5px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+    @media (max-width: 899px) {
+      .drawer-panel { width: 100vw; }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="rules-toolbar">
+    <label class="search">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4 4"></path></svg>
+      <span class="sr-only">규칙 검색</span>
+      <input type="search" id="ruleSearch" placeholder="프로그램 · 패턴 · 폴더 검색" autocomplete="off">
+    </label>
+    <label class="sr-only" for="dayFilter">요일로 거르기</label>
+    <select id="dayFilter">
+      <option value="">요일 있는 규칙</option>
+      <option value="all">모든 규칙</option>
+      <option value="none">요일 없는 규칙</option>
+      {% for d in weekdays %}<option value="{{ d }}">{{ d }}요일</option>{% endfor %}
+    </select>
+    <button type="button" class="btn primary" onclick="openEditor(null)">+ 새 규칙</button>
+    <div class="chip-row" id="catChips" role="group" aria-label="분류로 거르기">
+      <button type="button" class="chip" data-cat="" aria-pressed="true">전체 <span class="n"></span></button>
+      {% for c in categories %}
+      <button type="button" class="chip" data-cat="{{ c }}" aria-pressed="false">{{ c }} <span class="n"></span></button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <section class="card list-card">
+    <div class="rule-grid rule-head" role="presentation">
+      <button type="button" data-sort="subfolder">프로그램 (저장 폴더)</button>
+      <button type="button" data-sort="category">분류</button>
+      <button type="button" data-sort="pattern">패턴</button>
+      <button type="button" data-sort="days">요일</button>
+      <span>회차 · 릴리즈</span>
+    </div>
+    <ul class="list" id="ruleList"></ul>
+    <div id="ruleEmpty" hidden>조건에 맞는 규칙이 없어요.</div>
+  </section>
+  <p class="rule-count" id="ruleCount"></p>
+
+  {# 추가/수정 공용 편집 패널 #}
+  <div class="drawer" id="ruleDrawer" aria-hidden="true">
+    <button type="button" class="drawer-scrim" onclick="closeEditor()" aria-label="닫기" tabindex="-1"></button>
+    <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+      <div class="drawer-head">
+        <h2 id="drawerTitle">새 규칙</h2>
+        <button type="button" class="icon-btn" onclick="closeEditor()" aria-label="닫기">✕</button>
+      </div>
+      <form class="drawer-body" id="ruleForm" method="post" action="/add">
+        <input type="hidden" name="idx" value="">
+        <input type="hidden" name="mode" value="">
+        <input type="hidden" name="day" value="">
+        <input type="hidden" name="cat" value="">
+        <input type="hidden" name="hide_no_days" value="1">
+
+        <div class="tmdb-box" id="tmdbBox">
+          <label class="form-help" for="tmdbQuery" style="font-weight:600; color:var(--accent);">TMDB에서 찾아 자동 입력</label>
+          <div class="row">
+            <input type="text" id="tmdbQuery" placeholder="제목 또는 영문명 (예: Perfect Crown)">
+            <button type="button" class="btn primary" id="tmdbBtn" onclick="searchTMDB()">검색</button>
+          </div>
+          <div class="tmdb-result" id="tmdbResult"></div>
+        </div>
+
+        <div class="rule-stats" id="ruleStats" hidden></div>
+
+        <div class="form-field">
+          <label for="f_category">분류</label>
+          <select id="f_category" name="category">
+            {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="f_subfolder">저장 폴더</label>
+          <input type="text" id="f_subfolder" name="subfolder" placeholder="예: 트웰브 (2025)" required>
+        </div>
+        <div class="form-field">
+          <label for="f_pattern">포함 패턴 A <span style="font-weight:500;">(필수, 두 칸 모두 포함)</span></label>
+          <div class="pair">
+            <input type="text" id="f_pattern" name="pattern" placeholder="예: 나는" required>
+            <input type="text" name="pattern2" placeholder="+ SOLO (선택)" aria-label="포함 패턴 A 두 번째 칸">
+          </div>
+        </div>
+        <div class="or-sep">또는</div>
+        <div class="form-field">
+          <label for="f_pattern_or">포함 패턴 B <span style="font-weight:500;">(선택)</span></label>
+          <div class="pair">
+            <input type="text" id="f_pattern_or" name="pattern_or" placeholder="예: I AM">
+            <input type="text" name="pattern2_or" placeholder="+ SOLO (선택)" aria-label="포함 패턴 B 두 번째 칸">
+          </div>
+          <span class="form-help">A를 만족하지 않아도 B를 만족하면 이 규칙으로 분류해요.</span>
+        </div>
+        <div class="form-field">
+          <label for="f_exclude">제외 패턴</label>
+          <input type="text" id="f_exclude" name="exclude_pattern" placeholder="이 글자가 있으면 제외">
+        </div>
+        <div class="form-field">
+          <label for="f_release">릴리즈 <span style="font-weight:500;">(선택)</span></label>
+          <input type="text" id="f_release" name="release" placeholder="예: 1080p.WEB-DL.x264">
+        </div>
+        <div class="form-field">
+          <span class="label" id="daysLabel">방송 요일</span>
+          <div class="weekpick" role="group" aria-labelledby="daysLabel">
+            {% for d in weekdays %}
+            <label><input type="checkbox" name="days" value="{{ d }}"><span>{{ d }}</span></label>
+            {% endfor %}
+          </div>
+          <span class="form-help">요일이 없으면 오늘 화면의 체크 목록에 나오지 않아요.</span>
+        </div>
+        <div class="form-field drama-only">
+          <label for="f_total">전체 회차 <span style="font-weight:500;">(드라마)</span></label>
+          <input type="number" id="f_total" name="total_episodes" min="1" placeholder="모르면 비워 두기 (TMDB에서 자동)">
+        </div>
+        <div class="form-field drama-only">
+          <label for="f_epd">하루 편수 <span style="font-weight:500;">(드라마)</span></label>
+          <input type="number" id="f_epd" name="episodes_per_day" min="1" value="1">
+          <span class="form-help">하루에 2편씩 올라오면 2. 그 편수가 다 차야 다음 방영일 체크로 넘어가요.</span>
+        </div>
+      </form>
+      <div class="drawer-foot">
+        <button type="button" class="btn" id="deleteBtn" onclick="deleteRule()" hidden style="color:var(--danger);">삭제</button>
+        <span class="grow"></span>
+        <button type="button" class="btn" onclick="closeEditor()">취소</button>
+        <button type="submit" form="ruleForm" class="btn primary" id="saveBtn">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <form method="post" action="/delete" id="deleteForm" hidden>
+    <input type="hidden" name="idx" value="">
+    <input type="hidden" name="mode" value="">
+    <input type="hidden" name="day" value="">
+    <input type="hidden" name="cat" value="">
+    <input type="hidden" name="hide_no_days" value="1">
+  </form>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var RULES = {{ rules|tojson }};
+    var WEEKDAYS = {{ weekdays|tojson }};
+    var INIT = { day: {{ init_day|tojson }}, cat: {{ init_cat|tojson }}, showNoDays: {{ 'true' if init_show_no_days else 'false' }}, editId: {{ edit_id|tojson }} };
+    var state = { q: '', cat: INIT.cat || '', day: INIT.day || (INIT.showNoDays ? 'all' : ''), sort: null, dir: 1 };
+    var byId = {};
+    RULES.forEach(function (r) { byId[r._idx] = r; });
+
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function patternText(r) {
+      var t = r.pattern + (r.pattern2 ? ' + ' + r.pattern2 : '');
+      if (r.pattern_or) t += ' 또는 ' + r.pattern_or + (r.pattern2_or ? ' + ' + r.pattern2_or : '');
+      return t;
+    }
+    function dayRank(r) { var d = r.days || []; return d.length ? Math.min.apply(null, d.map(function (x) { return WEEKDAYS.indexOf(x); })) : 99; }
+
+    function matches(r) {
+      var days = r.days || [];
+      if (state.cat && r.category !== state.cat) return false;
+      if (state.day === '' && !days.length) return false;
+      if (state.day === 'none' && days.length) return false;
+      if (WEEKDAYS.indexOf(state.day) >= 0 && days.indexOf(state.day) < 0) return false;
+      if (state.q) {
+        var hay = [r.subfolder, r.category, r.pattern, r.pattern2, r.pattern_or, r.pattern2_or, r.exclude_pattern, r.release].join(' ').toLowerCase();
+        if (hay.indexOf(state.q) < 0) return false;
+      }
+      return true;
+    }
+
+    function render() {
+      var list = RULES.filter(matches);
+      if (state.sort) {
+        list.sort(function (a, b) {
+          var ka = state.sort === 'days' ? dayRank(a) : String(a[state.sort] || '').toLowerCase();
+          var kb = state.sort === 'days' ? dayRank(b) : String(b[state.sort] || '').toLowerCase();
+          return (ka > kb ? 1 : ka < kb ? -1 : 0) * state.dir;
+        });
+      }
+      var html = list.map(function (r) {
+        var days = (r.days || []).length ? r.days.map(function (d) { return '<span class="tag">' + d + '</span>'; }).join('') : '<span class="muted" style="font-size:12px;">없음</span>';
+        var extra = [];
+        if (r.category === '드라마' && r.total_episodes) extra.push(r.total_episodes + '부작');
+        if (r.next_episode) extra.push('<span class="tag warn">다음 E' + r.next_episode + '</span>');
+        if (r.release) extra.push('<span class="tag accent">' + esc(r.release) + '</span>');
+        if (r.exclude_pattern) extra.push('<span class="tag danger">✕ ' + esc(r.exclude_pattern) + '</span>');
+        return '<li><button type="button" class="rule-row rule-grid" data-id="' + r._idx + '" onclick="openEditor(' + r._idx + ')">' +
+          '<span class="rule-name">' + esc(r.subfolder) + '</span>' +
+          '<span class="rule-cat">' + esc(r.category) + '</span>' +
+          '<span class="rule-pat">' + esc(patternText(r)) + '</span>' +
+          '<span class="rule-days">' + days + '</span>' +
+          '<span class="rule-extra">' + (extra.join(' ') || '—') + '</span>' +
+          '<span class="rule-sub">' + esc(r.category) + ' · <code>' + esc(patternText(r)) + '</code></span>' +
+          '</button></li>';
+      }).join('');
+      document.getElementById('ruleList').innerHTML = html;
+      document.getElementById('ruleEmpty').hidden = list.length > 0;
+      document.getElementById('ruleCount').textContent = '규칙 ' + RULES.length + '개 중 ' + list.length + '개 표시';
+
+      // 분류 칩 숫자는 분류 외 조건(검색·요일)만 적용한 개수
+      var saveCat = state.cat;
+      document.querySelectorAll('#catChips .chip').forEach(function (chip) {
+        state.cat = chip.dataset.cat;
+        chip.querySelector('.n').textContent = RULES.filter(matches).length;
+        chip.setAttribute('aria-pressed', chip.dataset.cat === saveCat ? 'true' : 'false');
+      });
+      state.cat = saveCat;
+      document.querySelectorAll('.rule-head [data-sort]').forEach(function (b) {
+        if (b.dataset.sort === state.sort) b.setAttribute('aria-sort', state.dir > 0 ? 'ascending' : 'descending');
+        else b.removeAttribute('aria-sort');
+        b.textContent = b.textContent.replace(/ [▲▼]$/, '') + (b.dataset.sort === state.sort ? (state.dir > 0 ? ' ▲' : ' ▼') : '');
+      });
+    }
+
+    document.getElementById('ruleSearch').addEventListener('input', function (e) { state.q = e.target.value.trim().toLowerCase(); render(); });
+    document.getElementById('dayFilter').addEventListener('change', function (e) { state.day = e.target.value; render(); });
+    document.querySelectorAll('#catChips .chip').forEach(function (chip) {
+      chip.addEventListener('click', function () { state.cat = chip.dataset.cat; render(); });
+    });
+    document.querySelectorAll('.rule-head [data-sort]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (state.sort === b.dataset.sort) state.dir = -state.dir; else { state.sort = b.dataset.sort; state.dir = 1; }
+        render();
+      });
+    });
+
+    // ── 편집 패널 ───────────────────────────────
+    var form = document.getElementById('ruleForm');
+    // form.이름 대신 elements.namedItem 사용 (표준 접근, 이름이 폼 속성과 겹쳐도 안전)
+    function fld(f, name) { return f.elements.namedItem(name); }
+    var editing = null;
+    var lastFocus = null;
+
+    function syncDrama() {
+      var drama = fld(form, 'category').value === '드라마';
+      document.querySelectorAll('.drama-only').forEach(function (el) { el.hidden = !drama; });
+    }
+    fld(form, 'category').addEventListener('change', syncDrama);
+
+    function fillRedirect(f) {
+      // 저장 후 돌아올 때 지금 거르기 조건 유지
+      fld(f, 'mode').value = '';
+      fld(f, 'day').value = WEEKDAYS.indexOf(state.day) >= 0 ? state.day : '';
+      fld(f, 'cat').value = state.cat;
+      fld(f, 'hide_no_days').value = (state.day === 'all' || state.day === 'none') ? '0' : '1';
+    }
+
+    function openEditor(id) {
+      var r = id == null ? null : byId[id];
+      editing = r;
+      lastFocus = document.activeElement;
+      form.reset();
+      form.action = r ? '/edit' : '/add';
+      fld(form, 'idx').value = r ? r._idx : '';
+      document.getElementById('drawerTitle').textContent = r ? r.subfolder : '새 규칙';
+      document.getElementById('tmdbBox').hidden = !!r;
+      document.getElementById('tmdbResult').textContent = '';
+      document.getElementById('deleteBtn').hidden = !r;
+      var stats = document.getElementById('ruleStats');
+      stats.hidden = true;
+      if (r) {
+        fld(form, 'category').value = r.category || '';
+        fld(form, 'subfolder').value = r.subfolder || '';
+        fld(form, 'pattern').value = r.pattern || '';
+        fld(form, 'pattern2').value = r.pattern2 || '';
+        fld(form, 'pattern_or').value = r.pattern_or || '';
+        fld(form, 'pattern2_or').value = r.pattern2_or || '';
+        fld(form, 'exclude_pattern').value = r.exclude_pattern || '';
+        fld(form, 'release').value = r.release || '';
+        fld(form, 'total_episodes').value = r.total_episodes || '';
+        fld(form, 'episodes_per_day').value = r.episodes_per_day || 1;
+        form.querySelectorAll('input[name=days]').forEach(function (cb) { cb.checked = (r.days || []).indexOf(cb.value) >= 0; });
+        var info = [];
+        if (r.category === '드라마' && r.received_episodes && r.received_episodes.length) info.push('받은 회차 ' + r.received_episodes.length + '개 (마지막 E' + Math.max.apply(null, r.received_episodes) + ')');
+        if (r.category === '예능' && r.last_episode) info.push('마지막으로 받은 회차 E' + r.last_episode);
+        if (r.next_episode) info.push('다음 E' + r.next_episode);
+        if (info.length) { stats.textContent = info.join(' · '); stats.hidden = false; }
+      }
+      syncDrama();
+      var drawer = document.getElementById('ruleDrawer');
+      drawer.classList.add('open');
+      drawer.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      setTimeout(function () { (r ? fld(form, 'subfolder') : document.getElementById('tmdbQuery')).focus(); }, 30);
+    }
+
+    function closeEditor() {
+      var drawer = document.getElementById('ruleDrawer');
+      drawer.classList.remove('open');
+      drawer.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && document.getElementById('ruleDrawer').classList.contains('open')) closeEditor();
+    });
+
+    form.addEventListener('submit', function () {
+      fillRedirect(form);
+      try { if (editing) sessionStorage.setItem('mr_focus_idx', String(editing._idx)); } catch (e) {}
+      mrBusy(document.getElementById('saveBtn'), '저장 중');
+    });
+
+    function deleteRule() {
+      if (!editing) return;
+      if (!confirm('"' + editing.subfolder + '" 규칙을 삭제할까요?\n되돌릴 수 없어요.')) return;
+      var f = document.getElementById('deleteForm');
+      fld(f, 'idx').value = editing._idx;
+      fillRedirect(f);
+      f.submit();
+    }
+
+    function searchTMDB() {
+      var q = document.getElementById('tmdbQuery').value.trim();
+      var out = document.getElementById('tmdbResult');
+      if (!q) { out.textContent = '검색어를 입력하세요.'; return; }
+      var done = mrBusy(document.getElementById('tmdbBtn'), '검색 중');
+      var fd = new FormData(); fd.append('q', q);
+      fetch('/search_tmdb', { method: 'POST', body: fd }).then(function (r) { return r.json(); }).then(function (data) {
+        done();
+        if (!data.success) { out.textContent = '✗ ' + (data.message || '검색 실패'); return; }
+        fld(form, 'subfolder').value = data.folder_name;
+        if (data.total_episodes) fld(form, 'total_episodes').value = data.total_episodes;
+        var name = data.title.replace(/\s*\([^)]*\)\s*$/, '').trim();
+        out.innerHTML = '✓ <strong>' + esc(data.title) + '</strong> (' + esc(data.year || '?') + ')' +
+          (data.total_episodes ? ' · 총 ' + data.total_episodes + '화' : '') +
+          ' · <a href="https://namu.wiki/w/' + encodeURIComponent(name) + '" target="_blank" rel="noopener">나무위키에서 방송 요일 확인</a>';
+      }).catch(function (e) { done(); out.textContent = '✗ 오류: ' + e; });
+    }
+    document.getElementById('tmdbQuery').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); searchTMDB(); }
+    });
+
+    // ── 처음 상태 ───────────────────────────────
+    document.getElementById('dayFilter').value = state.day;
+    render();
+    if (INIT.editId != null && byId[INIT.editId]) {
+      openEditor(INIT.editId);
+    } else {
+      var focusIdx = null;
+      try { focusIdx = sessionStorage.getItem('mr_focus_idx'); sessionStorage.removeItem('mr_focus_idx'); } catch (e) {}
+      var row = focusIdx && document.querySelector('.rule-row[data-id="' + focusIdx + '"]');
+      if (row) { row.scrollIntoView({ block: 'center' }); row.classList.add('flash'); }
+    }
+  </script>
+{% endblock %}

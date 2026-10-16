@@ -1,0 +1,391 @@
+{# 설정 > 연동·경로 (2026-10-16 index.html에서 분리) #}
+{% set active_page = 'settings' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 12px 0;
+    }
+    .field label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      height: 20px;
+      display: flex;
+      align-items: center;
+      line-height: 20px;
+    }
+    .settings-wrap { display: flex; flex-direction: column; gap: 16px; }
+    .set-card { padding: 22px 24px; }
+    .set-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+    .set-title { font-size: 16px; font-weight: 700; }
+    .set-desc { font-size: 13px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+    .set-desc code, .set-note code { font-size: 12px; background: var(--bg-solid); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+    .set-pill { font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-light); border-radius: 999px; padding: 4px 10px; white-space: nowrap; }
+    .set-ro { font-size: 11px; font-weight: 600; color: var(--muted); background: var(--bg-solid); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; margin-left: 6px; vertical-align: middle; }
+    .set-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+    .set-actions { margin: 12px 0; }
+    .set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 14px; }
+    .set-hint { font-size: 12px; color: var(--muted); line-height: 1.5; margin-top: 6px; }
+    .set-hint a { color: var(--accent); }
+    .set-note { font-size: 13px; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+    .set-note.warn { background: var(--warning-light); color: #92400e; border: 1px solid #fcd34d; }
+    .set-banner { border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; font-weight: 600; }
+    .set-banner.error { background: var(--danger-light); color: var(--danger-hover); border: 1px solid #fca5a5; }
+    .set-textarea { padding: 12px 16px; font-size: 14px; border: 2px solid var(--line); border-radius: 10px; width: 100%; font-family: ui-monospace, monospace; resize: vertical; }
+    .set-result { font-size: 13px; font-weight: 600; min-height: 0; }
+    .set-result:not(:empty) { margin: -2px 0 8px; }
+    .set-result.ok { color: var(--success-hover); }
+    .set-result.err { color: var(--danger-hover); }
+    .set-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; cursor: pointer; background: var(--bg-solid); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; }
+    .set-switch input, .set-check input { width: 18px; height: 18px; accent-color: var(--accent); }
+    .set-checks { display: flex; gap: 12px 28px; flex-wrap: wrap; margin-top: 8px; }
+    .set-check { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; cursor: pointer; }
+    .set-check span { display: flex; flex-direction: column; gap: 2px; }
+    .set-check small { font-size: 12px; color: var(--muted); }
+    .set-check.muted-check { font-size: 13px; color: var(--muted); align-items: center; margin-top: 4px; }
+    .path-status { list-style: none; margin: -4px 0 10px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    .path-status li, .path-badge, .mode-hint { font-size: 12px; line-height: 1.5; }
+    .path-badge, .mode-hint { margin-top: -4px; min-height: 18px; }
+    .ps-ok { color: var(--success-hover); }
+    .ps-unknown { color: var(--warn); }
+    .ps-missing, .ps-invalid { color: var(--danger-hover); }
+    .ps-path { font-family: ui-monospace, monospace; color: var(--fg); }
+    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 10px; }
+    .status-box { background: var(--bg-solid); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+    .status-name { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+    .status-box dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+    .status-box dt { color: var(--muted); }
+    .status-box dd { margin: 0; word-break: break-all; }
+    .set-savebar { position: sticky; bottom: 12px; z-index: 50; display: flex; justify-content: flex-end; align-items: center; gap: 14px; background: var(--bg-card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px; box-shadow: var(--shadow-lg); }
+    .set-dirty { font-size: 13px; font-weight: 600; color: #b45309; visibility: hidden; }
+    .set-dirty.show { visibility: visible; }
+    @media (max-width: 640px) {
+      .set-card { padding: 18px 16px; }
+      .set-actions { width: 100%; margin-top: 0; }
+    }
+    @media (max-width: 899px) {
+      .set-savebar { bottom: calc(76px + env(safe-area-inset-bottom)); }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+    {% if error %}
+      <div class="set-banner error">✗ 저장하지 못했어요: {{ error }}</div>
+    {% endif %}
+    <form method="post" action="/settings" id="settingsForm" class="settings-wrap" novalidate>
+
+      <section class="card set-card">
+        <div class="set-head">
+          <div>
+            <div class="set-title">🎬 TMDB</div>
+            <div class="set-desc">드라마 규칙을 추가할 때 제목·방영 정보를 찾아오는 데 써요.</div>
+          </div>
+          <span class="set-pill" id="tmdbSourcePill">{% if tmdb_env_override %}.env 키 사용 중{% elif cfg.tmdb_api_key %}저장된 키 있음{% else %}키 없음{% endif %}</span>
+        </div>
+        {% if tmdb_env_override %}
+          <div class="set-note warn">docker-compose의 <code>TMDB_API_KEY</code>가 설정돼 있어서 여기 저장한 키보다 그 값이 우선 사용돼요.</div>
+        {% endif %}
+        <div class="set-row">
+          <div class="field" style="flex:1; min-width:240px;">
+            <label class="muted" for="tmdbKeyInput">API 키</label>
+            <input type="password" id="tmdbKeyInput" name="tmdb_api_key" value="" autocomplete="new-password" placeholder="{{ '저장된 키 있음 (바꿀 때만 입력)' if cfg.tmdb_api_key else 'TMDB API 키 입력' }}">
+          </div>
+          <div class="set-actions">
+            <button type="button" class="btn small" id="tmdbTestBtn" onclick="testTmdb()">🔑 키 확인</button>
+          </div>
+        </div>
+        <div class="set-result" id="tmdbResult"></div>
+        <label class="set-check muted-check">
+          <input type="checkbox" name="clear_tmdb_key" value="1"> 저장된 키 삭제
+        </label>
+        <div class="set-hint">보안상 저장된 키는 화면에 다시 보이지 않아요. 키 확인은 입력칸이 비어 있으면 저장된 키로 확인해요. <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDB에서 키 확인 ↗</a></div>
+      </section>
+
+      <section class="card set-card">
+        <div class="set-head">
+          <div>
+            <div class="set-title">📨 텔레그램 알림</div>
+            <div class="set-desc">배치·인코딩 결과 알림을 받고, 봇 대화창 아래 버튼으로 인코딩 시작·배치 실행·PC 켜기/상태/끄기를 할 수 있어요.</div>
+          </div>
+          <label class="set-switch">
+            <input type="checkbox" name="tg_enabled" value="1" {{ 'checked' if cfg.telegram and cfg.telegram.enabled else '' }}>
+            <span>알림 켜기</span>
+          </label>
+        </div>
+        <div class="set-row">
+          <div class="field" style="flex:1; min-width:220px;">
+            <label class="muted" for="tgTokenInput">Bot Token</label>
+            <input type="password" id="tgTokenInput" name="bot_token" value="" autocomplete="new-password" placeholder="{{ '저장된 값 있음 (바꿀 때만 입력)' if cfg.telegram and cfg.telegram.bot_token else 'Bot Token 입력' }}">
+          </div>
+          <div class="field" style="flex:1; min-width:180px;">
+            <label class="muted" for="tgChatInput">Chat ID</label>
+            <input type="password" id="tgChatInput" name="chat_id" value="" autocomplete="new-password" placeholder="{{ '저장된 값 있음 (바꿀 때만 입력)' if cfg.telegram and cfg.telegram.chat_id else 'Chat ID 입력' }}">
+          </div>
+          <div class="set-actions">
+            <button type="button" class="btn small" id="tgTestBtn" onclick="testTelegram()">✉ 테스트 메시지</button>
+          </div>
+        </div>
+        <div class="set-result" id="tgResult"></div>
+        <div class="set-hint">빈 칸은 저장된 값을 그대로 써요. 테스트 메시지도 입력한 값이 있으면 그 값으로, 없으면 저장된 값으로 보내요.<br>버튼 메뉴를 쓰려면 <strong>Media Router 전용 봇</strong>이어야 해요. 다른 서비스(nas-bot 등)와 같은 봇이면 그 서비스가 메시지를 가져가서 버튼이 동작하지 않아요.</div>
+      </section>
+
+      <section class="card set-card">
+        <div class="set-head">
+          <div>
+            <div class="set-title">📂 경로</div>
+            <div class="set-desc">배치가 다운로드 폴더에서 파일을 찾아 카테고리 폴더로 옮겨요.</div>
+          </div>
+        </div>
+        <div class="field">
+          <label class="muted" for="sourcesInput">다운로드 소스 폴더 (한 줄에 하나)</label>
+          <textarea id="sourcesInput" name="sources" rows="3" class="set-textarea">{{ (cfg.paths.sources or []) | join('\n') if cfg.paths else '' }}</textarea>
+        </div>
+        <ul class="path-status" id="sourcesStatus"></ul>
+        <div class="set-grid">
+          {% for c in categories %}
+          <div class="field">
+            <label class="muted" for="base_{{ c }}">{{ c }}</label>
+            <input type="text" id="base_{{ c }}" name="base_{{ c }}" class="path-input" value="{{ cfg.base_paths[c] if cfg.base_paths and c in cfg.base_paths else '' }}" placeholder="/volume1/video/...">
+            <div class="path-badge" data-for="base_{{ c }}"></div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="set-hint">✓ 있음 · ✗ 없음 · ? 웹에서 볼 수 없는 위치(배치는 호스트에서 돌아서 정상일 수 있어요). 입력하면 바로 다시 확인해요.</div>
+      </section>
+
+      <section class="card set-card">
+        <div class="set-head">
+          <div>
+            <div class="set-title">🔐 소유권 / 권한</div>
+            <div class="set-desc">옮긴 파일·폴더의 주인과 권한을 맞춰서 Plex/Jellyfin이 읽을 수 있게 해요.</div>
+          </div>
+          <label class="set-switch">
+            <input type="checkbox" name="own_apply" value="1" {{ 'checked' if cfg.ownership and cfg.ownership.apply else '' }}>
+            <span>적용</span>
+          </label>
+        </div>
+        <div class="set-grid">
+          <div class="field">
+            <label class="muted" for="ownUser">사용자</label>
+            <input type="text" id="ownUser" name="own_user" value="{{ cfg.ownership.user if cfg.ownership else 'plex' }}" placeholder="plex">
+          </div>
+          <div class="field">
+            <label class="muted" for="ownGroup">그룹</label>
+            <input type="text" id="ownGroup" name="own_group" value="{{ cfg.ownership.group if cfg.ownership else 'users' }}" placeholder="users">
+          </div>
+          <div class="field">
+            <label class="muted" for="ownFileMode">파일 권한</label>
+            <input type="text" id="ownFileMode" name="own_file_mode" class="mode-input" value="{{ own_file_mode }}" placeholder="664" inputmode="numeric" maxlength="5">
+            <div class="mode-hint" data-for="ownFileMode"></div>
+          </div>
+          <div class="field">
+            <label class="muted" for="ownDirMode">폴더 권한</label>
+            <input type="text" id="ownDirMode" name="own_dir_mode" class="mode-input" value="{{ own_dir_mode }}" placeholder="775" inputmode="numeric" maxlength="5">
+            <div class="mode-hint" data-for="ownDirMode"></div>
+          </div>
+        </div>
+        <div class="set-checks">
+          <label class="set-check">
+            <input type="checkbox" name="own_setgid" value="1" {{ 'checked' if cfg.ownership and cfg.ownership.setgid_dirs else '' }}>
+            <span><strong>SetGID (폴더)</strong><small>폴더 안에 새로 생기는 파일이 폴더의 그룹을 물려받아요</small></span>
+          </label>
+          <label class="set-check">
+            <input type="checkbox" name="own_enforce" value="1" {{ 'checked' if cfg.ownership and cfg.ownership.enforce_inherit else '' }}>
+            <span><strong>ACL 상속 강제</strong><small>Synology 공유폴더 권한(ACL)을 하위 항목에 다시 적용해요</small></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="card set-card">
+        <div class="set-head">
+          <div>
+            <div class="set-title">🖥️ 연결 상태 <span class="set-ro">읽기 전용</span></div>
+            <div class="set-desc">인코딩 PC·qBittorrent 설정은 <code>docker-compose.yml</code>/<code>.env</code>에서 바꿔요. 여기서는 제대로 연결되는지만 확인해요.</div>
+          </div>
+          <button type="button" class="btn small" id="statusRefreshBtn" onclick="loadSettingsStatus()">↻ 새로고침</button>
+        </div>
+        <div class="status-grid" id="statusGrid">
+          <div class="status-box"><div class="status-name">텔레그램 봇</div><dl id="statusTg"><dt>상태</dt><dd>확인 중...</dd></dl></div>
+          <div class="status-box"><div class="status-name">인코딩 PC (KCK-GAMING)</div><dl id="statusPc"><dt>상태</dt><dd>확인 중...</dd></dl></div>
+          <div class="status-box"><div class="status-name">qBittorrent</div><dl id="statusQbit"><dt>상태</dt><dd>확인 중...</dd></dl></div>
+          <div class="status-box"><div class="status-name">배치 실행 (호스트 SSH)</div><dl id="statusBatch"><dt>상태</dt><dd>확인 중...</dd></dl></div>
+        </div>
+      </section>
+
+      <div class="set-savebar">
+        <span class="set-dirty" id="dirtyNote">바뀐 내용이 있어요</span>
+        <button class="btn primary" type="submit" id="settingsSaveBtn">저장</button>
+      </div>
+    </form>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    // ===== 설정 화면: 연결 테스트 / 경로·권한 검증 / 연결 상태 =====
+    function postJson(url, body) {
+      return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); });
+    }
+
+    function setResult(id, ok, message) {
+      var el = document.getElementById(id);
+      el.className = 'set-result ' + (ok ? 'ok' : 'err');
+      el.textContent = (ok ? '✓ ' : '✗ ') + message;
+    }
+
+    function runTest(btnId, resultId, url, body) {
+      var btn = document.getElementById(btnId);
+      var original = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = '확인 중...';
+      postJson(url, body)
+        .then(function(res) { setResult(resultId, res.ok && res.data.success, res.data.message || '응답이 없어요'); })
+        .catch(function(e) { setResult(resultId, false, '요청 중 오류: ' + e); })
+        .finally(function() { btn.disabled = false; btn.innerHTML = original; });
+    }
+
+    function testTmdb() {
+      runTest('tmdbTestBtn', 'tmdbResult', '/settings/test_tmdb', { api_key: document.getElementById('tmdbKeyInput').value });
+    }
+
+    function testTelegram() {
+      runTest('tgTestBtn', 'tgResult', '/settings/test_telegram', {
+        bot_token: document.getElementById('tgTokenInput').value,
+        chat_id: document.getElementById('tgChatInput').value
+      });
+    }
+
+    var PATH_ICON = { ok: '✓', missing: '✗', invalid: '✗', unknown: '?' };
+
+    function pathLine(r) {
+      if (!r) return '<span class="muted">확인 안 함 (경로가 너무 많음)</span>';
+      return '<span class="ps-' + r.state + '">' + PATH_ICON[r.state] + ' ' + escapeHtml(r.message) + '</span>';
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
+    }
+
+    function checkPaths() {
+      var sources = document.getElementById('sourcesInput').value.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      var inputs = Array.prototype.slice.call(document.querySelectorAll('.path-input'));
+      var bases = inputs.map(function(i) { return i.value.trim(); });
+      postJson('/settings/check_paths', { paths: sources.concat(bases.filter(Boolean)) })
+        .then(function(res) {
+          if (!res.ok) return;
+          var results = res.data.results, k = 0;
+          var list = document.getElementById('sourcesStatus');
+          list.innerHTML = sources.map(function(p) {
+            var r = results[k++];
+            return '<li><span class="ps-path">' + escapeHtml(p) + '</span> — ' + pathLine(r) + '</li>';
+          }).join('');
+          inputs.forEach(function(input, i) {
+            var badge = document.querySelector('.path-badge[data-for="' + input.id + '"]');
+            if (!bases[i]) { badge.innerHTML = '<span class="ps-missing">✗ 비어 있으면 이 카테고리는 옮기지 않아요</span>'; return; }
+            badge.innerHTML = pathLine(results[k++]);
+          });
+        })
+        .catch(function() { /* 경로 표시는 보조 정보라 실패해도 조용히 넘긴다 */ });
+    }
+
+    var MODE_RE = /^(?:0o|0)?([0-7]{3,4})$/;
+
+    function modeToRwx(digits) {
+      var d = digits.slice(-3);
+      return d.split('').map(function(n) {
+        n = parseInt(n, 10);
+        return (n & 4 ? 'r' : '-') + (n & 2 ? 'w' : '-') + (n & 1 ? 'x' : '-');
+      }).join('');
+    }
+
+    function checkMode(input) {
+      var hint = document.querySelector('.mode-hint[data-for="' + input.id + '"]');
+      var m = MODE_RE.exec(input.value.trim().toLowerCase());
+      input.classList.toggle('is-invalid', !m);
+      hint.innerHTML = m
+        ? '<span class="ps-ok">' + modeToRwx(m[1]) + '</span> <span class="muted">(소유자·그룹·기타)</span>'
+        : '<span class="ps-invalid">✗ 0~7 숫자 3~4자리 (예: 664, 775)</span>';
+      return !!m;
+    }
+
+    function statusRows(el, rows) {
+      el.innerHTML = rows.map(function(r) { return '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>'; }).join('');
+    }
+
+    function okText(ok, yes, no) {
+      return ok ? '<span class="ps-ok">✓ ' + yes + '</span>' : '<span class="ps-missing">✗ ' + no + '</span>';
+    }
+
+    function loadSettingsStatus() {
+      var btn = document.getElementById('statusRefreshBtn');
+      btn.disabled = true;
+      fetch('/settings/status')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (!d.success) throw new Error(d.message || '확인 실패');
+          var t = d.telegram || {};
+          statusRows(document.getElementById('statusTg'), !t.configured ? [['봇', '<span class="muted">설정 안 됨</span>']] : [
+            ['봇', t.ok ? '<span class="ps-ok">✓ @' + escapeHtml(t.username || '?') + '</span>' : '<span class="ps-missing">✗ 토큰 확인 필요</span>'],
+            ['버튼 메뉴', !t.ok ? '-' : t.webhook_host
+              ? '<span class="ps-missing">✗ 다른 서비스(' + escapeHtml(t.webhook_host) + ')가 이 봇을 쓰고 있어 버튼이 동작하지 않아요. Media Router 전용 봇 토큰으로 바꿔주세요.</span>'
+              : (t.enabled ? '<span class="ps-ok">✓ 사용 가능</span>' : '<span class="muted">알림이 꺼져 있음</span>')]
+          ]);
+          statusRows(document.getElementById('statusPc'), [
+            ['전원', d.pc.online ? '<span class="ps-ok">🟢 켜짐</span>' : '<span class="muted">🔴 꺼짐</span>'],
+            ['주소', escapeHtml(d.pc.user + '@' + d.pc.host)],
+            ['MAC (WOL)', escapeHtml(d.pc.mac)],
+            ['SSH 키', okText(d.pc.ssh_key, '있음', '없음 (secrets/kck_gaming_key)')],
+            ['스크립트', '<span class="ps-path">' + escapeHtml(d.pc.script_path) + '</span>']
+          ]);
+          statusRows(document.getElementById('statusQbit'), [
+            ['연결', okText(d.qbit.ok, escapeHtml(d.qbit.message), escapeHtml(d.qbit.message))],
+            ['주소', escapeHtml(d.qbit.url)],
+            ['계정', okText(d.qbit.account_set, '설정됨', '없음 (.env의 QBIT_USERNAME/PASSWORD)')]
+          ]);
+          statusRows(document.getElementById('statusBatch'), [
+            ['SSH 키', okText(d.batch.ssh_key, '있음', '없음 (secrets/run_batch_key)')],
+            ['대상', escapeHtml(d.batch.host)]
+          ]);
+        })
+        .catch(function(e) { showToast('연결 상태 확인 실패: ' + e.message, 'error'); })
+        .finally(function() { btn.disabled = false; });
+    }
+
+    (function initSettings() {
+      var form = document.getElementById('settingsForm');
+      var dirty = document.getElementById('dirtyNote');
+      var pathTimer = null;
+      form.addEventListener('input', function(e) {
+        dirty.classList.add('show');
+        if (e.target.classList.contains('mode-input')) checkMode(e.target);
+        if (e.target.id === 'sourcesInput' || e.target.classList.contains('path-input')) {
+          clearTimeout(pathTimer);
+          pathTimer = setTimeout(checkPaths, 600);
+        }
+      });
+      form.addEventListener('change', function() { dirty.classList.add('show'); });
+      form.addEventListener('submit', function(e) {
+        var modesOk = Array.prototype.every.call(document.querySelectorAll('.mode-input'), checkMode);
+        if (!modesOk) {
+          e.preventDefault();
+          showToast('권한 값을 확인해주세요 (예: 664, 775)', 'error');
+          document.querySelector('.mode-input.is-invalid').focus();
+          return;
+        }
+        dirty.classList.remove('show');
+        document.getElementById('settingsSaveBtn').disabled = true;
+      });
+      // 뒤로 가기(bfcache)로 돌아오면 비활성화된 저장 버튼이 그대로 남는 것 방지
+      window.addEventListener('pageshow', function() { document.getElementById('settingsSaveBtn').disabled = false; });
+      document.querySelectorAll('.mode-input').forEach(checkMode);
+      checkPaths();
+      loadSettingsStatus();
+      {% if saved %}showToast('저장했어요', 'success');{% endif %}
+    })();
+  </script>
+{% endblock %}

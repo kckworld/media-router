@@ -93,7 +93,7 @@
 
   function blocked(el) {
     for (; el && el !== document.body; el = el.parentElement) {
-      if (el.matches('input, textarea, select, [contenteditable], .subtabs, .bottomnav, .sheet')) return true;
+      if (el.matches('input, textarea, select, [contenteditable], .subtabs, .bottomnav, .sheet, .drawer, .selbar')) return true;
       if (el.scrollWidth > el.clientWidth + 1) {
         var ox = getComputedStyle(el).overflowX;
         if (ox === 'auto' || ox === 'scroll') return true;
