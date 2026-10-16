@@ -3,11 +3,11 @@
 
 {% block page_css %}
   <style>
-    .header-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; justify-content: flex-end; }
-    .summary-bar { display: flex; gap: 22px; }
-    .summary-item { text-align: right; color: #fff; }
-    .summary-num { font-size: 19px; font-weight: 700; font-family: ui-monospace, monospace; line-height: 1; }
-    .summary-label { font-size: 11px; opacity: 0.8; margin-top: 3px; }
+    /* 카드 머리말·본문이 각자 여백을 가지므로 카드 자체 여백은 0 (예전 users 전용 규칙 복원) */
+    .users-grid .card { padding: 0; overflow: hidden; }
+    /* 요약 숫자: 예전엔 헤더 안에 있었는데 개편 1단계에서 헤더와 함께 사라져서 요약 카드로 되살림 */
+    .tiles.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    @media (max-width: 640px) { .tiles.four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .users-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
     @media (max-width: 900px) {
       .users-grid { grid-template-columns: 1fr; }
@@ -15,7 +15,7 @@
     .card-header { padding: 16px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
     .card-title { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; }
     .card-body { padding: 22px; }
-    .btn.danger { background: #fff; color: var(--danger); border-color: #fecaca; }
+    .btn.danger { background: var(--surface); color: var(--danger); border-color: var(--danger-line); }
     .btn.danger:hover { background: var(--danger-light); border-color: var(--danger); }
     .btn.ghost { background: transparent; box-shadow: none; }
     label.field-label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
@@ -34,8 +34,8 @@
     .person-memo { font-size: 12px; color: var(--muted); margin-top: 3px; }
     .person-accounts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
     .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; font-family: ui-monospace, monospace; }
-    .badge-jellyfin { background: rgba(0,164,220,0.12); color: var(--jellyfin); border: 1px solid rgba(0,164,220,0.3); }
-    .badge-plex { background: rgba(229,160,13,0.12); color: var(--plex); border: 1px solid rgba(229,160,13,0.3); }
+    .badge-jellyfin { background: color-mix(in srgb, var(--jellyfin) 12%, transparent); color: var(--jellyfin); border: 1px solid color-mix(in srgb, var(--jellyfin) 35%, transparent); }
+    .badge-plex { background: color-mix(in srgb, var(--plex) 12%, transparent); color: var(--plex); border: 1px solid color-mix(in srgb, var(--plex) 35%, transparent); }
     .badge-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
     .account-item { background: var(--bg-solid); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
     .account-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -46,6 +46,13 @@
 {% endblock %}
 
 {% block content %}
+    <p class="muted" style="margin:0 0 14px;">Jellyfin·Plex 계정을 사람별로 묶어 시청 통계에 써요.</p>
+    <div class="tiles four" id="summaryBar">
+      <div class="tile"><span class="tile-label">사용자</span><span class="tile-value" id="sumPersons">-</span></div>
+      <div class="tile"><span class="tile-label">연결 계정</span><span class="tile-value" id="sumAccounts">-</span></div>
+      <div class="tile"><span class="tile-label">재생 기록</span><span class="tile-value" id="sumPlays">-</span></div>
+      <div class="tile"><span class="tile-label">미매핑 계정</span><span class="tile-value" id="sumUnmatched">-</span></div>
+    </div>
     <div class="users-grid">
       <div class="card">
         <div class="card-header">

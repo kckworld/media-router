@@ -33,9 +33,9 @@
     .set-hint { font-size: 12px; color: var(--muted); line-height: 1.5; margin-top: 6px; }
     .set-hint a { color: var(--accent); }
     .set-note { font-size: 13px; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
-    .set-note.warn { background: var(--warning-light); color: #92400e; border: 1px solid #fcd34d; }
+    .set-note.warn { background: var(--warning-light); color: var(--warn); border: 1px solid var(--warn-line); }
     .set-banner { border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; font-weight: 600; }
-    .set-banner.error { background: var(--danger-light); color: var(--danger-hover); border: 1px solid #fca5a5; }
+    .set-banner.error { background: var(--danger-light); color: var(--danger-hover); border: 1px solid var(--danger-line); }
     .set-textarea { padding: 12px 16px; font-size: 14px; border: 2px solid var(--line); border-radius: 10px; width: 100%; font-family: ui-monospace, monospace; resize: vertical; }
     .set-result { font-size: 13px; font-weight: 600; min-height: 0; }
     .set-result:not(:empty) { margin: -2px 0 8px; }
@@ -62,7 +62,7 @@
     .status-box dt { color: var(--muted); }
     .status-box dd { margin: 0; word-break: break-all; }
     .set-savebar { position: sticky; bottom: 12px; z-index: 50; display: flex; justify-content: flex-end; align-items: center; gap: 14px; background: var(--bg-card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px; box-shadow: var(--shadow-lg); }
-    .set-dirty { font-size: 13px; font-weight: 600; color: #b45309; visibility: hidden; }
+    .set-dirty { font-size: 13px; font-weight: 600; color: var(--warn); visibility: hidden; }
     .set-dirty.show { visibility: visible; }
     @media (max-width: 640px) {
       .set-card { padding: 18px 16px; }

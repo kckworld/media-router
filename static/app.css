@@ -16,7 +16,7 @@
   --accent-strong: #2836B0;
   --on-accent: #FFFFFF;
   --accent-soft: #EBEEFE;
-  --ok: #1E7F46;
+  --ok: #1A7340;
   --ok-soft: #E4F3EA;
   --warn: #9A4A07;
   --warn-soft: #FCEFDF;
@@ -26,6 +26,20 @@
   --chip: #ECEDF0;
   --chip-text: #454B57;
   --scrim: rgba(14, 16, 20, .45);
+  --ok-line: #BFE3CD;
+  --warn-line: #F3D3A8;
+  --danger-line: #F4C0BA;
+  --on-danger: #FFFFFF;
+  --overlay: #1C1F26;          /* 알림·선택 바처럼 화면 위에 뜨는 짙은 막대 */
+  --log-bg: #0B1220;           /* 로그 보기는 두 테마 모두 짙은 터미널 색 */
+  --log-fg: #D6E2F0;
+  --log-run: #93C5FD;
+  --log-err: #FCA5A5;
+  --log-ok: #86EFAC;
+  --log-muted: #7D8BA0;
+  --jellyfin: #00799F;
+  --plex: #9A6500;
+  color-scheme: light;
   --radius: 14px;
   --font: 'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
@@ -50,6 +64,35 @@
   --shadow: 0 1px 2px rgba(16, 24, 40, .05);
   --shadow-md: 0 4px 12px rgba(16, 24, 40, .08);
   --shadow-lg: 0 12px 32px rgba(16, 24, 40, .14);
+}
+
+/* 다크 테마: 기본은 기기 설정을 따르고, 상단 테마 버튼으로 고르면 <html data-theme>가 우선.
+   같은 값을 두 번 적는 건 "시스템 다크"와 "직접 고른 다크"를 둘 다 받기 위해서다. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0F1115; --surface: #171A21; --surface-2: #1D2129; --line: #272C36; --line-strong: #363C48;
+    --text: #E8EAEE; --muted: #9AA2B1; --accent: #8E9CFF; --accent-strong: #A9B4FF; --on-accent: #0F1115;
+    --accent-soft: #1E2447; --ok: #5CCB8A; --ok-soft: #13281C; --warn: #F2B266; --warn-soft: #2D2214;
+    --danger: #FF8A80; --danger-strong: #FFA59D; --danger-soft: #331A19; --chip: #232831; --chip-text: #C3C9D4;
+    --scrim: rgba(0, 0, 0, .6); --ok-line: #24503A; --warn-line: #5A4222; --danger-line: #5C2B28; --on-danger: #1A0F0E;
+    --overlay: #2A2F3A; --log-bg: #0A0C10; --jellyfin: #4CC7F0; --plex: #F0B53A;
+    --success-hover: #7AD9A1; --warning: #F59E0B;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3); --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, .4); --shadow-lg: 0 12px 32px rgba(0, 0, 0, .5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0F1115; --surface: #171A21; --surface-2: #1D2129; --line: #272C36; --line-strong: #363C48;
+  --text: #E8EAEE; --muted: #9AA2B1; --accent: #8E9CFF; --accent-strong: #A9B4FF; --on-accent: #0F1115;
+  --accent-soft: #1E2447; --ok: #5CCB8A; --ok-soft: #13281C; --warn: #F2B266; --warn-soft: #2D2214;
+  --danger: #FF8A80; --danger-strong: #FFA59D; --danger-soft: #331A19; --chip: #232831; --chip-text: #C3C9D4;
+  --scrim: rgba(0, 0, 0, .6); --ok-line: #24503A; --warn-line: #5A4222; --danger-line: #5C2B28; --on-danger: #1A0F0E;
+  --overlay: #2A2F3A; --log-bg: #0A0C10; --jellyfin: #4CC7F0; --plex: #F0B53A;
+  --success-hover: #7AD9A1; --warning: #F59E0B;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3); --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, .4); --shadow-lg: 0 12px 32px rgba(0, 0, 0, .5);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -220,7 +263,7 @@ a { color: var(--accent); }
 .btn:disabled, .run-batch-btn:disabled { opacity: .55; cursor: not-allowed; }
 .btn.primary, .run-batch-btn { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn.primary:hover, .run-batch-btn:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
-.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
 .btn.danger:hover { background: var(--danger-strong); }
 .btn.small { height: 32px; padding: 0 10px; font-size: 13px; border-radius: 8px; }
 .run-batch-btn .icon { font-size: 12px; line-height: 1; }
@@ -243,9 +286,9 @@ input[type=url]:focus, select:focus, textarea:focus {
 input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
 
 .banner { border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; font-weight: 600; font-size: 14px; }
-.banner.warn { background: var(--warn-soft); color: var(--warn); border: 1px solid #F3D3A8; }
-.banner.err { background: var(--danger-soft); color: var(--danger-strong); border: 1px solid #F4C0BA; }
-.banner.ok { background: var(--ok-soft); color: var(--ok); border: 1px solid #BFE3CD; }
+.banner.warn { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn-line); }
+.banner.err { background: var(--danger-soft); color: var(--danger-strong); border: 1px solid var(--danger-line); }
+.banner.ok { background: var(--ok-soft); color: var(--ok); border: 1px solid var(--ok-line); }
 
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .toolbar .group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -253,13 +296,13 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
 .toast {
   position: fixed; left: 50%; bottom: 28px; z-index: 300;
   transform: translateX(-50%) translateY(16px); opacity: 0; pointer-events: none;
-  background: #1C1F26; color: #fff; padding: 12px 20px; border-radius: 12px;
+  background: var(--overlay); color: #fff; padding: 12px 20px; border-radius: 12px;
   font-size: 14px; font-weight: 600; box-shadow: var(--shadow-lg);
   max-width: min(90vw, 520px); text-align: center; transition: opacity .25s, transform .25s;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-.toast.success { background: var(--ok); }
-.toast.error { background: var(--danger); }
+.toast.success { background: #1E7F46; }   /* 흰 글씨가 두 테마 모두 읽히도록 고정색 */
+.toast.error { background: #C2362B; }
 @media (max-width: 899px) { .toast { bottom: calc(80px + env(safe-area-inset-bottom)); } }
 
 @media (max-width: 640px) {
@@ -305,7 +348,7 @@ a.tile:hover { border-color: var(--line-strong); }
 .selbar {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px; z-index: 80;
   display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 18px;
-  background: #1C1F26; color: #fff; border-radius: 14px; box-shadow: var(--shadow-lg);
+  background: var(--overlay); color: #fff; border-radius: 14px; box-shadow: var(--shadow-lg);
   max-width: calc(100vw - 24px);
 }
 .selbar[hidden] { display: none; }
@@ -368,4 +411,21 @@ a.tile:hover { border-color: var(--line-strong); }
 @media (max-width: 640px) {
   .log-actions .run-batch-btn, .log-actions .btn { flex: 1 1 auto; }
   .log-actions .divider { display: none; }
+}
+
+/* ── 로고(CI)와 테마 버튼 (2026-10-16 개편 3단계) ── */
+.logo-mark { flex-shrink: 0; display: block; }
+.logo-mark .lm-bg { fill: var(--accent); }
+.logo-mark .lm-fg { fill: var(--on-accent); }
+.logo-mark .lm-line { stroke: var(--on-accent); }
+.sidebar .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 6px; letter-spacing: normal; text-decoration: none; }
+.brand-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
+.brand-name { font-size: 16px; font-weight: 700; letter-spacing: -.01em; color: var(--text); }
+.brand-name b { font-weight: 700; color: var(--accent); }
+.brand-sub { font-size: 11px; font-weight: 500; color: var(--muted); margin-top: 2px; }
+.appbar-mark { display: none; }
+.appbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.theme-btn svg { display: block; }
+@media (max-width: 899px) {
+  .appbar-mark { display: block; }
 }

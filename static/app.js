@@ -140,3 +140,37 @@ document.addEventListener('keydown', function (e) {
   if (cached && Date.now() - cached.t < 60000) mrSetPcState(cached.s);
   else checkPcStatus(true);
 })();
+
+// ── 화면 테마 (2026-10-16 개편 3단계) ───────────────────
+// 시스템 설정 따르기 → 라이트 → 다크 순서로 바뀐다. 고른 값은 이 브라우저에만 저장(localStorage).
+// 실제 적용은 <html data-theme>이고, 첫 화면 깜빡임을 막는 초기 적용은 base.html <head>에 있다.
+var MR_THEME_ICONS = {
+  system: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"></path></svg>',
+  light: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"></path></svg>',
+  dark: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>'
+};
+var MR_THEME_LABEL = { system: '시스템 설정 따름', light: '라이트', dark: '다크' };
+
+function mrGetTheme() {
+  try { var t = localStorage.getItem('mrTheme'); return (t === 'light' || t === 'dark') ? t : 'system'; } catch (e) { return 'system'; }
+}
+
+function mrApplyTheme(mode) {
+  if (mode === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', mode);
+  var btn = document.getElementById('themeBtn');
+  if (btn) {
+    btn.innerHTML = MR_THEME_ICONS[mode];
+    btn.setAttribute('aria-label', '화면 테마: ' + MR_THEME_LABEL[mode] + ' (눌러서 바꾸기)');
+    btn.title = '화면 테마: ' + MR_THEME_LABEL[mode];
+  }
+}
+
+function cycleTheme() {
+  var next = { system: 'light', light: 'dark', dark: 'system' }[mrGetTheme()];
+  try { if (next === 'system') localStorage.removeItem('mrTheme'); else localStorage.setItem('mrTheme', next); } catch (e) {}
+  mrApplyTheme(next);
+  showToast('화면 테마: ' + MR_THEME_LABEL[next]);
+}
+
+mrApplyTheme(mrGetTheme());

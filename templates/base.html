@@ -29,23 +29,35 @@
 {%- endif -%}
 </svg>
 {%- endmacro -%}
+{#- 로고 심볼: 재생(미디어)이 세 갈래로 나뉘어 분류되는 모양. 색은 테마 토큰을 따른다 (파비콘은 static/logo.svg) -#}
+{%- macro logo_mark(size=32) -%}
+<svg class="logo-mark" width="{{ size }}" height="{{ size }}" viewBox="0 0 32 32" aria-hidden="true"><rect class="lm-bg" width="32" height="32" rx="9"></rect><path class="lm-fg" d="M7.5 10.25v11.5L15 16z"></path><path class="lm-line" d="M15 16h3.2M18.2 16c2.6 0 2.9-6 5.6-6M18.2 16h5.6M18.2 16c2.6 0 2.9 6 5.6 6" fill="none" stroke-width="2" stroke-linecap="round"></path><circle class="lm-fg" cx="24.6" cy="10" r="1.9"></circle><circle class="lm-fg" cx="24.6" cy="16" r="1.9"></circle><circle class="lm-fg" cx="24.6" cy="22" r="1.9"></circle></svg>
+{%- endmacro -%}
 <!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{{ ns.page.label }} - Media Router</title>
-  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="alternate icon" type="image/x-icon" href="/static/favicon.ico">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#171A21" media="(prefers-color-scheme: dark)">
+  {# 고른 테마를 CSS보다 먼저 적용해서 다크 모드에서 흰 화면이 번쩍이지 않게 #}
+  <script>try{var t=localStorage.getItem('mrTheme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/app.css?v=3">
+  <link rel="stylesheet" href="/static/app.css?v=4">
   {% block page_css %}{% endblock %}
 </head>
 <body>
   <div class="app">
     <aside class="sidebar">
-      <a class="brand" href="/?mode=check">MEDIA ROUTER</a>
+      <a class="brand" href="/?mode=check" aria-label="Media Router 홈">
+        {{ logo_mark(34) }}
+        <span class="brand-text"><span class="brand-name">Media<b>Router</b></span><span class="brand-sub">NAS 미디어 관리</span></span>
+      </a>
       <nav aria-label="주 메뉴">
         {% for g in NAV %}
         <div class="nav-group">
@@ -62,12 +74,16 @@
 
     <div class="app-main">
       <header class="appbar">
+        <div class="appbar-left">
+        <a class="appbar-mark" href="/?mode=check" aria-label="Media Router 홈">{{ logo_mark(30) }}</a>
         <div class="appbar-title">
           <span class="eyebrow">{{ ns.group.label if ns.group.pages|length > 1 else 'Media Router' }}</span>
           <h1>{{ ns.group.label if ns.group.pages|length == 1 else ns.page.label }}</h1>
         </div>
+        </div>
         <div class="appbar-actions">
           {% block header_actions %}{% endblock %}
+          <button type="button" class="icon-btn theme-btn" id="themeBtn" onclick="cycleTheme()" aria-label="화면 테마 바꾸기"></button>
           <button type="button" class="pc-chip" id="pcChip" onclick="openPcSheet()" aria-haspopup="dialog" aria-label="PC 제어 열기">
             {{ icon('pc', 18) }}<span class="pc-dot" id="pcDot"></span><span class="pc-chip-text" id="pcChipText">PC 상태</span>
           </button>
@@ -121,7 +137,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=1"></script>
+  <script src="/static/app.js?v=2"></script>
   {% block scripts %}{% endblock %}
   <script src="/static/tab-swipe.js?v=5"></script>
 </body>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Media Router 심볼: 재생(미디어)이 세 갈래로 나뉘어 분류되는 모양 -->
+  <rect width="32" height="32" rx="9" fill="#3346D3"/>
+  <path d="M7.5 10.25v11.5L15 16z" fill="#FFFFFF"/>
+  <path d="M15 16h3.2M18.2 16c2.6 0 2.9-6 5.6-6M18.2 16h5.6M18.2 16c2.6 0 2.9 6 5.6 6" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="24.6" cy="10" r="1.9" fill="#FFFFFF"/>
+  <circle cx="24.6" cy="16" r="1.9" fill="#FFFFFF"/>
+  <circle cx="24.6" cy="22" r="1.9" fill="#FFFFFF"/>
+</svg>
