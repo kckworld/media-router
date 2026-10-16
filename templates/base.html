@@ -1,0 +1,128 @@
+{#- 모든 관리 화면의 공통 껍데기 (2026-10-16 레이아웃 개편).
+    자식 템플릿은 {% extends "base.html" %} 앞에서 active_page를 정하고
+    page_css / content / scripts 블록만 채운다. 메뉴 구성은 아래 NAV 하나만 고치면 된다. -#}
+{%- set NAV = [
+  {'key': 'today', 'label': '오늘', 'pages': [
+    {'key': 'check', 'label': '체크 목록', 'href': '/?mode=check'}]},
+  {'key': 'rules', 'label': '규칙', 'pages': [
+    {'key': 'rules', 'label': '분류 규칙', 'href': '/?mode='},
+    {'key': 'rename', 'label': '파일명 치환', 'href': '/rename_rules'},
+    {'key': 'bt4g', 'label': 'BT4G 키워드', 'href': '/bt4g_keywords'}]},
+  {'key': 'ops', 'label': '작업', 'pages': [
+    {'key': 'downloads', 'label': '다운로드', 'href': '/downloads'},
+    {'key': 'batch', 'label': '배치', 'href': '/logs'},
+    {'key': 'encode', 'label': '인코딩', 'href': '/encode_log'}]},
+  {'key': 'settings', 'label': '설정', 'pages': [
+    {'key': 'settings', 'label': '연동·경로', 'href': '/settings'},
+    {'key': 'users', 'label': '사용자 매핑', 'href': '/users'}]},
+] -%}
+{%- set ns = namespace(group=NAV[0], page=NAV[0].pages[0]) -%}
+{%- for g in NAV -%}{%- for p in g.pages -%}{%- if p.key == active_page -%}{%- set ns.group = g -%}{%- set ns.page = p -%}{%- endif -%}{%- endfor -%}{%- endfor -%}
+{%- macro icon(name, size=22) -%}
+<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+{%- if name == 'today' -%}<rect x="3.5" y="5" width="17" height="15" rx="2.5"></rect><path d="M3.5 9.5h17M8 3v4M16 3v4M9 14.5l2 2 4-4"></path>
+{%- elif name == 'rules' -%}<path d="M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1"></path>
+{%- elif name == 'ops' -%}<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M4 17v2.5h16V17"></path>
+{%- elif name == 'settings' -%}<path d="M4 7h10M18 7h2M4 17h4M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle>
+{%- elif name == 'pc' -%}<rect x="3" y="4.5" width="18" height="12" rx="2"></rect><path d="M9 20h6M12 16.5V20"></path>
+{%- elif name == 'power' -%}<path d="M12 4v8M7.05 7.05a7 7 0 1 0 9.9 0"></path>
+{%- endif -%}
+</svg>
+{%- endmacro -%}
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{{ ns.page.label }} - Media Router</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/app.css?v=1">
+  {% block page_css %}{% endblock %}
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <a class="brand" href="/?mode=check">MEDIA ROUTER</a>
+      <nav aria-label="주 메뉴">
+        {% for g in NAV %}
+        <div class="nav-group">
+          <a class="nav-group-title{{ ' active' if g.key == ns.group.key and g.pages|length == 1 else '' }}" href="{{ g.pages[0].href }}">{{ icon(g.key, 20) }}{{ g.label }}</a>
+          {% if g.pages|length > 1 %}
+            {% for p in g.pages %}
+            <a class="nav-sub{{ ' active' if p.key == ns.page.key else '' }}" href="{{ p.href }}"{% if p.key == ns.page.key %} aria-current="page"{% endif %}>{{ p.label }}</a>
+            {% endfor %}
+          {% endif %}
+        </div>
+        {% endfor %}
+      </nav>
+    </aside>
+
+    <div class="app-main">
+      <header class="appbar">
+        <div class="appbar-title">
+          <span class="eyebrow">{{ ns.group.label if ns.group.pages|length > 1 else 'Media Router' }}</span>
+          <h1>{{ ns.group.label if ns.group.pages|length == 1 else ns.page.label }}</h1>
+        </div>
+        <div class="appbar-actions">
+          {% block header_actions %}{% endblock %}
+          <button type="button" class="pc-chip" id="pcChip" onclick="openPcSheet()" aria-haspopup="dialog" aria-label="PC 제어 열기">
+            {{ icon('pc', 18) }}<span class="pc-dot" id="pcDot"></span><span class="pc-chip-text" id="pcChipText">PC 상태</span>
+          </button>
+        </div>
+      </header>
+
+      {% if ns.group.pages|length > 1 %}
+      <nav class="subtabs" aria-label="{{ ns.group.label }} 세부 메뉴">
+        {% for p in ns.group.pages %}
+        <a href="{{ p.href }}" class="{{ 'active' if p.key == ns.page.key else '' }}"{% if p.key == ns.page.key %} aria-current="page"{% endif %}>{{ p.label }}</a>
+        {% endfor %}
+      </nav>
+      {% endif %}
+
+      <main class="page">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+
+    <nav class="bottomnav" aria-label="주 메뉴">
+      {% for g in NAV %}
+      <a href="{{ g.pages[0].href }}" class="{{ 'active' if g.key == ns.group.key else '' }}"{% if g.key == ns.group.key %} aria-current="page"{% endif %}>{{ icon(g.key, 24) }}{{ g.label }}</a>
+      {% endfor %}
+    </nav>
+  </div>
+
+  {# 스와이프 탭 이동 순서: 메뉴 순서대로 전체 화면을 한 줄로 #}
+  <nav id="pageOrder" aria-hidden="true">
+    {% for g in NAV %}{% for p in g.pages %}<a href="{{ p.href }}" class="{{ 'active' if p.key == ns.page.key else '' }}" tabindex="-1">{{ p.label }}</a>{% endfor %}{% endfor %}
+  </nav>
+
+  <div class="sheet" id="pcSheet" aria-hidden="true">
+    <button type="button" class="sheet-scrim" onclick="closePcSheet()" aria-label="닫기" tabindex="-1"></button>
+    <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="PC 제어">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div>
+          <div class="label">게이밍 PC · KCK-GAMING</div>
+          <div class="state"><span class="pc-dot" id="pcSheetDot"></span><span id="pcStateText">알 수 없음</span></div>
+        </div>
+        <button type="button" class="btn small" id="pcStatusBtn" onclick="checkPcStatus()">상태 확인</button>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" class="btn primary" id="wakePcBtn" onclick="wakePc()">{{ icon('power', 18) }} PC 켜기</button>
+        <button type="button" class="btn" id="shutdownPcBtn" onclick="shutdownPc()">PC 끄기</button>
+        <button type="button" class="btn" id="sheetEncodeBtn" onclick="mrStartEncode()" style="grid-column: 1 / -1;">인코딩 시작</button>
+      </div>
+      <p class="sheet-note">끄기는 1분 뒤에 꺼져요. 인코딩 중이면 한 번 더 물어봐요.</p>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="/static/app.js?v=1"></script>
+  {% block scripts %}{% endblock %}
+  <script src="/static/tab-swipe.js?v=4"></script>
+</body>
+</html>

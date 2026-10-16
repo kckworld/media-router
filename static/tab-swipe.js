@@ -1,7 +1,7 @@
-// 모바일에서 본문을 좌우로 스와이프하면 상단 .mode-tabs의 이전/다음 탭으로 이동.
-// 왼쪽으로 밀면 다음 탭, 오른쪽으로 밀면 이전 탭. 끝 탭에서는 넘어가지 않음.
-// 가로 스크롤 영역(표, 로그 박스, 탭 바 자체)이나 입력칸 위에서 시작한 스와이프는 무시한다.
-// 탭 바(.topbar)는 고정하고 <main>만 손가락을 따라 움직이며, 넘어가면 새 페이지의
+// 모바일에서 본문을 좌우로 스와이프하면 메뉴 순서(#pageOrder, base.html)상 이전/다음 화면으로 이동.
+// 왼쪽으로 밀면 다음 화면, 오른쪽으로 밀면 이전 화면. 처음/끝 화면에서는 넘어가지 않음.
+// 가로 스크롤 영역(표, 로그 박스, 세부 탭 바)이나 입력칸, 하단 메뉴에서 시작한 스와이프는 무시한다.
+// 상단 바와 세부 탭은 고정하고 <main>만 손가락을 따라 움직이며, 넘어가면 새 페이지의
 // <main>이 반대쪽에서 밀려 들어온다(방향은 sessionStorage로 다음 페이지에 전달).
 (function () {
   var KEY = 'tabSwipeIn';
@@ -47,10 +47,10 @@
   // 뒤로가기(bfcache)로 돌아오면 밀려나간 상태 그대로 복원되므로 원위치
   window.addEventListener('pageshow', function (e) { if (e.persisted) clearMain(); });
 
-  // 탭 바가 가로로 넘칠 때 현재 탭을 가운데로. 이전 페이지의 스크롤 위치에서 출발해
+  // 세부 탭 바가 가로로 넘칠 때 현재 탭을 가운데로. 이전 페이지의 스크롤 위치에서 출발해
   // 부드럽게 옮겨서, 탭 바가 매번 맨 왼쪽에서 튀어오르지 않게 한다.
   var BAR_KEY = 'tabBarScroll';
-  var bar = document.querySelector('.mode-tabs');
+  var bar = document.querySelector('.subtabs');
   var activeTab = bar && bar.querySelector('a.active');
   if (bar && activeTab && bar.scrollWidth > bar.clientWidth) {
     var prev = null;
@@ -76,7 +76,7 @@
 
   if (!('ontouchstart' in window) || !window.matchMedia('(pointer: coarse)').matches) return;
 
-  var tabs = Array.prototype.slice.call(document.querySelectorAll('.mode-tabs a'));
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('#pageOrder a'));
   if (tabs.length < 2) return;
   var cur = -1;
   for (var i = 0; i < tabs.length; i++) {
@@ -87,13 +87,13 @@
   var hint = document.createElement('div');
   hint.style.cssText = 'position:fixed;top:50%;z-index:9999;transform:translateY(-50%);' +
     'padding:10px 14px;border-radius:999px;font-size:14px;font-weight:700;pointer-events:none;' +
-    'background:rgba(0,0,0,.72);color:#fff;opacity:0;transition:opacity .12s,background .12s;' +
+    'background:rgba(22,24,29,.78);color:#fff;opacity:0;transition:opacity .12s,background .12s;' +
     'max-width:70vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
   document.body.appendChild(hint);
 
   function blocked(el) {
     for (; el && el !== document.body; el = el.parentElement) {
-      if (el.matches('input, textarea, select, [contenteditable], .mode-tabs')) return true;
+      if (el.matches('input, textarea, select, [contenteditable], .subtabs, .bottomnav, .sheet')) return true;
       if (el.scrollWidth > el.clientWidth + 1) {
         var ox = getComputedStyle(el).overflowX;
         if (ox === 'auto' || ox === 'scroll') return true;
