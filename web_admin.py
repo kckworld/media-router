@@ -36,6 +36,9 @@ def _stats_db():
 
 BASE = Path(__file__).resolve().parent
 PASSWORD = os.getenv("MEDIA_ADMIN_PASSWORD", "")
+# 보기 전용 계정 비밀번호 (2026-10-16). 이걸로 로그인하면 모든 화면을 볼 수만 있고(개인정보 화면 제외)
+# 저장·실행 같은 변경 요청은 _readonly_guard가 전부 403으로 막는다. 비워두면 보기 전용 로그인 없음.
+VIEWER_PASSWORD = os.getenv("MEDIA_VIEWER_PASSWORD", "")
 
 app = Flask(__name__, template_folder=str(BASE / "templates"))
 
@@ -744,20 +747,60 @@ TMDB_API_KEY = get_tmdb_api_key()
 def current_weekday() -> int:
     return datetime.now(APP_TZ).weekday()
 
-def authed(req):
+def session_role(req):
+    """로그인 역할: "admin"(관리자) / "viewer"(보기 전용) / None(로그인 안 됨).
+    관리자 비밀번호가 없으면(인증 끔) 누구나 관리자."""
     if not PASSWORD:
-        return True
-    if req.path == "/health":
-        return True
+        return "admin"
     token = req.cookies.get("media_admin", "")
     if token:
         try:
             data = _session_serializer.loads(token, max_age=SESSION_MAX_AGE)
             if data.get("a") is True:
-                return True
+                return "viewer" if data.get("r") == "viewer" else "admin"
         except (BadSignature, SignatureExpired):
             pass
+    return None
+
+
+def authed(req):
+    if req.path == "/health" or session_role(req):
+        return True
     return redirect("/login")
+
+
+# 보기 전용 계정에 숨기는 화면 (가족 Jellyfin·Plex 계정명, 서버 경로·연결 정보)
+VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users")
+READONLY_MESSAGE = "읽기 전용 계정이라 바꿀 수 없어요."
+
+
+@app.before_request
+def _readonly_guard():
+    """보기 전용 계정의 변경 요청(GET 외 전부)과 숨긴 화면 접근을 서버에서 막는다.
+    화면에서 버튼을 숨기는 건 보기 좋으라고 하는 것이고, 실제 차단은 여기서 한다."""
+    if session_role(request) != "viewer":
+        return None
+    path = request.path
+    wants_html = "text/html" in (request.headers.get("Accept") or "")
+    if path.startswith(VIEWER_HIDDEN_PREFIXES):
+        if request.method == "GET" and wants_html and not path.startswith("/api/"):
+            return redirect("/?mode=check")
+        return jsonify({"success": False, "ok": False, "error": "보기 전용 계정은 볼 수 없는 화면이에요.",
+                        "message": "보기 전용 계정은 볼 수 없는 화면이에요."}), 403
+    if request.method in ("GET", "HEAD", "OPTIONS") or path in ("/login", "/logout"):
+        return None
+    if wants_html:
+        return make_response(
+            "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+            f"<p style='font-family:sans-serif;padding:24px'>{READONLY_MESSAGE} "
+            "<a href='javascript:history.back()'>돌아가기</a></p>", 403)
+    return jsonify({"success": False, "ok": False, "error": READONLY_MESSAGE, "message": READONLY_MESSAGE}), 403
+
+
+@app.context_processor
+def _inject_role():
+    role = session_role(request)
+    return {"viewer": role == "viewer", "has_login": bool(PASSWORD)}
 
 def split_title_and_year(name: str) -> tuple[str, int | None]:
     cleaned = (name or "").strip()
@@ -1421,11 +1464,16 @@ def login():
     if blocked_for > 0:
         return redirect(f"/login?error=2&wait={blocked_for}")
 
+    role = None
     if hmac.compare_digest(pw, PASSWORD):
+        role = "admin"
+    elif VIEWER_PASSWORD and hmac.compare_digest(pw, VIEWER_PASSWORD):
+        role = "viewer"
+    if role:
         _clear_login_failures(ip)
         resp=make_response(redirect("/"))
         max_age = 30 * 24 * 3600 if remember else 12 * 3600
-        token = _session_serializer.dumps({"a": True})
+        token = _session_serializer.dumps({"a": True} if role == "admin" else {"a": True, "r": "viewer"})
         resp.set_cookie("media_admin", token, max_age=max_age, httponly=True, samesite="Lax", secure=request.is_secure)
         return resp
 
@@ -1434,6 +1482,12 @@ def login():
     if blocked_for > 0:
         return redirect(f"/login?error=2&wait={blocked_for}")
     return redirect("/login?error=1")
+
+@app.route("/logout", methods=["GET", "POST"])
+def logout():
+    resp = make_response(redirect("/login"))
+    resp.delete_cookie("media_admin")
+    return resp
 
 @app.route("/add", methods=["POST"])
 def add():

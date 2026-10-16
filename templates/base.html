@@ -1,7 +1,7 @@
 {#- 모든 관리 화면의 공통 껍데기 (2026-10-16 레이아웃 개편).
     자식 템플릿은 {% extends "base.html" %} 앞에서 active_page를 정하고
     page_css / content / scripts 블록만 채운다. 메뉴 구성은 아래 NAV 하나만 고치면 된다. -#}
-{%- set NAV = [
+{%- set NAV_ALL = [
   {'key': 'today', 'label': '오늘', 'pages': [
     {'key': 'check', 'label': '체크 목록', 'href': '/?mode=check'}]},
   {'key': 'rules', 'label': '규칙', 'pages': [
@@ -13,9 +13,16 @@
     {'key': 'batch', 'label': '배치', 'href': '/logs'},
     {'key': 'encode', 'label': '인코딩', 'href': '/encode_log'}]},
   {'key': 'settings', 'label': '설정', 'pages': [
-    {'key': 'settings', 'label': '연동·경로', 'href': '/settings'},
-    {'key': 'users', 'label': '사용자 매핑', 'href': '/users'}]},
+    {'key': 'settings', 'label': '연동·경로', 'href': '/settings', 'admin_only': True},
+    {'key': 'users', 'label': '사용자 매핑', 'href': '/users', 'admin_only': True}]},
 ] -%}
+{#- 보기 전용 계정에는 admin_only 화면(개인정보·서버 설정)을 메뉴에서 뺀다. 접근 차단은 서버(_readonly_guard)가 한다 -#}
+{%- set nav_ns = namespace(items=[]) -%}
+{%- for g in NAV_ALL -%}
+{%- set pages = (g.pages | rejectattr('admin_only') | list) if viewer else g.pages -%}
+{%- if pages -%}{%- set nav_ns.items = nav_ns.items + [{'key': g.key, 'label': g.label, 'pages': pages}] -%}{%- endif -%}
+{%- endfor -%}
+{%- set NAV = nav_ns.items -%}
 {%- set ns = namespace(group=NAV[0], page=NAV[0].pages[0]) -%}
 {%- for g in NAV -%}{%- for p in g.pages -%}{%- if p.key == active_page -%}{%- set ns.group = g -%}{%- set ns.page = p -%}{%- endif -%}{%- endfor -%}{%- endfor -%}
 {%- macro icon(name, size=22) -%}
@@ -50,10 +57,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/app.css?v=4">
+  <link rel="stylesheet" href="/static/app.css?v=5">
   {% block page_css %}{% endblock %}
 </head>
-<body>
+<body class="{{ 'readonly' if viewer else '' }}">
   <div class="app">
     <aside class="sidebar">
       <a class="brand" href="/?mode=check" aria-label="Media Router 홈">
@@ -72,6 +79,7 @@
         </div>
         {% endfor %}
       </nav>
+      {% if has_login %}<a class="sidebar-logout" href="/logout">로그아웃</a>{% endif %}
     </aside>
 
     <div class="app-main">
@@ -100,6 +108,9 @@
       </nav>
       {% endif %}
 
+      {% if viewer %}
+      <div class="ro-banner" role="status">읽기 전용으로 보는 중이에요. 내용을 바꾸거나 실행할 수는 없어요. <a href="/logout">로그아웃</a></div>
+      {% endif %}
       <main class="page">
         {% block content %}{% endblock %}
       </main>
@@ -129,17 +140,16 @@
         <button type="button" class="btn small" id="pcStatusBtn" onclick="checkPcStatus()">상태 확인</button>
       </div>
       <div class="sheet-actions">
-        <button type="button" class="btn primary" id="wakePcBtn" onclick="wakePc()">{{ icon('power', 18) }} PC 켜기</button>
-        <button type="button" class="btn" id="shutdownPcBtn" onclick="shutdownPc()">PC 끄기</button>
-        <button type="button" class="btn" id="sheetEncodeBtn" onclick="mrStartEncode()" style="grid-column: 1 / -1;">인코딩 시작</button>
+        <button type="button" class="btn primary" id="wakePcBtn" onclick="wakePc()" data-write>{{ icon('power', 18) }} PC 켜기</button>
+        <button type="button" class="btn" id="shutdownPcBtn" onclick="shutdownPc()" data-write>PC 끄기</button>
       </div>
-      <p class="sheet-note">끄기는 1분 뒤에 꺼져요. 인코딩 중이면 한 번 더 물어봐요.</p>
+      <p class="sheet-note" data-write>끄기는 1분 뒤에 꺼져요. 인코딩 중이면 한 번 더 물어봐요.</p>
     </div>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=2"></script>
+  <script src="/static/app.js?v=3"></script>
   {% block scripts %}{% endblock %}
   <script src="/static/tab-swipe.js?v=5"></script>
 </body>

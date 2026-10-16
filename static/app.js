@@ -96,17 +96,6 @@ function shutdownPc(force) {
     .catch(function (e) { done(); showToast('요청 중 오류가 발생했어요: ' + e, 'error'); });
 }
 
-function mrStartEncode() {
-  if (!confirm('KCK-GAMING에서 인코딩을 시작할까요?\nPC가 꺼져 있으면 먼저 켜요.')) return;
-  var btn = document.getElementById('sheetEncodeBtn');
-  var done = mrBusy(btn, '요청 중');
-  fetch('/run_encode', { method: 'POST' })
-    .then(mrJson)
-    .then(function (res) { showToast(res.data.message || (res.ok ? '요청 완료' : '요청 실패'), res.ok ? 'success' : 'error'); })
-    .catch(function (e) { showToast('요청 중 오류가 발생했어요: ' + e, 'error'); })
-    .finally(function () { setTimeout(done, 2000); });
-}
-
 // ── PC 제어 시트 열기/닫기 ─────────────────────────────
 function openPcSheet() {
   var sheet = document.getElementById('pcSheet');
@@ -174,3 +163,22 @@ function cycleTheme() {
 }
 
 mrApplyTheme(mrGetTheme());
+
+// ── 보기 전용 계정 (2026-10-16) ─────────────────────────
+// 서버가 변경 요청을 모두 403으로 막지만, 헛걸음이 없도록 저장 폼의 입력칸은 잠그고 버튼은 숨긴다.
+// (이 스크립트는 </body> 직전에 실려서 페이지의 폼이 이미 다 있다)
+(function () {
+  if (!document.body.classList.contains('readonly')) return;
+  document.querySelectorAll('form').forEach(function (f) {
+    if ((f.getAttribute('method') || 'get').toLowerCase() !== 'post') return;
+    f.querySelectorAll('input:not([type=hidden]), select, textarea').forEach(function (el) { el.disabled = true; });
+    f.querySelectorAll('button, input[type=submit]').forEach(function (b) { b.setAttribute('data-write', ''); });
+  });
+  document.addEventListener('submit', function (e) {
+    var f = e.target;
+    if ((f.getAttribute('method') || 'get').toLowerCase() === 'post') {
+      e.preventDefault();
+      showToast('읽기 전용 계정이라 바꿀 수 없어요.', 'error');
+    }
+  }, true);
+})();

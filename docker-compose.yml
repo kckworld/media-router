@@ -22,6 +22,8 @@ services:
       - /volume1/homes/kck9010/Drive:/app/drive_root:ro
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}
+      # 보기 전용 계정 비밀번호 (비우면 보기 전용 로그인 없음). 값은 .env에
+      - MEDIA_VIEWER_PASSWORD=${MEDIA_VIEWER_PASSWORD:-}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
       - RUN_BATCH_SSH_KEY=/app/secrets/run_batch_key
       - RUN_BATCH_SSH_PORT=202

@@ -429,3 +429,14 @@ a.tile:hover { border-color: var(--line-strong); }
 @media (max-width: 899px) {
   .appbar-mark { display: block; }
 }
+
+/* ── 보기 전용 계정 (2026-10-16): 변경 버튼 숨김, 상단 안내. 실제 차단은 서버(_readonly_guard) ── */
+.readonly [data-write] { display: none !important; }
+.ro-banner {
+  padding: 10px 32px; font-size: 13px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent); border-bottom: 1px solid var(--line);
+}
+.ro-banner a { margin-left: 6px; }
+.sidebar-logout { margin-top: auto; padding: 8px 10px; font-size: 13px; color: var(--muted); text-decoration: none; border-radius: 8px; }
+.sidebar-logout:hover { background: var(--surface-2); color: var(--text); }
+@media (max-width: 899px) { .ro-banner { padding: 10px 16px; } }

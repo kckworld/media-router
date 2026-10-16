@@ -72,7 +72,7 @@
       <span class="tile-label">결방</span>
       <span class="tile-value" id="gbCount">–</span>
       <span class="tile-sub" id="gbSub">네이버에서 확인 중</span>
-      <button type="button" class="btn small" id="gbAllBtn" hidden onclick="markAllGulbang()">결방 모두 처리</button>
+      <button type="button" class="btn small" id="gbAllBtn" hidden onclick="markAllGulbang()" data-write>결방 모두 처리</button>
     </div>
   </div>
 
@@ -82,7 +82,7 @@
       <div class="list-card-head">
         <h2 class="section-title">체크 목록</h2>
         {% if rules %}
-        <label class="muted" style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+        <label class="muted" style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;" data-write>
           <input type="checkbox" id="selectAll" style="width:18px; height:18px;"> 보이는 항목 전체 선택
         </label>
         {% endif %}
@@ -103,7 +103,7 @@
       <ul class="list" id="checkList">
         {% for r in rules %}
         <li class="check-row" data-rel="{{ r.rel }}" data-rkday="{{ r.rkday }}" data-idx="{{ r._idx }}">
-          <label class="check-box"><input type="checkbox" name="rkday" value="{{ r.rkday }}" aria-label="{{ r.subfolder }} 선택"></label>
+          <label class="check-box" data-write><input type="checkbox" name="rkday" value="{{ r.rkday }}" aria-label="{{ r.subfolder }} 선택"></label>
           <div class="check-main">
             <div class="check-title">
               <a href="#" onclick='searchNamu({{ r.subfolder|tojson }}); return false;' title="나무위키에서 보기">{{ r.subfolder }}</a>
@@ -121,11 +121,11 @@
           <div class="check-side">
             <span class="badge-day {{ r.rel }}">{{ rel_label.get(r.rel, '') }}{{ ' · ' if r.rel else '' }}{{ r.day }}</span>
             <div class="check-actions">
-              <button type="button" class="btn small primary" data-gb-btn hidden onclick="markGulbang(this)">결방 처리</button>
+              <button type="button" class="btn small primary" data-gb-btn hidden onclick="markGulbang(this)" data-write>결방 처리</button>
               {% if r.category == '드라마' or r.category == '예능' %}
-              <button type="button" class="btn small" onclick="checkEpisodes({{ r._idx }}, this)">에피소드 점검</button>
+              <button type="button" class="btn small" onclick="checkEpisodes({{ r._idx }}, this)" data-write>에피소드 점검</button>
               {% endif %}
-              <a class="btn small" href="/?mode=&edit_id={{ r._idx }}">편집</a>
+              <a class="btn small" href="/?mode=&edit_id={{ r._idx }}" data-write>편집</a>
             </div>
           </div>
         </li>
@@ -135,7 +135,7 @@
     </section>
   </form>
 
-  <div class="today-foot">
+  <div class="today-foot" data-write>
     <form method="post" action="/reset_day" onsubmit="return confirm('어제({{ yest_name }}) 체크한 항목을 모두 다시 미처리로 되돌릴까요?');">
       <input type="hidden" name="target_day" value="{{ yest_name }}">
       <input type="hidden" name="day" value="{{ selected_day }}">
@@ -144,7 +144,7 @@
     <span class="muted">체크하면 그 요일 회차를 받은 것으로 표시해요.</span>
   </div>
 
-  <div class="selbar" id="selBar" hidden>
+  <div class="selbar" id="selBar" hidden data-write>
     <span class="count" id="selCount">0개 선택</span>
     <button type="submit" form="checkForm" class="btn primary">받음 처리</button>
     <button type="button" class="btn" onclick="deleteSelectedRules()">규칙 삭제</button>
