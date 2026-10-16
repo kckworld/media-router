@@ -54,6 +54,7 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 html { overflow-y: scroll; -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -351,4 +352,20 @@ a.tile:hover { border-color: var(--line-strong); }
   .tiles { gap: 8px; }
   .tile { padding: 12px; }
   .tile-value { font-size: 20px; }
+}
+
+/* ── 로그 화면 공통 레이아웃 (배치·인코딩): 제목+상태 / 실행 버튼 / 로그 도구 ── */
+.log-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.log-head .section-title { margin: 0; }
+.log-head .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.log-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.log-actions .run-batch-btn { height: 40px; padding: 0 16px; }
+.log-actions .divider { width: 1px; align-self: stretch; background: var(--line); margin: 4px 4px; }
+.log-tools { display: flex; gap: 8px 12px; flex-wrap: wrap; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.log-tools .group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.log-tools .grow { flex: 1 1 260px; }
+.log-tools input[type=text] { flex: 1; min-width: 160px; }
+@media (max-width: 640px) {
+  .log-actions .run-batch-btn, .log-actions .btn { flex: 1 1 auto; }
+  .log-actions .divider { display: none; }
 }

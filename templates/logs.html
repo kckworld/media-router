@@ -51,12 +51,25 @@
     {% endif %}
 
     <div class="card">
-      <div class="section-title">배치 실행 로그 ({{ selected_date }})</div>
+      {# 배치·인코딩 화면 공통 배치: 제목+상태 / 실행 버튼 / 로그 도구 #}
+      <div class="log-head">
+        <div class="section-title">배치 실행 로그</div>
+        <div class="badges">
+          <span id="statusBadge" class="status-badge unknown"><span class="dot"></span>확인 중</span>
+        </div>
+      </div>
 
-      <div class="toolbar">
-        <div class="group">
+      <div class="log-actions">
+        <button type="button" class="run-batch-btn" id="runBatchBtn" onclick="runBatch()">
+          <span class="icon">▶</span> 배치 실행
+        </button>
+      </div>
+
+      <div class="log-tools">
+        <div class="group grow">
           <form id="dateForm" method="get" action="/logs">
-            <select name="date" onchange="this.form.submit()">
+            <label class="sr-only" for="logDate">로그 날짜</label>
+            <select id="logDate" name="date" onchange="this.form.submit()">
               {% if today_str not in dates %}
                 <option value="{{ today_str }}" {{ 'selected' if selected_date == today_str else '' }}>{{ today_str }} (오늘, 로그 없음)</option>
               {% endif %}
@@ -65,15 +78,11 @@
               {% endfor %}
             </select>
           </form>
-          <span id="statusBadge" class="status-badge unknown"><span class="dot"></span>확인 중</span>
-          <label class="switch-label"><input type="checkbox" id="autoRefreshChk"> 실시간 갱신 (2초)</label>
-          <label class="switch-label"><input type="checkbox" id="autoScrollChk" checked> 자동 스크롤</label>
+          <input type="text" id="searchInput" placeholder="로그 내용 검색..." aria-label="로그 내용 검색">
         </div>
         <div class="group">
-          <button type="button" class="run-batch-btn" id="runBatchBtn" onclick="runBatch()">
-            <span class="icon">▶</span> 배치 실행
-          </button>
-          <input type="text" id="searchInput" placeholder="로그 내용 검색...">
+          <label class="switch-label"><input type="checkbox" id="autoRefreshChk"> 실시간 갱신</label>
+          <label class="switch-label"><input type="checkbox" id="autoScrollChk" checked> 자동 스크롤</label>
           <button type="button" class="btn small" onclick="manualRefresh()">↻ 새로고침</button>
           {% if log_exists %}
             <a class="btn small" href="/logs/download?date={{ selected_date }}">⬇ 다운로드</a>
