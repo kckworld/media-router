@@ -62,7 +62,7 @@
           <span class="icon">▶</span> 인코딩 시작
         </button>
         <span class="divider" aria-hidden="true"></span>
-        <button type="button" class="btn" id="scheduleShutdownBtn" onclick="toggleScheduleShutdown()" title="다운로드(.crdownload)와 인코딩이 모두 끝나면 PC를 자동으로 종료합니다">⏳ PC 예약 종료</button>
+        <button type="button" class="btn" id="scheduleShutdownBtn" onclick="toggleScheduleShutdown()" title="다운로드(브라우저·JDownloader)와 인코딩이 모두 끝나면 PC를 자동으로 종료합니다">⏳ PC 예약 종료</button>
         <button type="button" class="btn" id="cancelShutdownBtn" onclick="cancelShutdown()" title="인코딩 끝나고 5분 후 예약된 PC 종료를 취소합니다">⏸ PC 종료 취소</button>
       </div>
 
@@ -300,13 +300,21 @@
     setAutoRefresh(document.getElementById("autoRefreshChk").checked);
 
     var scheduleShutdownActive = false;
+    var scheduleWaitInfo = null;   // 예약 종료가 무엇을 기다리는지 (다운로드 개수·파일명, 인코딩 여부)
 
     function refreshScheduleShutdownBtn() {
       var btn = document.getElementById('scheduleShutdownBtn');
       if (scheduleShutdownActive) {
-        btn.innerHTML = '⏳ 예약 취소(대기 중)';
+        var waits = [];
+        if (scheduleWaitInfo && scheduleWaitInfo.download_count) waits.push('다운로드 ' + scheduleWaitInfo.download_count + '개');
+        if (scheduleWaitInfo && scheduleWaitInfo.encoding) waits.push('인코딩');
+        btn.innerHTML = '⏳ 예약 취소' + (waits.length ? ' (' + waits.join('·') + ' 대기)' : '(대기 중)');
+        btn.title = (scheduleWaitInfo && scheduleWaitInfo.download_files && scheduleWaitInfo.download_files.length)
+          ? '받는 중: ' + scheduleWaitInfo.download_files.join(', ')
+          : '다운로드(브라우저·JDownloader)와 인코딩이 모두 끝나면 PC를 자동으로 종료합니다';
       } else {
         btn.innerHTML = '⏳ PC 예약 종료';
+        btn.title = '다운로드(브라우저·JDownloader)와 인코딩이 모두 끝나면 PC를 자동으로 종료합니다';
       }
     }
 
@@ -316,6 +324,7 @@
         .then(function(data) {
           if (!data.success) return;
           scheduleShutdownActive = !!data.active;
+          scheduleWaitInfo = data;
           refreshScheduleShutdownBtn();
         })
         .catch(function() {});

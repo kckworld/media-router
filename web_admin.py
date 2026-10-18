@@ -267,18 +267,92 @@ def encode_hold_stats():
     if auth is not True:
         return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
     return jsonify({"success": True, **_encoding_hold_stats()})
+# 받는 중인 파일 확장자: 크롬/엣지 .crdownload, JDownloader·파이어폭스 .part
 _PARTIAL_DOWNLOAD_EXTS = (".crdownload", ".part", ".tmp", ".!qb")
+# 하위 폴더와 PC 쪽에서는 .tmp를 빼고 본다 (문서 폴더의 오피스 임시파일 같은 게 남아 있으면
+# 예약 종료가 영영 안 될 수 있어서). .tmp는 예전처럼 Drive 맨 위에서만 센다.
+_PARTIAL_DEEP_EXTS = (".crdownload", ".part", ".!qb")
 _schedule_shutdown_state = {"lock": threading.Lock(), "active": False, "stop_event": None, "started_at": 0}
+# Drive 안에서 다운로드가 아닌 폴더 (인코딩 작업 폴더·보관·시놀로지 내부)
+_PARTIAL_SKIP_DIRS = {"인코딩", "인코딩 완료", "보관", "@eaDir", "#recycle", ".SynologyWorkingDirectory"}
+# PC(KCK-GAMING)에서 직접 확인할 다운로드 폴더 (Synology Drive로 NAS와 동기화되는 곳)
+PC_DOWNLOAD_DIR = os.getenv("PC_DOWNLOAD_DIR", r"D:\SynologyDrive")
+
+
+def _nas_partial_files(max_depth: int = 3) -> list[str]:
+    """NAS의 Drive 폴더에서 받는 중인 파일. JDownloader는 기본으로 다운로드마다 하위 폴더를
+    만들기 때문에(2026-10-19) 맨 위만이 아니라 하위 폴더도 본다."""
+    found = []
+
+    def walk(d: Path, depth: int):
+        try:
+            for p in d.iterdir():
+                if p.is_dir():
+                    if depth < max_depth and p.name not in _PARTIAL_SKIP_DIRS:
+                        walk(p, depth + 1)
+                elif p.name.lower().endswith(_PARTIAL_DOWNLOAD_EXTS if depth == 1 else _PARTIAL_DEEP_EXTS):
+                    found.append(str(p.relative_to(DRIVE_ROOT_PATH)))
+        except Exception:
+            app.logger.exception("Drive 다운로드 중 파일 확인 실패: %s", d)
+
+    walk(DRIVE_ROOT_PATH, 1)
+    return found
+
+
+_pc_partial_cache = {"t": 0.0, "v": None}
+
+
+def _pc_partial_files() -> list[str] | None:
+    """PC의 다운로드 폴더를 SSH로 직접 확인. Drive 동기화가 늦거나 큰 임시 파일을 늦게 올려도
+    정확하다. PC가 꺼져 있거나 확인이 안 되면 None(=모름). 화면 폴링과 예약 종료 감시가
+    같이 부르므로 10초 동안은 지난 결과를 쓴다."""
+    if time.time() - _pc_partial_cache["t"] < 10:
+        return _pc_partial_cache["v"]
+    v = _pc_partial_files_uncached()
+    _pc_partial_cache.update(t=time.time(), v=v)
+    return v
+
+
+def _pc_partial_files_uncached() -> list[str] | None:
+    if not (GAMING_PC_USER and Path(GAMING_PC_SSH_KEY).exists()) or not _is_pc_online(GAMING_PC_HOST):
+        return None
+    import base64
+    exts = "|".join(e.lstrip(".").replace("!", "\\!") for e in _PARTIAL_DEEP_EXTS)
+    ps = ("$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+          f"Get-ChildItem -LiteralPath '{PC_DOWNLOAD_DIR}' -Recurse -Depth 2 -File -Force -ErrorAction SilentlyContinue "
+          f"| Where-Object {{ $_.Name -match '\\.({exts})$' }} | Select-Object -First 50 | ForEach-Object {{ $_.FullName }}")
+    # 한글·$_ 가 셸에서 깨지지 않도록 UTF-16LE base64로 보낸다
+    enc = base64.b64encode(ps.encode("utf-16-le")).decode()
+    try:
+        r = _pc_ssh(f"powershell -NoProfile -NonInteractive -EncodedCommand {enc}")
+    except Exception:
+        app.logger.exception("PC 다운로드 중 파일 확인 실패")
+        return None
+    if r.returncode != 0:
+        return None
+    files = []
+    for line in _pc_text(r.stdout).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.replace("/", "\\").split("\\")
+        if any(seg in _PARTIAL_SKIP_DIRS for seg in parts[:-1]):
+            continue
+        files.append(line)
+    return files
+
+
+def _partial_downloads() -> list[str]:
+    """받는 중인 파일 목록 (PC + NAS). 하나라도 있으면 '다운로드 중'."""
+    pc = _pc_partial_files() or []
+    nas = _nas_partial_files()
+    pc_names = {p.replace("/", "\\").rsplit("\\", 1)[-1] for p in pc}
+    # NAS에 동기화된 같은 파일은 한 번만 센다
+    return pc + [n for n in nas if n.replace("/", "\\").rsplit("\\", 1)[-1] not in pc_names]
 
 
 def _has_partial_downloads() -> bool:
-    try:
-        for p in DRIVE_ROOT_PATH.iterdir():
-            if p.is_file() and p.name.lower().endswith(_PARTIAL_DOWNLOAD_EXTS):
-                return True
-    except Exception:
-        app.logger.exception("Drive 루트 다운로드 중 파일 확인 실패")
-    return False
+    return bool(_partial_downloads())
 
 
 def _is_encoding_in_progress() -> bool:
@@ -653,9 +727,12 @@ def schedule_pc_shutdown_status():
     with _schedule_shutdown_state["lock"]:
         active = _schedule_shutdown_state["active"]
         started_at = _schedule_shutdown_state["started_at"]
+    downloads = _partial_downloads() if active else []
     return jsonify({
         "success": True, "active": active, "started_at": started_at,
-        "downloading": _has_partial_downloads() if active else None,
+        "downloading": bool(downloads) if active else None,
+        "download_count": len(downloads),
+        "download_files": [d.replace("/", "\\").rsplit("\\", 1)[-1] for d in downloads[:5]],
         "encoding": _is_encoding_in_progress() if active else None,
     })
 
