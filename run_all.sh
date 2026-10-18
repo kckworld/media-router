@@ -71,6 +71,10 @@ if [ "$conan_after" -gt "$conan_before" ] || [ "$onepiece_after" -gt "$onepiece_
 else
     echo "$(ra_ts) 코난/원피스 이동 없음 → aniname.sh 건너뜀"
 fi
+# 3-1. 코난/원피스 자동 한국어 자막: 새 회차에 한국어 자막이 없으면 영상 속 영어 자막을 DeepL로 번역해
+#      "<영상이름>.ko.ass"로 둔다. 팬 자막이 들어오면 자동 자막을 지우고 교체 (2026-10-19, auto_subtitles.py)
+#      aniname 다음에 돌려야 최종 파일명 기준으로 만든다.
+python -u auto_subtitles.py "$CONAN_DIR" "$ONEPIECE_DIR" || echo "$(ra_ts) auto_subtitles.py 실행 중 오류 발생 (계속 진행)"
 
 # 4. bt4g
 /volume1/web/Python/bt4g/bt4g.sh || echo "$(ra_ts) bt4g.sh 실행 중 오류 발생 (계속 진행)"
