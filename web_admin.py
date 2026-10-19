@@ -877,7 +877,47 @@ def _readonly_guard():
 @app.context_processor
 def _inject_role():
     role = session_role(request)
-    return {"viewer": role == "viewer", "has_login": bool(PASSWORD)}
+    return {"viewer": role == "viewer", "has_login": bool(PASSWORD), "processing_pause": processing_pause_state()}
+
+
+# ── 자동 정리 일시정지 (2026-10-19) ──────────────────────────
+# 호스트의 run_all.sh가 이 파일을 보고 이름 변환(drama_name)·이동(media_router)·aniname을 건너뛴다.
+# data/ 는 컨테이너(/app/data)와 호스트(/volume1/docker/media-router/data)가 같은 폴더다.
+PROCESSING_PAUSE_PATH = DATA_DIR / "processing_paused.json"
+
+
+def processing_pause_state() -> dict:
+    try:
+        data = json.loads(PROCESSING_PAUSE_PATH.read_text(encoding="utf-8"))
+        if data.get("paused") is True:
+            return {"paused": True, "since": data.get("since"), "note": data.get("note") or ""}
+    except Exception:
+        pass
+    return {"paused": False}
+
+
+@app.route("/api/processing_pause", methods=["GET", "POST"])
+def api_processing_pause():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"error": "로그인이 필요합니다."}), 401
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        if body.get("paused"):
+            PROCESSING_PAUSE_PATH.write_text(json.dumps(
+                {"paused": True, "since": time.time(), "note": str(body.get("note") or "")[:200]},
+                ensure_ascii=False), encoding="utf-8")
+            # run_all.sh는 root(예약작업)와 kck9010(웹 버튼) 양쪽에서 읽는다
+            try:
+                os.chmod(PROCESSING_PAUSE_PATH, 0o664)
+            except OSError:
+                pass
+        else:
+            try:
+                PROCESSING_PAUSE_PATH.unlink()
+            except FileNotFoundError:
+                pass
+    return jsonify({"ok": True, **processing_pause_state()})
 
 def split_title_and_year(name: str) -> tuple[str, int | None]:
     cleaned = (name or "").strip()

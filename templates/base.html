@@ -57,7 +57,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/app.css?v=5">
+  <link rel="stylesheet" href="/static/app.css?v=6">
   {% block page_css %}{% endblock %}
 </head>
 <body class="{{ 'readonly' if viewer else '' }}">
@@ -111,6 +111,11 @@
       {% if viewer %}
       <div class="ro-banner" role="status">읽기 전용으로 보는 중이에요. 내용을 바꾸거나 실행할 수는 없어요. <a href="/logout">로그아웃</a></div>
       {% endif %}
+      {# 자동 정리 일시정지 중이면 모든 화면에 알려서 켜 둔 걸 잊지 않게 #}
+      <div class="pause-banner" id="pauseBanner" role="status"{% if not processing_pause.paused %} hidden{% endif %}>
+        ⏸ 자동 정리 일시정지 중이에요. 받은 파일의 이름 변환·라이브러리 이동을 하지 않아요.
+        {% if not viewer %}<a href="/logs">배치 화면에서 다시 켜기</a>{% endif %}
+      </div>
       <main class="page">
         {% block content %}{% endblock %}
       </main>

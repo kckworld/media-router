@@ -49,8 +49,20 @@ trap finish EXIT
 
 echo "$(ra_ts) RUN START (트리거: ${TRIGGER_SOURCE})"
 
+# 자동 정리 일시정지 (2026-10-19): 웹 '배치' 화면 스위치가 이 파일을 만든다/지운다.
+# 켜져 있으면 이름 변환(drama_name)·이동(media_router)·애니 이름 정리(aniname)를 건너뛰어
+# 받은 파일이 Drive/다운로드 폴더에 원래 이름 그대로 남는다 (여러 릴 인코딩 비교용).
+PAUSE_FLAG="/volume1/docker/media-router/data/processing_paused.json"
+PROCESSING_PAUSED=0
+if [ -f "$PAUSE_FLAG" ] && grep -q '"paused": *true' "$PAUSE_FLAG" 2>/dev/null; then
+    PROCESSING_PAUSED=1
+    echo "$(ra_ts) 자동 정리 일시정지 중 → 이름 변환(drama_name)·이동(media_router)·aniname 건너뜀"
+fi
+
 # 1. 드라마 이름 변경
-/volume1/web/video_auto/drama_name.sh || echo "$(ra_ts) drama_name.sh 실행 중 오류 발생 (계속 진행)"
+if [ "$PROCESSING_PAUSED" -eq 0 ]; then
+    /volume1/web/video_auto/drama_name.sh || echo "$(ra_ts) drama_name.sh 실행 중 오류 발생 (계속 진행)"
+fi
 
 # 2. happypack
 /volume1/web/Python/happypack/happypack.sh || echo "$(ra_ts) happypack.sh 실행 중 오류 발생 (계속 진행)"
@@ -60,16 +72,18 @@ cd /volume1/docker/media-router
 . .venv/bin/activate
 CONAN_DIR="/volume1/video/04.애니메이션/04.시리즈/명탐정 코난 (1996)"
 ONEPIECE_DIR="/volume1/video/04.애니메이션/04.시리즈/원피스/One Piece Season 23"
-conan_before=$(find "$CONAN_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
-onepiece_before=$(find "$ONEPIECE_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
-python -u media_router.py
-conan_after=$(find "$CONAN_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
-onepiece_after=$(find "$ONEPIECE_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
-if [ "$conan_after" -gt "$conan_before" ] || [ "$onepiece_after" -gt "$onepiece_before" ]; then
-    echo "$(ra_ts) 코난/원피스 파일 이동 감지 → aniname.sh 실행"
-    /volume1/web/Python/aniname/aniname.sh || echo "$(ra_ts) aniname.sh 실행 중 오류 발생 (계속 진행)"
-else
-    echo "$(ra_ts) 코난/원피스 이동 없음 → aniname.sh 건너뜀"
+if [ "$PROCESSING_PAUSED" -eq 0 ]; then
+    conan_before=$(find "$CONAN_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
+    onepiece_before=$(find "$ONEPIECE_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
+    python -u media_router.py
+    conan_after=$(find "$CONAN_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
+    onepiece_after=$(find "$ONEPIECE_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
+    if [ "$conan_after" -gt "$conan_before" ] || [ "$onepiece_after" -gt "$onepiece_before" ]; then
+        echo "$(ra_ts) 코난/원피스 파일 이동 감지 → aniname.sh 실행"
+        /volume1/web/Python/aniname/aniname.sh || echo "$(ra_ts) aniname.sh 실행 중 오류 발생 (계속 진행)"
+    else
+        echo "$(ra_ts) 코난/원피스 이동 없음 → aniname.sh 건너뜀"
+    fi
 fi
 # 3-1. 코난/원피스 자동 한국어 자막: 새 회차에 한국어 자막이 없으면 영상 속 영어 자막을 DeepL로 번역해
 #      "<영상이름>.ko.ass"로 둔다. 팬 자막이 들어오면 자동 자막을 지우고 교체 (2026-10-19, auto_subtitles.py)

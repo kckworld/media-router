@@ -440,3 +440,22 @@ a.tile:hover { border-color: var(--line-strong); }
 .sidebar-logout { margin-top: auto; padding: 8px 10px; font-size: 13px; color: var(--muted); text-decoration: none; border-radius: 8px; }
 .sidebar-logout:hover { background: var(--surface-2); color: var(--text); }
 @media (max-width: 899px) { .ro-banner { padding: 10px 16px; } }
+
+/* ── 자동 정리 일시정지 (2026-10-19): 배치 화면 스위치와 모든 화면 상단 안내 ── */
+.pause-card .pause-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.pause-card .pause-state { margin-top: 6px; font-weight: 600; color: var(--muted); }
+.pause-card.is-paused { border-color: var(--warn-line); background: var(--warn-soft); }
+.pause-card.is-paused .pause-state { color: var(--warn); }
+.switch { position: relative; flex-shrink: 0; width: 52px; height: 30px; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.switch-track { position: absolute; inset: 0; border-radius: 999px; background: var(--line-strong); transition: background .15s; }
+.switch-track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: transform .15s; }
+.switch input:checked + .switch-track { background: var(--warning); }
+.switch input:checked + .switch-track::after { transform: translateX(22px); }
+.switch input:focus-visible + .switch-track { box-shadow: 0 0 0 3px var(--accent-soft); }
+.pause-banner {
+  padding: 10px 32px; font-size: 13px; font-weight: 600;
+  background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid var(--warn-line);
+}
+.pause-banner a { margin-left: 6px; color: inherit; }
+@media (max-width: 899px) { .pause-banner { padding: 10px 16px; } }
