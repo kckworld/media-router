@@ -162,10 +162,15 @@ def korean_subs(folder: Path, ep: str) -> list[Path]:
 
 
 def copy_owner(src: Path, dst: Path) -> None:
+    """Plex·Jellyfin이 읽을 수 있게 권한은 항상 664로. 소유자 맞추기는 root일 때만 되므로 따로 시도한다
+    (2026-10-19 수동 실행 때 chown이 실패하면서 chmod까지 건너뛰어 -rw------- 자막이 생겼었다)."""
+    try:
+        os.chmod(dst, 0o664)
+    except Exception:
+        pass
     try:
         st = src.stat()
         os.chown(dst, st.st_uid, st.st_gid)
-        os.chmod(dst, 0o664)
     except Exception:
         pass
 

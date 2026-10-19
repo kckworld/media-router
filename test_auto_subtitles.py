@@ -97,6 +97,7 @@ def test_creates_korean_sub_for_new_episode(env):
     assert s["created"] == 1 and sub.exists() and "[KO]" in sub.read_text(encoding="utf-8")
     rec = state[str(env) + "|1217"]
     assert rec["status"] == "auto" and rec["sha256"] == a.sha256(sub)
+    assert (sub.stat().st_mode & 0o777) == 0o664      # Plex·Jellyfin이 읽을 수 있어야 함
     # 두 번째 실행은 아무것도 안 함
     assert run(env, state)["created"] == 0
 
