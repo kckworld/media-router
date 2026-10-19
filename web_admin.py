@@ -438,6 +438,98 @@ def _tg_confirm(*buttons: tuple[str, str]) -> dict:
     return {"inline_keyboard": [[{"text": label, "callback_data": f"{action}:{now}"} for label, action in buttons]]}
 
 
+# ── 인코딩 전 Drive 동기화 대기 (2026-10-19) ──
+# PC를 켜자마자 인코딩을 시작하면 Synology Drive가 아직 NAS의 Drive/인코딩 파일을 PC로
+# 내려받기 전이라 encode_all.ps1이 "대상 0개"로 보고 PC를 바로 꺼버렸다. 그래서 NAS에 있는
+# 인코딩 대상이 PC의 같은 폴더에 같은 크기로 다 나타날 때까지 기다린 뒤 시작한다.
+ENCODE_SYNC_TIMEOUT_SEC = 30 * 60
+ENCODE_SYNC_POLL_SEC = 15
+# encode_all.ps1의 $exts / $inDir 와 같아야 한다
+_ENCODE_EXTS = {".mp4", ".mkv", ".ts", ".avi", ".mov", ".m4v", ".wmv", ".flv", ".webm"}
+PC_ENCODE_DIR = os.getenv("PC_ENCODE_DIR", r"D:\SynologyDrive\인코딩")
+
+
+def _is_encode_target(name: str) -> bool:
+    # [완료]·[손상]으로 시작하는 건 스크립트가 건너뛰는 파일
+    return Path(name).suffix.lower() in _ENCODE_EXTS and not name.startswith(("[완료]", "[손상]"))
+
+
+def _nas_encode_targets() -> dict[str, int]:
+    """NAS Drive/인코딩 맨 위의 인코딩 대상 {파일명: 크기}."""
+    out = {}
+    try:
+        for p in ENCODING_HOLD_PATH.iterdir():
+            if p.is_file() and _is_encode_target(p.name):
+                out[p.name] = p.stat().st_size
+    except OSError:
+        app.logger.exception("Drive/인코딩 목록 확인 실패")
+    return out
+
+
+def _parse_pc_listing(text: str) -> dict[str, int]:
+    out = {}
+    for line in text.splitlines():
+        name, sep, size = line.rstrip("\r").rpartition("\t")
+        if sep and size.strip().isdigit():
+            out[name] = int(size.strip())
+    return out
+
+
+def _pc_encode_files() -> dict[str, int] | None:
+    """PC의 인코딩 폴더 {파일명: 크기}. PC가 꺼져 있거나 확인 실패면 None."""
+    if not (GAMING_PC_USER and Path(GAMING_PC_SSH_KEY).exists()) or not _is_pc_online(GAMING_PC_HOST):
+        return None
+    import base64
+    ps = ("$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+          f"Get-ChildItem -LiteralPath '{PC_ENCODE_DIR}' -File -Force -ErrorAction SilentlyContinue "
+          "| ForEach-Object { $_.Name + \"`t\" + $_.Length }")
+    enc = base64.b64encode(ps.encode("utf-16-le")).decode()
+    try:
+        r = _pc_ssh(f"powershell -NoProfile -NonInteractive -EncodedCommand {enc}")
+    except Exception:
+        app.logger.exception("PC 인코딩 폴더 확인 실패")
+        return None
+    if r.returncode != 0:
+        return None
+    return _parse_pc_listing(_pc_text(r.stdout))
+
+
+def _missing_on_pc(nas: dict[str, int], pc: dict[str, int]) -> list[str]:
+    """NAS에는 있는데 PC에는 아직 없거나 크기가 다른(받는 중인) 파일."""
+    return sorted(name for name, size in nas.items() if pc.get(name) != size)
+
+
+def _wait_encode_files_synced(progress=None) -> tuple[bool, str]:
+    """NAS의 인코딩 대상이 PC에 다 내려올 때까지 기다린다. (성공 여부, 안내 메시지)
+    NAS에 대상이 없으면 바로 통과 - 그때는 스크립트가 "대상 0개 → 즉시 종료"로
+    동작하는데, 그게 원격 종료 스위치로 쓰는 원래 의도다."""
+    def _note(msg: str) -> None:
+        if progress:
+            progress(msg)
+
+    deadline = time.time() + ENCODE_SYNC_TIMEOUT_SEC
+    noted = False
+    missing: list[str] = []
+    while True:
+        nas = _nas_encode_targets()
+        if not nas:
+            return True, ""
+        pc = _pc_encode_files()
+        if pc is not None:
+            missing = _missing_on_pc(nas, pc)
+            if not missing:
+                return True, f"PC로 동기화 완료 ({len(nas)}개)"
+        if time.time() >= deadline:
+            names = "\n- ".join(missing[:5]) if missing else "(PC 폴더를 확인하지 못함)"
+            return False, (f"{ENCODE_SYNC_TIMEOUT_SEC // 60}분 기다렸는데 PC로 동기화가 안 끝났어요. 인코딩은 시작하지 않았고 PC는 켜 둔 채예요.\n"
+                           f"Synology Drive 상태를 확인해 주세요.\n- {names}")
+        if not noted:
+            noted = True
+            done = len(nas) - len(missing) if pc is not None else 0
+            _note(f"Synology Drive가 인코딩할 파일을 PC로 옮기는 중이에요 ({done}/{len(nas)}). 다 올라오면 시작할게요 (최대 {ENCODE_SYNC_TIMEOUT_SEC // 60}분).")
+        time.sleep(ENCODE_SYNC_POLL_SEC)
+
+
 def _ensure_pc_on_and_trigger_encode(progress=None) -> tuple[bool, str]:
     """PC가 꺼져있으면 WOL로 켜고 최대 2분 기다렸다가, 켜지면(또는 이미
     켜져있으면) 인코딩을 원격 시작한다. 웹 버튼과 텔레그램 트리거가 공유.
@@ -459,10 +551,14 @@ def _ensure_pc_on_and_trigger_encode(progress=None) -> tuple[bool, str]:
             waited += 5
         if not _is_pc_online(GAMING_PC_HOST):
             return False, "2분 기다렸는데 PC가 안 켜져요. 직접 확인해주세요."
-        _note("PC 켜졌어요. 인코딩 시작할게요.")
+        _note("PC 켜졌어요. 인코딩할 파일이 PC로 다 올라왔는지 확인할게요.")
         time.sleep(10)  # SSH 서비스가 완전히 올라올 시간 여유
 
-    return _trigger_remote_encode()
+    synced, sync_msg = _wait_encode_files_synced(progress)
+    if not synced:
+        return False, sync_msg
+    ok, message = _trigger_remote_encode()
+    return ok, (f"{sync_msg}. {message}" if ok and sync_msg else message)
 
 
 def _handle_telegram_encode_request() -> None:
@@ -473,6 +569,10 @@ def _handle_telegram_encode_request() -> None:
             return
         _run_encode_state["last_triggered"] = time.time()
 
+    _run_encode_with_notify()
+
+
+def _run_encode_with_notify() -> None:
     ok, message = _ensure_pc_on_and_trigger_encode(progress=_tg_notify)
     suffix = "\n끝나면 알아서 PC가 꺼질 거예요." if ok else ""
     _tg_notify(("✅ " if ok else "❌ ") + message + suffix)
@@ -2300,6 +2400,11 @@ def run_encode():
             return jsonify({"success": False, "message": f"방금 요청했습니다. {int(30 - elapsed)}초 후 다시 시도하세요."}), 429
         _run_encode_state["last_triggered"] = time.time()
 
+    # PC 부팅 + Drive 동기화 대기로 최대 30분 넘게 걸릴 수 있어 요청을 붙잡지 않고 뒤에서 돌린다.
+    # 진행·결과는 텔레그램 인코딩 요청과 같은 문구로 알린다
+    if not _is_pc_online(GAMING_PC_HOST) or _nas_encode_targets():
+        threading.Thread(target=_tg_safe, args=(_run_encode_with_notify,), daemon=True).start()
+        return jsonify({"success": True, "message": "PC를 켜고, 인코딩할 파일이 PC로 다 올라오면 시작할게요. 진행 상황은 텔레그램으로 알려 드려요."})
     ok, message = _ensure_pc_on_and_trigger_encode()
     return jsonify({"success": ok, "message": message}), (200 if ok else 500)
 
