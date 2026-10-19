@@ -6,6 +6,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-client libmediainfo0v5 \
     && rm -rf /var/lib/apt/lists/*
 
+# ffmpeg/ffprobe: 유튜브 다운로드(yt-dlp)의 영상+음성 합치기·mp3 변환.
+# apt의 ffmpeg는 작은 파일 수백 개를 풀어서 NAS(btrfs RAID5)에서 1시간 넘게 걸렸다(2026-10-19)
+# → 파일 2개짜리 정적 빌드를 복사한다
+COPY --from=mwader/static-ffmpeg:7.1.1 /ffmpeg /ffprobe /usr/local/bin/
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

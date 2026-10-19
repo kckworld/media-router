@@ -1,0 +1,103 @@
+{% set active_page = 'youtube' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .yt-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .yt-form input[type=url] { flex: 1 1 320px; min-width: 0; }
+    .yt-form .btn { height: 42px; }
+    .yt-list { list-style: none; margin: 0; padding: 0; }
+    .yt-item { padding: 12px 2px; border-bottom: 1px solid var(--line); }
+    .yt-item:last-child { border-bottom: 0; }
+    .yt-head { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+    .yt-title { font-weight: 600; color: var(--fg); word-break: break-all; }
+    .yt-sub { font-size: 12px; color: var(--muted); margin-top: 4px; word-break: break-all; }
+    .yt-err { font-size: 12px; color: var(--danger-hover); margin-top: 4px; white-space: pre-wrap; word-break: break-all; }
+    .bar { position: relative; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+    .bar > span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); }
+    .state { display: inline-block; flex: none; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--bg-solid); color: var(--muted); }
+    .state.dl { background: var(--accent-light); color: var(--accent-hover); }
+    .state.done { background: var(--success-light); color: var(--success-hover); }
+    .state.err { background: var(--danger-light); color: var(--danger-hover); }
+    .yt-empty { color: var(--muted); padding: 12px 2px; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="section-title">유튜브 받기</div>
+      <form class="yt-form" onsubmit="addJob(event, 'video')" data-write>
+        <input type="url" id="ytUrl" placeholder="유튜브 링크 붙여 넣기 (https://youtu.be/…)" autocomplete="off" required>
+        <button type="submit" class="btn primary" id="ytVideoBtn">🎬 영상 (1080p)</button>
+        <button type="button" class="btn" id="ytAudioBtn" onclick="addJob(event, 'audio')">🎵 음악 (mp3)</button>
+      </form>
+      <div class="hint" style="margin-top:8px;">
+        영상은 <b>Drive</b>에 넣어요. 배치가 평소처럼 이름 정리·이동·인코딩까지 이어서 해요. 음악은 <b>Drive/음악</b>에 넣어요.
+        휴대폰에서는 유튜브 앱의 <b>공유 → 텔레그램 → Media Router 봇</b>으로 보내도 돼요.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">받은 목록</div>
+      <ul class="yt-list" id="ytList"><li class="yt-empty">불러오는 중…</li></ul>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    var STATE = { queued: ["대기", ""], downloading: ["받는 중", "dl"], done: ["완료", "done"], error: ["실패", "err"] };
+
+    function fmtTime(t) {
+      if (!t) return "";
+      var d = new Date(t * 1000);
+      return (d.getMonth() + 1) + "/" + d.getDate() + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    }
+
+    function render(jobs) {
+      var list = document.getElementById("ytList");
+      if (!jobs.length) { list.innerHTML = '<li class="yt-empty">아직 받은 영상이 없어요.</li>'; return; }
+      list.innerHTML = jobs.map(function(j) {
+        var st = STATE[j.status] || [j.status, ""];
+        var kind = j.mode === "audio" ? "🎵 음악" : "🎬 영상";
+        var via = j.source === "telegram" ? " · 텔레그램" : "";
+        var sub = kind + via + " · " + fmtTime(j.created);
+        if (j.status === "downloading") sub += " · " + esc(j.percent.toFixed(1)) + "%" + (j.speed ? " · " + esc(j.speed) : "") + (j.eta ? " · 남은 시간 " + esc(j.eta) : "");
+        var body = '<div class="yt-sub">' + sub + '</div>';
+        if (j.status === "downloading") body += '<div class="bar"><span style="width:' + Math.max(0, Math.min(100, j.percent)) + '%"></span></div>';
+        if (j.status === "done" && j.files.length) body += '<div class="yt-sub">' + (j.mode === "audio" ? "Drive/음악/" : "Drive/") + esc(j.files[0]) + '</div>';
+        if (j.status === "error") body += '<div class="yt-err">' + esc(j.error) + '</div>';
+        return '<li class="yt-item"><div class="yt-head"><a class="yt-title" href="' + esc(j.url) + '" target="_blank" rel="noopener">' +
+          esc(j.title || j.url) + '</a><span class="state ' + st[1] + '">' + st[0] + '</span></div>' + body + '</li>';
+      }).join("");
+    }
+
+    function load() {
+      fetch("/api/youtube", { cache: "no-store" }).then(mrJson).then(function(res) {
+        if (res.ok && res.data.ok) render(res.data.jobs);
+      }).catch(function() {});
+    }
+
+    function addJob(e, mode) {
+      e.preventDefault();
+      var input = document.getElementById("ytUrl");
+      if (!input.value.trim()) { input.focus(); return; }
+      var btn = document.getElementById(mode === "audio" ? "ytAudioBtn" : "ytVideoBtn");
+      var done = mrBusy(btn, "넣는 중");
+      fetch("/api/youtube", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: input.value, mode: mode }) })
+        .then(mrJson)
+        .then(function(res) {
+          done();
+          if (!res.ok || !res.data.ok) { showToast(res.data.error || "넣지 못했어요", "error"); return; }
+          input.value = "";
+          showToast(mode === "audio" ? "음악 받기를 시작했어요." : "영상 받기를 시작했어요.", "success");
+          load();
+        })
+        .catch(function(err) { done(); showToast("오류: " + err, "error"); });
+    }
+
+    load();
+    setInterval(function() { if (!document.hidden) load(); }, 3000);
+    document.addEventListener("visibilitychange", function() { if (!document.hidden) load(); });
+  </script>
+{% endblock %}

@@ -20,6 +20,9 @@ services:
       # "PC예약종료" 기능이 Drive 루트에 떨어지는 .crdownload(다운로드 중)
       # 파일 유무를 확인하기 위한 마운트
       - /volume1/homes/kck9010/Drive:/app/drive_root:ro
+      # 유튜브 다운로드(2026-10-19): ~/.ytdl-tmp에 받은 뒤 Drive로 rename. 둘이 같은
+      # 마운트 안에 있어야 rename이 복사 없이 즉시 된다(마운트가 다르면 EXDEV)
+      - /volume1/homes/kck9010:/app/kck_home
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}
       # 보기 전용 계정 비밀번호 (비우면 보기 전용 로그인 없음). 값은 .env에

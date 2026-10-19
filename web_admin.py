@@ -506,6 +506,12 @@ def _tg_shutdown(force: bool) -> None:
 
 
 def _handle_telegram_text(text: str) -> None:
+    # 유튜브 앱에서 공유한 링크 → 영상/음악 중 고르게 한다 (아래 youtube_* 콜백)
+    vid = ytdl.extract_video_id(text)
+    if vid:
+        _tg_notify("유튜브 링크를 받았어요. 어떻게 받을까요?\n영상은 Drive에, 음악은 Drive/음악에 넣어요.",
+                   _tg_confirm(("🎬 영상 (1080p)", f"ytv_{vid}"), ("🎵 음악 (mp3)", f"yta_{vid}"), ("취소", "dismiss")))
+        return
     if text == TG_BTN_BATCH:
         _tg_notify("배치(run_all.sh)를 지금 실행할까요?\n파일 이동·이름변경이 바로 진행돼요.",
                    _tg_confirm(("▶ 실행", "batch"), ("취소", "dismiss")))
@@ -553,6 +559,14 @@ def _handle_telegram_callback(cq: dict) -> None:
     elif action == "cancel_off":
         ok, message, _code = _request_cancel_shutdown()
         _tg_result(ok, message)
+    elif action[:4] in ("ytv_", "yta_"):
+        mode = "video" if action.startswith("ytv_") else "audio"
+        try:
+            youtube.enqueue(ytdl.video_url(action[4:]), mode, "telegram")
+        except ValueError as e:
+            _tg_result(False, str(e))
+            return
+        _tg_notify("⬇ 받기 시작했어요. 끝나면 알려 드릴게요.\n진행 상황은 Media Router > 작업 > 유튜브에서 볼 수 있어요.")
 
 
 def _tg_show_menu_once(token: str) -> None:
@@ -918,6 +932,38 @@ def api_processing_pause():
             except FileNotFoundError:
                 pass
     return jsonify({"ok": True, **processing_pause_state()})
+
+
+# ── 유튜브 다운로드 (2026-10-19) ──────────────────────────
+# 휴대폰 유튜브 앱 → 공유 → 텔레그램 봇, 또는 웹 "작업 > 유튜브" 화면에서 링크를 넣으면
+# yt-dlp로 Drive(영상) / Drive/음악(mp3)에 받는다. 자세한 건 youtube_dl.py
+import youtube_dl as ytdl
+
+youtube = ytdl.Downloader(DATA_DIR / "youtube_jobs.json", notify=lambda text: _tg_notify(text),
+                          log=lambda msg: app.logger.warning("%s", msg))
+
+
+@app.route("/youtube", methods=["GET"])
+def youtube_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("youtube.html", authed=True)
+
+
+@app.route("/api/youtube", methods=["GET", "POST"])
+def api_youtube():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        try:
+            job = youtube.enqueue(str(body.get("url") or ""), str(body.get("mode") or "video"), "web")
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+        return jsonify({"ok": True, "job": job})
+    return jsonify({"ok": True, "jobs": youtube.list_jobs()})
 
 def split_title_and_year(name: str) -> tuple[str, int | None]:
     cleaned = (name or "").strip()
