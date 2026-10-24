@@ -57,6 +57,10 @@ RUN_BATCH_SSH_PORT = os.getenv("RUN_BATCH_SSH_PORT", "202")
 RUN_BATCH_SSH_USER = os.getenv("RUN_BATCH_SSH_USER", "kck9010")
 _run_batch_state = {"lock": threading.Lock(), "last_triggered": 0}
 
+# NAS 백그라운드 claude 세션 재로그인 (2026-10-24) - 같은 호스트 SSH지만 키가 따로라
+# 강제 명령(claude_relogin.sh)의 status/start/code 만 쓸 수 있다
+CLAUDE_LOGIN_SSH_KEY = os.getenv("CLAUDE_LOGIN_SSH_KEY", "/app/secrets/claude_login_key")
+
 # PC(KCK-GAMING) Wake-on-LAN - 인코딩용 PC를 원격으로 켜기 위한 매직 패킷 전송.
 # 컨테이너가 network_mode: host라서 브로드캐스트가 실제 LAN(eth0)으로 그대로
 # 나간다(일반 bridge 네트워크였으면 NAT에 막혀 안 나갈 수 있음).
@@ -2000,6 +2004,52 @@ def settings_test_tmdb():
     if r.status_code == 401:
         return jsonify({"success": False, "message": f"{which}가 유효하지 않아요."}), 400
     return jsonify({"success": False, "message": f"TMDB 응답 오류 (HTTP {r.status_code})"}), 502
+
+
+CLAUDE_LOGIN_CODE_RE = re.compile(r"^[A-Za-z0-9_#-]{10,512}$")
+
+
+def _claude_login_ssh(command: str, timeout: int) -> dict:
+    """호스트의 claude_relogin.sh(강제 명령)를 실행하고 JSON 결과를 돌려준다."""
+    if not Path(CLAUDE_LOGIN_SSH_KEY).exists():
+        return {"ok": False, "message": "SSH 키가 설정되지 않았습니다 (secrets/claude_login_key 없음)."}
+    try:
+        r = subprocess.run(
+            ["ssh", "-i", CLAUDE_LOGIN_SSH_KEY, "-p", RUN_BATCH_SSH_PORT,
+             "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+             f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", command],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "message": "NAS 응답이 너무 늦어요. 잠시 후 상태를 다시 확인해 주세요."}
+    try:
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        detail = (r.stderr or r.stdout).strip()[:200]
+        return {"ok": False, "message": f"NAS 응답을 읽지 못했어요 (종료코드 {r.returncode}): {detail}"}
+
+
+@app.route("/settings/claude_login", methods=["GET", "POST"])
+def settings_claude_login():
+    """NAS 백그라운드 claude 세션 재로그인. GET=상태, POST {action:start} 로그인 주소 받기,
+    POST {action:code, code} 브라우저에서 받은 코드 넣기. 보기 전용은 /settings 접두어로 막힌다."""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "message": "로그인이 필요합니다."}), 401
+    if request.method == "GET":
+        return jsonify(_claude_login_ssh("status", 30))
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    if action == "start":
+        result = _claude_login_ssh("start", 40)
+    elif action == "code":
+        code = (body.get("code") or "").strip()
+        if not CLAUDE_LOGIN_CODE_RE.match(code):
+            return jsonify({"ok": False, "message": "코드 형식이 이상해요. 브라우저에 나온 코드를 그대로 붙여 넣어 주세요."}), 400
+        result = _claude_login_ssh(f"code {code}", 45)  # gunicorn timeout(60초)보다 짧게
+    else:
+        return jsonify({"ok": False, "message": "모르는 요청이에요."}), 400
+    return jsonify(result), (200 if result.get("ok") else 502)
 
 
 @app.route("/settings/status", methods=["GET"])

@@ -223,6 +223,39 @@
         <button class="btn primary" type="submit" id="settingsSaveBtn">저장</button>
       </div>
     </form>
+
+    {# 저장 폼과 따로 둔다: 코드 입력칸에서 Enter를 눌러도 설정 저장이 되지 않게 #}
+    <div class="settings-wrap" style="margin-top:16px;">
+      <section class="card set-card">
+        <div class="set-head">
+          <div>
+            <div class="set-title">🤖 Claude 로그인 (NAS)</div>
+            <div class="set-desc">NAS 백그라운드 Claude 세션의 로그인이 만료됐을 때 여기서 다시 로그인해요. 휴대폰 브라우저만 있으면 돼요.</div>
+          </div>
+          <span class="set-pill" id="claudePill">확인 중...</span>
+        </div>
+        <div class="set-actions">
+          <button type="button" class="btn small" id="claudeStartBtn" onclick="claudeLoginStart()">🔑 로그인 시작</button>
+          <button type="button" class="btn small" onclick="loadClaudeLogin()">↻ 상태 확인</button>
+        </div>
+        <div id="claudeStep" style="display:none;">
+          <div class="set-note">① 아래 버튼으로 로그인 페이지를 열어 로그인하세요. ② 마지막 화면에 나온 코드를 복사해 아래에 붙여 넣으세요. (15분 안에)</div>
+          <div class="set-actions"><a class="btn small primary" id="claudeUrlLink" href="#" target="_blank" rel="noopener">로그인 페이지 열기 ↗</a></div>
+          <div class="set-row">
+            <div class="field" style="flex:1; min-width:240px;">
+              <label class="muted" for="claudeCodeInput">코드</label>
+              <input type="text" id="claudeCodeInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="브라우저에 나온 코드 붙여 넣기"
+                     onkeydown="if (event.key === 'Enter') claudeLoginCode()">
+            </div>
+            <div class="set-actions">
+              <button type="button" class="btn small primary" id="claudeCodeBtn" onclick="claudeLoginCode()">확인</button>
+            </div>
+          </div>
+        </div>
+        <div class="set-result" id="claudeResult"></div>
+        <div class="set-hint">만료되면 텔레그램으로 "claude-bg-watchdog 실패 … AUTH FAIL" 알림이 와요. 로그인되면 꺼진 백그라운드 세션도 바로 다시 띄워요.</div>
+      </section>
+    </div>
 {% endblock %}
 
 {% block scripts %}
@@ -356,6 +389,57 @@
         .finally(function() { btn.disabled = false; });
     }
 
+    // ===== Claude 로그인 (NAS 백그라운드 세션 재로그인) =====
+    function showClaudeStep(url) {
+      document.getElementById('claudeStep').style.display = url ? '' : 'none';
+      if (url) document.getElementById('claudeUrlLink').href = url;
+    }
+
+    function loadClaudeLogin() {
+      var pill = document.getElementById('claudePill');
+      fetch('/settings/claude_login')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (!d.ok) { pill.textContent = '확인 실패'; setResult('claudeResult', false, d.message || '응답이 없어요'); return; }
+          var a = d.auth || {};
+          pill.textContent = (a.loggedIn && a.authMethod === 'claude.ai') ? '로그인됨' + (a.subscriptionType ? ' (' + a.subscriptionType + ')' : '') : '로그인 필요';
+          showClaudeStep(d.pending ? d.url : '');
+        })
+        .catch(function(e) { pill.textContent = '확인 실패'; setResult('claudeResult', false, '요청 중 오류: ' + e); });
+    }
+
+    function claudeLoginStart() {
+      var btn = document.getElementById('claudeStartBtn');
+      btn.disabled = true;
+      postJson('/settings/claude_login', { action: 'start' })
+        .then(function(res) {
+          if (res.data.ok) {
+            showClaudeStep(res.data.url);
+            document.getElementById('claudeCodeInput').value = '';
+            setResult('claudeResult', true, '로그인 페이지를 열어 주세요.');
+          } else {
+            setResult('claudeResult', false, res.data.message || '시작하지 못했어요');
+          }
+        })
+        .catch(function(e) { setResult('claudeResult', false, '요청 중 오류: ' + e); })
+        .finally(function() { btn.disabled = false; });
+    }
+
+    function claudeLoginCode() {
+      var btn = document.getElementById('claudeCodeBtn');
+      var code = document.getElementById('claudeCodeInput').value.trim();
+      if (!code) { setResult('claudeResult', false, '코드를 붙여 넣어 주세요.'); return; }
+      btn.disabled = true; btn.textContent = '확인 중...';
+      postJson('/settings/claude_login', { action: 'code', code: code })
+        .then(function(res) {
+          setResult('claudeResult', res.data.ok, res.data.message || '응답이 없어요');
+          if (res.data.ok) showClaudeStep('');
+          loadClaudeLogin();
+        })
+        .catch(function(e) { setResult('claudeResult', false, '요청 중 오류: ' + e); })
+        .finally(function() { btn.disabled = false; btn.textContent = '확인'; });
+    }
+
     (function initSettings() {
       var form = document.getElementById('settingsForm');
       var dirty = document.getElementById('dirtyNote');
@@ -385,6 +469,7 @@
       document.querySelectorAll('.mode-input').forEach(checkMode);
       checkPaths();
       loadSettingsStatus();
+      loadClaudeLogin();
       {% if saved %}showToast('저장했어요', 'success');{% endif %}
     })();
   </script>
