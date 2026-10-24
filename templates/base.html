@@ -15,7 +15,8 @@
     {'key': 'encode', 'label': '인코딩', 'href': '/encode_log'}]},
   {'key': 'settings', 'label': '설정', 'pages': [
     {'key': 'settings', 'label': '연동·경로', 'href': '/settings', 'admin_only': True},
-    {'key': 'users', 'label': '사용자 매핑', 'href': '/users', 'admin_only': True}]},
+    {'key': 'users', 'label': '사용자 매핑', 'href': '/users', 'admin_only': True},
+    {'key': 'skills', 'label': 'Claude 스킬', 'href': '/skills', 'admin_only': True}]},
 ] -%}
 {#- 보기 전용 계정에는 admin_only 화면(개인정보·서버 설정)을 메뉴에서 뺀다. 접근 차단은 서버(_readonly_guard)가 한다 -#}
 {%- set nav_ns = namespace(items=[]) -%}

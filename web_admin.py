@@ -965,7 +965,7 @@ def authed(req):
 
 
 # 보기 전용 계정에 숨기는 화면 (가족 Jellyfin·Plex 계정명, 서버 경로·연결 정보)
-VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users")
+VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users", "/skills", "/api/skills")
 READONLY_MESSAGE = "읽기 전용 계정이라 바꿀 수 없어요."
 
 
@@ -1068,6 +1068,63 @@ def api_youtube():
             return jsonify({"ok": False, "error": str(e)}), 400
         return jsonify({"ok": True, "job": job})
     return jsonify({"ok": True, "jobs": youtube.list_jobs()})
+
+
+# ── Claude 스킬 관리 (2026-10-24) ──────────────────────────
+# NAS claude의 스킬 현황 보기 + k-skill 개별 설치/삭제. 자세한 건 skills_mgr.py
+import skills_mgr
+
+
+@app.route("/skills", methods=["GET"])
+def skills_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("skills.html", authed=True)
+
+
+@app.route("/api/skills", methods=["GET"])
+def api_skills():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    return jsonify({"ok": True, "installed": skills_mgr.list_installed()})
+
+
+@app.route("/api/skills/catalog", methods=["GET"])
+def api_skills_catalog():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    try:
+        return jsonify({"ok": True, **skills_mgr.catalog(DATA_DIR, refresh=request.args.get("refresh") == "1")})
+    except Exception as e:
+        app.logger.exception("k-skill 목록 불러오기 실패")
+        return jsonify({"ok": False, "error": f"k-skill 목록을 불러오지 못했어요 ({type(e).__name__})."}), 502
+
+
+@app.route("/api/skills/install", methods=["POST"])
+def api_skills_install():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    name = str((request.get_json(silent=True) or {}).get("name") or "")
+    try:
+        return jsonify({"ok": True, "skill": skills_mgr.install(DATA_DIR, name)})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/skills/remove", methods=["POST"])
+def api_skills_remove():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    name = str((request.get_json(silent=True) or {}).get("name") or "")
+    try:
+        return jsonify({"ok": True, "trash": skills_mgr.remove(name)})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
 
 def split_title_and_year(name: str) -> tuple[str, int | None]:
     cleaned = (name or "").strip()
