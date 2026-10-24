@@ -93,8 +93,12 @@
         '<div class="sk-stat">플러그인 <b>' + pluginSkills + '</b></div>' +
         '<div class="sk-stat">합계 <b>' + total + '</b>개 · 설명 약 <b>' + len.toLocaleString() + '</b>자</div>';
 
+      // k-skill로 설치한 건 SKILL.md 설명이 영어라 카탈로그의 한국어 요약으로 보여준다
+      var ko = {};
+      if (catalogData) catalogData.skills.forEach(function(c) { if (c.summary) ko[c.name] = c.summary; });
       document.getElementById("skPersonal").innerHTML = p.length ? p.map(function(s) {
         var tag = s.kskill ? '<span class="sk-tags"><span class="sk-tag k">k-skill</span></span>' : '';
+        if (s.kskill && ko[s.dir]) s = Object.assign({}, s, { summary: ko[s.dir] });
         return skillRow(s, tag, '<button type="button" class="btn small danger" data-write onclick="removeSkill(\'' + esc(s.dir) + '\', this)">삭제</button>');
       }).join("") : '<li class="sk-empty">개인 스킬이 없어요.</li>';
 
@@ -157,7 +161,7 @@
         var d = new Date(catalogData.fetched * 1000);
         document.getElementById("kInfo").textContent = "스킬 " + catalogData.skills.length + "개 · 받은 시각 " + (d.getMonth() + 1) + "/" + d.getDate() + " " +
           String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
-        renderCatalog();
+        renderInstalled();  // 개인 스킬 한국어 요약 반영 (renderCatalog도 여기서 호출됨)
       }).catch(function(e) { done(); showToast("오류: " + e, "error"); });
     }
 
