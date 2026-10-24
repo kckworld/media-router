@@ -135,7 +135,8 @@
           groups[c].map(function(s) {
             var action;
             if (mine[s.name] === "k") action = '<span class="sk-tags"><span class="sk-tag on">설치됨</span></span>' +
-              '<button type="button" class="btn small" data-write onclick="installSkill(\'' + esc(s.name) + '\', this)">업데이트</button>';
+              '<button type="button" class="btn small" data-write onclick="installSkill(\'' + esc(s.name) + '\', this)">업데이트</button>' +
+              '<button type="button" class="btn small danger" data-write onclick="removeSkill(\'' + esc(s.name) + '\', this)">삭제</button>';
             else if (mine[s.name] === "other") action = '<span class="sk-tag">같은 이름 있음</span>';
             else action = '<button type="button" class="btn small primary" data-write onclick="installSkill(\'' + esc(s.name) + '\', this)">설치</button>';
             return skillRow(s, '', '<div style="display:flex;gap:6px;align-items:center;flex:none;">' + action + '</div>');
