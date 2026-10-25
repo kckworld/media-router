@@ -279,3 +279,43 @@ def test_seed_rule_persists_episodes_per_day(fresh_db):
     reloaded = fresh_db.load_cfg()
     target = next(r for r in reloaded["rules"] if r["id"] == rule["id"])
     assert target["episodes_per_day"] == 2
+
+
+# ---------------------------------------------------------------------------
+# 예능: 같은 방송일·같은 크기인데 회차 번호만 다른 중복 (2026-10 런닝맨)
+# ---------------------------------------------------------------------------
+
+def _touch(path, size):
+    path.write_bytes(b"x" * size)
+    return path
+
+
+def test_parse_variety_name():
+    assert mr.parse_variety_name("런닝맨.E824.261025.mp4") == ("런닝맨", 824, "261025")
+    assert mr.parse_variety_name("런닝맨.E199.140608.(박지성,차범근,설기현).mp4") == ("런닝맨", 199, "140608")
+    assert mr.parse_variety_name("나 혼자 산다.E660.260821.mp4") == ("나 혼자 산다", 660, "260821")
+    assert mr.parse_variety_name("전현무계획.S04E08.260821.mp4") is None
+    assert mr.parse_variety_name("런닝맨.E284.바캉스 레이스.130630.mp4") is None
+
+
+def test_same_airdate_duplicate_found_only_for_same_show_date_and_size(tmp_path):
+    lib, dl = tmp_path / "lib", tmp_path / "dl"
+    lib.mkdir(); dl.mkdir()
+    existing = _touch(lib / "런닝맨.E825.261025.mp4", 100)
+    _touch(lib / "런닝맨.E823.261018.mp4", 100)                  # 다른 날짜
+    _touch(lib / "나 혼자 산다.E700.261025.mp4", 100)             # 다른 프로그램
+    incoming = _touch(dl / "런닝맨.E824.261025.mp4", 100)
+    assert mr.find_same_airdate_duplicate(lib, incoming) == existing
+
+    other_size = _touch(dl / "런닝맨.E826.261025.mp4", 99)       # 크기 다르면 다른 영상
+    assert mr.find_same_airdate_duplicate(lib, other_size) is None
+
+
+def test_expected_variety_episode_uses_previous_airdate(tmp_path):
+    _touch(tmp_path / "런닝맨.E820.260913.mp4", 1)
+    _touch(tmp_path / "런닝맨.E821.261004.mp4", 1)
+    _touch(tmp_path / "런닝맨.E825.261025.mp4", 1)   # 같은 날짜 파일은 기준에서 제외
+    assert mr.expected_variety_episode(tmp_path, "런닝맨", "261011") == 822
+    assert mr.expected_variety_episode(tmp_path, "런닝맨", "261025") == 822
+    assert mr.expected_variety_episode(tmp_path, "런닝맨", "260101") is None
+    assert mr.expected_variety_episode(tmp_path, "나 혼자 산다", "261025") is None

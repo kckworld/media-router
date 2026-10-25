@@ -61,6 +61,45 @@ def extract_episode_number(filename: str):
     
     return None
 
+VARIETY_NAME_RE = re.compile(r'^(?P<show>.+?)\.[Ee](?P<ep>\d+)\.(?P<date>\d{6})(?:\.|$)')
+
+def parse_variety_name(filename: str):
+    """예능 파일명 "프로그램.E824.261025.mp4"를 (프로그램, 회차, 방송일 yymmdd)로. 형식이 아니면 None"""
+    m = VARIETY_NAME_RE.match(filename)
+    if not m:
+        return None
+    return m.group("show"), int(m.group("ep")), m.group("date")
+
+def find_same_airdate_duplicate(target_dir: Path, f: Path):
+    """같은 프로그램·같은 방송일·같은 크기인데 회차 번호만 다른 기존 파일.
+
+    릴마다 회차를 다르게 붙이는 경우가 있다(2026-10 런닝맨: 먼저 오는 릴은
+    회차+1, 나중에 오는 릴은 정상). 파일명이 달라 동일 파일명 중복 검사에
+    안 걸리고 같은 영상이 두 회차로 쌓였다."""
+    parsed = parse_variety_name(f.name)
+    if not parsed or not target_dir.is_dir():
+        return None
+    show, ep, date = parsed
+    size = f.stat().st_size
+    for other in target_dir.iterdir():
+        if other == f or not other.is_file():
+            continue
+        p = parse_variety_name(other.name)
+        if p and p[0] == show and p[2] == date and p[1] != ep and other.stat().st_size == size:
+            return other
+    return None
+
+def expected_variety_episode(target_dir: Path, show: str, date: str):
+    """폴더에서 이 방송일 직전 회차 +1. 직전 회차 파일이 없으면 None"""
+    prev = None
+    for other in target_dir.iterdir():
+        p = parse_variety_name(other.name)
+        if not p or p[0] != show or p[2] >= date:
+            continue
+        if prev is None or (p[2], p[1]) > prev:
+            prev = (p[2], p[1])
+    return prev[1] + 1 if prev else None
+
 def sanitize_filename_for_plex(filename: str) -> str:
     """Plex TV 스캐너가 인식 못하는 토큰(예: .END) 제거"""
     return re.sub(r'(?i)\.END(?=\.[^.]+$)', '', filename)
@@ -620,6 +659,33 @@ def main() -> None:
                         tg_send(cfg, f"중복 정리: {f.name} (더 작은 기존 파일 유지)")
                         mark_rule_updated_map(r)
                         continue
+
+                    # 예능: 파일명은 달라도 같은 방송일·같은 크기면 같은 영상(회차 번호만
+                    # 다르게 붙은 릴). 직전 회차+1과 맞는 이름을 남기고, 판단이 안 되면
+                    # 기존 파일을 남긴다. 중복이 아니어도 번호가 직전 회차와 안 이어지면 알린다.
+                    if category == "예능":
+                        try:
+                            parsed = parse_variety_name(f.name)
+                            expected = expected_variety_episode(target_dir, parsed[0], parsed[2]) \
+                                if parsed and target_dir.is_dir() else None
+                            dup = find_same_airdate_duplicate(target_dir, f)
+                            if dup:
+                                dup_ep = parse_variety_name(dup.name)[1]
+                                if expected is not None and parsed[1] == expected and dup_ep != expected:
+                                    dup.unlink()
+                                    log(f"DUPLICATE_SAME_AIRDATE: kept incoming {f} (E{expected} 직전 회차와 연속), removed {dup}")
+                                    tg_send(cfg, f"중복 정리: {dup.name} → {f.name} (같은 방송일·같은 크기, 회차 번호 바로잡음)")
+                                else:
+                                    f.unlink()
+                                    log(f"DUPLICATE_SAME_AIRDATE: kept {dup}, removed {f}")
+                                    tg_send(cfg, f"중복 정리: {f.name} (같은 방송일·같은 크기인 {dup.name} 유지)")
+                                    mark_rule_updated_map(r)
+                                    continue
+                            elif expected is not None and parsed[1] != expected:
+                                log(f"EPISODE_NUMBER_GAP: {f.name} (직전 회차로 보면 E{expected})")
+                                tg_send(cfg, f"회차 번호 확인 필요: {f.name} (직전 회차로 보면 E{expected}, 결방·특집이면 무시)")
+                        except Exception as e:
+                            log(f"Same-airdate duplicate check fail: {f} ({e})")
 
                     # 드라마 파일명에 .END 같은 꼬리 토큰이 있으면 Plex 스캔 호환 형태로 정리
                     if category == "드라마":
