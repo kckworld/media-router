@@ -1126,6 +1126,38 @@ def api_skills_remove():
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
+
+# "클로드 필수 도구 50" 가이드 원문 보기 + 목록(스킬 화면에서 씀) + 가이드 속 깃허브 스킬 설치
+@app.route("/skills/guide", methods=["GET"])
+def skills_guide_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    g = skills_mgr.guide()
+    return render_template("skills_guide.html", authed=True, guide=g, guide_html=skills_mgr.guide_html())
+
+
+@app.route("/api/skills/guide", methods=["GET"])
+def api_skills_guide():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    return jsonify({"ok": True, "guide": skills_mgr.guide()})
+
+
+@app.route("/api/skills/guide/install", methods=["POST"])
+def api_skills_guide_install():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    name = str((request.get_json(silent=True) or {}).get("name") or "")
+    try:
+        return jsonify({"ok": True, "skill": skills_mgr.install_guide_skill(DATA_DIR, name)})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except requests.RequestException as e:
+        return jsonify({"ok": False, "error": f"깃허브에서 받지 못했어요 ({type(e).__name__})."}), 502
+
 def split_title_and_year(name: str) -> tuple[str, int | None]:
     cleaned = (name or "").strip()
     m = re.search(r"\((\d{4})\)\s*$", cleaned)

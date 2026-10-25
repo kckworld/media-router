@@ -1,4 +1,5 @@
 """Claude Code 스킬 관리 (2026-10-24) - 웹 "설정 > 스킬" 화면.
+2026-10-26: "클로드 필수 도구 50" 가이드(guides/) 보기와 그 안의 깃허브 스킬 설치 추가.
 
 NAS의 kck9010 홈(/app/kck_home)을 직접 읽고 쓴다.
 - 설치된 스킬: 개인(~/.claude/skills/<이름>), claude.ai 동기화(~/.claude/skills/synced/...),
@@ -12,6 +13,7 @@ k-skill의 SKILL.md는 본문 없이 `npx -y @nomadamas/k-skill@0 instruct <이�
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -98,12 +100,13 @@ def list_installed() -> dict:
                 continue
             info = _read_skill(p)
             if info:
-                marker = p / KSKILL_MARKER
-                if marker.exists():
-                    try:
-                        info["kskill"] = json.loads(marker.read_text())
-                    except ValueError:
-                        info["kskill"] = {}
+                for marker_name, key in ((KSKILL_MARKER, "kskill"), (GITHUB_MARKER, "github")):
+                    marker = p / marker_name
+                    if marker.exists():
+                        try:
+                            info[key] = json.loads(marker.read_text())
+                        except ValueError:
+                            info[key] = {}
                 personal.append(info)
 
     try:
@@ -245,6 +248,176 @@ def install(data_dir: Path, name: str) -> dict:
             (tmp / "SKILL.md").write_text(_pinned_skill_md(name, skill_md, instruction, dest), encoding="utf-8")
             fetched = int(Path(tf.name).stat().st_mtime)
         (tmp / KSKILL_MARKER).write_text(json.dumps({"repo": KSKILL_REPO, "fetched": fetched, "installed": int(time.time())}))
+        for p in [tmp, *tmp.rglob("*")]:
+            try:
+                os.chown(p, OWNER_UID, OWNER_GID)
+            except OSError:
+                pass
+        if dest.exists():
+            shutil.rmtree(dest)
+        tmp.rename(dest)
+    return _read_skill(dest) or {"name": name}
+
+
+# ── 클로드 필수 도구 50 가이드 (2026-10-26) ──────────────────
+# 노션 가이드를 guides/claude-tools-50.{md,json}으로 저장해 두고, 그중 깃허브 저장소의
+# 스킬 폴더 하나를 그대로 복사하면 되는 것만 웹에서 설치한다. 설치할 수 있는 저장소·경로는
+# json에 적힌 것뿐이다(아무 저장소나 받지 않는다). 플러그인·MCP는 명령만 보여 준다.
+
+GUIDE_DIR = Path(__file__).resolve().parent / "guides"
+GUIDE_NAME = "claude-tools-50"
+GITHUB_MARKER = ".github-skill.json"
+
+
+def guide() -> dict:
+    return json.loads((GUIDE_DIR / f"{GUIDE_NAME}.json").read_text(encoding="utf-8"))
+
+
+def guide_markdown() -> str:
+    return (GUIDE_DIR / f"{GUIDE_NAME}.md").read_text(encoding="utf-8")
+
+
+def _inline_md(text: str) -> str:
+    """`코드`, [글](주소), 맨 주소만 HTML로. 나머지는 전부 이스케이프."""
+    out, pos = [], 0
+    pat = re.compile(r"`([^`]+)`|\[([^\]]+)\]\((https?://[^)\s]+)\)|(https?://[^\s<>)\]]+)")
+    for m in pat.finditer(text):
+        out.append(html.escape(text[pos:m.start()]))
+        if m.group(1) is not None:
+            out.append(f"<code>{html.escape(m.group(1))}</code>")
+        else:
+            label, url = (m.group(2), m.group(3)) if m.group(2) else (m.group(4), m.group(4))
+            out.append(f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener">{html.escape(label)}</a>')
+        pos = m.end()
+    out.append(html.escape(text[pos:]))
+    return "".join(out)
+
+
+def guide_html() -> str:
+    """가이드 마크다운을 화면용 HTML로 (제목·목록·인용·코드 블록·링크 정도만 쓰는 문서라 직접 변환).
+    "### 3. 분야" → id s3, "#### 3-1. 도구" → id t3-1 (스킬 화면에서 바로 이 항목으로 연결)."""
+    out, para, in_code, code, in_list = [], [], False, [], False
+
+    def flush():
+        nonlocal in_list
+        if para:
+            out.append("<p>" + "<br>".join(_inline_md(p) for p in para) + "</p>")
+            para.clear()
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+
+    for line in guide_markdown().splitlines():
+        if line.strip() == "```":
+            if in_code:
+                out.append('<pre class="gd-code"><code>' + html.escape("\n".join(code)) + "</code></pre>")
+                code = []
+            else:
+                flush()
+            in_code = not in_code
+            continue
+        if in_code:
+            code.append(line)
+            continue
+        h = re.match(r"^(#{1,4}) (.+)$", line)
+        if h:
+            flush()
+            level, title = len(h.group(1)), h.group(2)
+            anchor = re.match(r"^(\d+)(?:-(\d+))?[ .]", title)
+            hid = ""
+            if anchor and level == 3:
+                hid = f' id="s{anchor.group(1)}"'
+            elif anchor and anchor.group(2) and level == 4:
+                hid = f' id="t{anchor.group(1)}-{anchor.group(2)}"'
+            out.append(f"<h{level}{hid}>{_inline_md(title)}</h{level}>")
+        elif re.match(r"^\s*([-*]|\d+\.) ", line):
+            if para:
+                out.append("<p>" + "<br>".join(_inline_md(p) for p in para) + "</p>")
+                para.clear()
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            depth = (len(line) - len(line.lstrip())) // 2
+            item = re.sub(r"^\s*([-*]|\d+\.) ", "", line)
+            out.append(f'<li class="gd-d{min(depth, 3)}">{_inline_md(item)}</li>')
+        elif line.startswith("> "):
+            flush()
+            out.append(f"<blockquote>{_inline_md(line[2:])}</blockquote>")
+        elif line.strip() == "---":
+            flush()
+            out.append("<hr>")
+        elif not line.strip():
+            flush()
+        else:
+            if in_list:
+                flush()
+            para.append(line)
+    flush()
+    return "\n".join(out)
+
+
+def _guide_skill(name: str) -> dict | None:
+    for sec in guide()["sections"]:
+        for item in sec["items"]:
+            for s in item.get("skills", []):
+                if s["name"] == name:
+                    return s
+    return None
+
+
+def _repo_tarball(data_dir: Path, repo: str) -> Path:
+    d = data_dir / "gh-skills"
+    d.mkdir(parents=True, exist_ok=True)
+    tgz = d / (repo.replace("/", "__") + ".tar.gz")
+    if not tgz.exists() or time.time() - tgz.stat().st_mtime > CATALOG_MAX_AGE:
+        r = requests.get(f"https://codeload.github.com/{repo}/tar.gz/HEAD", timeout=180)
+        r.raise_for_status()
+        tmp = tgz.with_suffix(".tmp")
+        tmp.write_bytes(r.content)
+        tmp.replace(tgz)
+    return tgz
+
+
+def install_guide_skill(data_dir: Path, name: str) -> dict:
+    spec = _guide_skill(name or "")
+    if not spec or not NAME_RE.match(name):
+        raise ValueError("가이드에 없는 스킬이에요.")
+    dest = skills_dir() / name
+    with _lock:
+        if dest.exists() and not (dest / GITHUB_MARKER).exists():
+            raise ValueError(f"같은 이름의 스킬({name})이 이미 있어요. 덮어쓰지 않았어요.")
+        tgz = _repo_tarball(data_dir, spec["repo"])
+        sub = spec["path"].strip("/")
+        tmp = skills_dir() / f".{name}.installing"
+        shutil.rmtree(tmp, ignore_errors=True)
+        found = False
+        with tarfile.open(tgz) as tf:
+            for m in tf.getmembers():
+                parts = m.name.split("/", 1)  # 맨 앞은 "<저장소>-<커밋>/"
+                if len(parts) < 2:
+                    continue
+                rel = parts[1]
+                if sub != ".":
+                    if not rel.startswith(sub + "/"):
+                        continue
+                    rel = rel[len(sub) + 1:]
+                elif rel.startswith(".git/") or rel.startswith(".github/"):
+                    continue
+                if not rel or ".." in rel.split("/") or not (m.isfile() or m.isdir()):
+                    continue  # 링크·장치 파일·경로 탈출은 건너뛴다
+                target = tmp / rel
+                if m.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(tf.extractfile(m).read())
+                target.chmod(0o755 if m.mode & 0o111 else 0o644)
+                found = found or rel == "SKILL.md"
+        if not found:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise ValueError(f"{spec['repo']}에서 {name} 스킬을 찾지 못했어요(저장소 구조가 바뀐 듯해요).")
+        (tmp / GITHUB_MARKER).write_text(json.dumps({"repo": spec["repo"], "path": spec["path"],
+                                                     "fetched": int(tgz.stat().st_mtime), "installed": int(time.time())}))
         for p in [tmp, *tmp.rglob("*")]:
             try:
                 os.chown(p, OWNER_UID, OWNER_GID)

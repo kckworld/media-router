@@ -57,6 +57,27 @@
       </div>
     </div>
 
+    <div class="card" id="guideCard">
+      <div class="section-title">클로드 필수 도구 50 <a class="muted" style="font-weight:400;font-size:13px;" href="/skills/guide">가이드 전체 보기 →</a></div>
+      <div class="sk-tools">
+        <input type="search" id="gqInput" placeholder="검색 (예: 디자인, 마케팅, 영상)" oninput="renderGuide()">
+        <select id="gkindSelect" onchange="renderGuide()">
+          <option value="">전체 종류</option>
+          <option value="skill">여기서 설치</option>
+          <option value="plugin">플러그인</option>
+          <option value="mcp">MCP</option>
+          <option value="cli">터미널 명령</option>
+          <option value="connector">claude.ai 커넥터</option>
+          <option value="builtin">기본 기능</option>
+        </select>
+      </div>
+      <div id="gCatalog"><div class="sk-empty">불러오는 중…</div></div>
+      <div class="hint" style="margin-top:8px;">
+        <b>여기서 설치</b>는 깃허브 저장소의 스킬 폴더를 그대로 받아 넣어요(받은 시점 그대로 고정).
+        플러그인·MCP는 <b>명령 복사</b> 후 NAS의 Claude Code 입력창(<code>claude</code>)이나 터미널에 붙여 넣으세요.
+      </div>
+    </div>
+
     <div class="card">
       <details class="sk-fold">
         <summary>플러그인 · claude.ai 동기화 스킬 (보기 전용)</summary>
@@ -97,7 +118,8 @@
       var ko = {};
       if (catalogData) catalogData.skills.forEach(function(c) { if (c.summary) ko[c.name] = c.summary; });
       document.getElementById("skPersonal").innerHTML = p.length ? p.map(function(s) {
-        var tag = s.kskill ? '<span class="sk-tags"><span class="sk-tag k">k-skill</span></span>' : '';
+        var tag = s.kskill ? '<span class="sk-tags"><span class="sk-tag k">k-skill</span></span>' :
+          s.github ? '<span class="sk-tags"><span class="sk-tag k">필수 도구 50</span></span>' : '';
         if (s.kskill && ko[s.dir]) s = Object.assign({}, s, { summary: ko[s.dir] });
         return skillRow(s, tag, '<button type="button" class="btn small danger" data-write onclick="removeSkill(\'' + esc(s.dir) + '\', this)">삭제</button>');
       }).join("") : '<li class="sk-empty">개인 스킬이 없어요.</li>';
@@ -111,6 +133,7 @@
         installed.synced.map(function(s) { return skillRow(s); }).join("") + '</ul></div>';
       document.getElementById("skOthers").innerHTML = html;
       if (catalogData) renderCatalog();
+      if (guideData) renderGuide();
     }
 
     function loadInstalled() {
@@ -186,6 +209,74 @@
       }).catch(function(e) { done(); showToast("오류: " + e, "error"); });
     }
 
-    loadInstalled().then(function() { loadCatalog(false); });
+    // ── 클로드 필수 도구 50 가이드 ──
+    var guideData = null, guideCmds = {};
+    var KIND_LABEL = { skill: "여기서 설치", plugin: "플러그인", mcp: "MCP", cli: "터미널 명령", connector: "claude.ai 커넥터", builtin: "기본 기능" };
+
+    function renderGuide() {
+      if (!guideData) return;
+      var q = document.getElementById("gqInput").value.trim().toLowerCase();
+      var kind = document.getElementById("gkindSelect").value;
+      var mine = {}, synced = {};
+      installed.personal.forEach(function(s) { mine[s.dir] = s.github ? "g" : "other"; });
+      installed.synced.forEach(function(s) { synced[s.name] = true; synced[s.dir] = true; });
+      guideCmds = {};
+      var html = guideData.sections.map(function(sec) {
+        var items = sec.items.filter(function(it) {
+          if (kind && it.kind !== kind) return false;
+          return !q || (it.name + " " + it.summary + " " + it.detail + " " + sec.title).toLowerCase().indexOf(q) >= 0;
+        });
+        if (!items.length) return "";
+        return '<div class="sk-group"><div class="sk-group-title">' + esc(sec.id + ". " + sec.title) + ' · ' + items.length + '</div><ul class="sk-list">' +
+          items.map(function(it) {
+            var acts = [];
+            it.skills.forEach(function(s) {
+              var label = it.skills.length > 1 ? " " + s.name : "";
+              if (mine[s.name] === "g") acts.push('<span class="sk-tag on">' + esc(s.name) + ' 설치됨</span>' +
+                '<button type="button" class="btn small" data-write onclick="installGuideSkill(\'' + esc(s.name) + '\', this)">업데이트</button>');
+              else if (mine[s.name] === "other") acts.push('<span class="sk-tag">' + esc(s.name) + ' 같은 이름 있음</span>');
+              else if (synced[s.name]) acts.push('<span class="sk-tag on">' + esc(s.name) + ' claude.ai에 있음</span>');
+              else acts.push('<button type="button" class="btn small primary" data-write onclick="installGuideSkill(\'' + esc(s.name) + '\', this)">설치' + esc(label) + '</button>');
+            });
+            if (it.commands.length) {
+              guideCmds[it.id] = it.commands.join("\n");
+              acts.push('<button type="button" class="btn small" onclick="copyGuideCmd(\'' + esc(it.id) + '\')">명령 복사</button>');
+            }
+            acts.push('<a class="btn small" href="/skills/guide#' + esc(it.anchor) + '">가이드</a>');
+            var tag = '<span class="sk-tags"><span class="sk-tag' + (it.kind === "skill" ? " k" : "") + '">' + esc(KIND_LABEL[it.kind] || it.kind) + '</span></span>';
+            var desc = esc(it.summary) + (it.detail ? ' — ' + esc(it.detail) : '') + (it.note ? '<br><b>참고:</b> ' + esc(it.note) : '');
+            return '<li class="sk-item"><div class="sk-main"><span class="sk-name">' + esc(it.id + " " + it.name) + '</span>' + tag +
+              '<div class="sk-desc">' + desc + '</div></div><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;flex:none;max-width:45%;">' + acts.join("") + '</div></li>';
+          }).join("") + '</ul></div>';
+      }).join("");
+      document.getElementById("gCatalog").innerHTML = html || '<div class="sk-empty">맞는 도구가 없어요.</div>';
+    }
+
+    function copyGuideCmd(id) {
+      var t = guideCmds[id] || "";
+      (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function() {
+        showToast("명령을 복사했어요. NAS의 Claude Code에 한 줄씩 붙여 넣으세요.", "success");
+      }).catch(function() { window.prompt("복사해서 쓰세요", t); });
+    }
+
+    function installGuideSkill(name, btn) {
+      var done = mrBusy(btn, "받는 중");
+      post("/api/skills/guide/install", { name: name }).then(function(res) {
+        done();
+        if (!res.ok || !res.data.ok) { showToast(res.data.error || "설치하지 못했어요", "error"); return; }
+        showToast(name + " 설치했어요. 새 세션부터 쓸 수 있어요.", "success");
+        loadInstalled();
+      }).catch(function(e) { done(); showToast("오류: " + e, "error"); });
+    }
+
+    function loadGuide() {
+      return fetch("/api/skills/guide", { cache: "no-store" }).then(mrJson).then(function(res) {
+        if (!res.ok || !res.data.ok) { document.getElementById("gCatalog").innerHTML = '<div class="sk-empty">가이드를 못 불러왔어요.</div>'; return; }
+        guideData = res.data.guide;
+        renderGuide();
+      });
+    }
+
+    loadInstalled().then(function() { loadGuide(); loadCatalog(false); });
   </script>
 {% endblock %}

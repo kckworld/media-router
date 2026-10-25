@@ -108,3 +108,56 @@ def test_viewer_cannot_touch_skills(env, monkeypatch):
     assert c.post("/api/skills/install", json={"name": "delivery-tracking"}).status_code == 403
     assert c.get("/api/skills").status_code == 403
     assert not (env[0] / ".claude/skills/delivery-tracking").exists()
+    assert c.post("/api/skills/guide/install", json={"name": "caveman"}).status_code == 403
+    assert c.get("/skills/guide").status_code in (302, 403)
+
+
+# ── 클로드 필수 도구 50 가이드 ──
+
+def test_guide_json_lists_installable_skills_only_from_fixed_paths():
+    g = skills_mgr.guide()
+    items = [i for s in g["sections"] for i in s["items"]]
+    assert sum(4 if i["id"] == "2-1" else 1 for i in items) == 50
+    for i in items:
+        assert i["kind"] in ("skill", "plugin", "mcp", "cli", "connector", "builtin")
+        assert (i["kind"] == "skill") == bool(i["skills"])
+        for s in i["skills"]:
+            assert skills_mgr.NAME_RE.match(s["name"]) and "/" in s["repo"] and ".." not in s["path"]
+
+
+def test_install_guide_skill_copies_only_that_folder(env):
+    home, data = env
+    (data / "gh-skills").mkdir()
+    with tarfile.open(data / "gh-skills/emilkowalski__skills.tar.gz", "w:gz") as tf:
+        _add(tf, "skills-abc123/skills/apple-design/SKILL.md", "---\nname: apple-design\ndescription: Apple feel\n---\n본문\n")
+        _add(tf, "skills-abc123/skills/apple-design/ref/motion.md", "모션\n")
+        _add(tf, "skills-abc123/skills/apple-design/../../../evil.txt", "x")
+        _add(tf, "skills-abc123/skills/other/SKILL.md", "---\nname: other\n---\n")
+    skills_mgr.install_guide_skill(data, "apple-design")
+    d = home / ".claude/skills/apple-design"
+    assert (d / "SKILL.md").read_text().startswith("---\nname: apple-design")
+    assert (d / "ref/motion.md").exists() and not (home / ".claude/skills/other").exists()
+    assert json.loads((d / skills_mgr.GITHUB_MARKER).read_text())["repo"] == "emilkowalski/skills"
+    assert not list(home.rglob("evil.txt"))
+    inst = {s["dir"]: s for s in skills_mgr.list_installed()["personal"]}
+    assert inst["apple-design"]["github"]["path"] == "skills/apple-design"
+    skills_mgr.install_guide_skill(data, "apple-design")  # 업데이트(재설치)는 된다
+
+
+def test_install_guide_skill_refuses_unknown_and_existing(env):
+    home, data = env
+    with pytest.raises(ValueError):
+        skills_mgr.install_guide_skill(data, "delivery-tracking")  # 가이드에 없는 이름
+    (home / ".claude/skills/caveman").mkdir()
+    (home / ".claude/skills/caveman/SKILL.md").write_text("---\nname: caveman\n---\n내 것\n")
+    with pytest.raises(ValueError, match="이미 있어요"):
+        skills_mgr.install_guide_skill(data, "caveman")
+    assert "내 것" in (home / ".claude/skills/caveman/SKILL.md").read_text()
+
+
+def test_guide_html_escapes_and_anchors():
+    h = skills_mgr.guide_html()
+    assert 'id="s1"' in h and 'id="t1-1"' in h and 'id="t10-5"' in h
+    assert '<pre class="gd-code"><code>/plugin marketplace add f/prompts.chat</code></pre>' in h
+    assert "<script" not in h.lower()
+    assert skills_mgr._inline_md("<b>[x](javascript:alert(1)) `a<b`") == "&lt;b&gt;[x](javascript:alert(1)) <code>a&lt;b</code>"
