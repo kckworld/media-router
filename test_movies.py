@@ -98,6 +98,50 @@ def test_process_waits_while_downloading(tmp_path):
     assert changes["abc"] == {"status": "stalled"} and len(sent) == 1
 
 
+def _done_movie(tmp_path):
+    host, lib = tmp_path / "_movies", tmp_path / "lib"
+    d = host / "abc"
+    d.mkdir(parents=True)
+    (d / "The.Proposal.2009.1080p.mkv").write_text("v")
+    return host, lib
+
+
+SUB = "프로포즈 The Proposal 2009 1080p WEB-DL HEVC x265 5.1 BONE.smi"
+
+
+def test_subtitle_waits_then_follows_movie_name(tmp_path):
+    host, lib = _done_movie(tmp_path)
+    drop = tmp_path / "임시download"
+    drop.mkdir()
+    job = _job(tmp_path, prefix="프로포즈 (2009)", folder="파", subs=[SUB], post_id="400648")
+    sent = []
+    changes = movie_mover.process([job], host, lib, sent.append, now=2000, sub_dirs=[drop])
+    assert changes["abc"]["subs_pending"] is True and changes["abc"]["video"] == "프로포즈 (2009).The.Proposal.2009.1080p.mkv"
+    assert "board.php?mode=view&b_id=tmovie&id=400648" in sent[0]
+    job.update(changes["abc"])
+    # 아직 안 넣었으면 그대로 기다림
+    assert movie_mover.process([job], host, lib, sent.append, now=3000, sub_dirs=[drop]) == {}
+    # 브라우저가 ' (1)'을 붙여 받아도 찾는다
+    (drop / SUB.replace(".smi", " (1).smi")).write_text("s")
+    changes = movie_mover.process([job], host, lib, sent.append, now=4000, sub_dirs=[drop])
+    assert changes["abc"] == {"subs_pending": False}
+    assert (lib / "파" / "프로포즈 (2009).The.Proposal.2009.1080p.smi").read_text() == "s"
+    assert not list(drop.iterdir())
+
+
+def test_subtitle_already_there_when_movie_finishes(tmp_path):
+    host, lib = _done_movie(tmp_path)
+    drop = tmp_path / "drop"
+    drop.mkdir()
+    (drop / SUB).write_text("s")
+    job = _job(tmp_path, prefix="프로포즈 (2009)", folder="파", subs=[SUB], post_id="400648")
+    sent = []
+    changes = movie_mover.process([job], host, lib, sent.append, now=2000, sub_dirs=[drop])
+    assert "subs_pending" not in changes["abc"]
+    assert (lib / "파" / "프로포즈 (2009).The.Proposal.2009.1080p.smi").exists()
+    assert "미리 받아 둔 자막" in sent[0]
+
+
 def test_place_files_never_overwrites(tmp_path):
     src = tmp_path / "src"
     src.mkdir()

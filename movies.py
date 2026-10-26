@@ -226,6 +226,54 @@ def is_complete(job_dir: Path) -> bool:
     return any(p.suffix.lower() in VIDEO_EXTS for p in files)
 
 
+def post_url(post_id: str) -> str:
+    return f"{TFREECA_BASE}/board.php?mode=view&b_id=tmovie&id={post_id}"
+
+
+# 글에 따로 붙은 자막을 사용자가 받아 Drive에 넣으면 drama_name.sh가 임시/download로 옮긴다
+SUB_SEARCH_DIRS = [Path("/volume1/video/임시/download"), Path("/volume1/homes/kck9010/Drive"),
+                   Path("/volume2/torrent/download")]
+SUB_WAIT_SEC = 14 * 24 * 3600  # 영화를 옮긴 뒤 자막을 이만큼 기다린다
+
+
+def _sub_key(name: str) -> str:
+    """'프로포즈 The Proposal 2009 ... BONE (1).smi' → 비교용 (브라우저가 붙인 ' (1)'·기호·띄어쓰기 무시)"""
+    stem = Path(name).stem
+    stem = re.sub(r"\s*\(\d+\)$", "", stem)
+    return re.sub(r"[\W_]+", "", stem).lower()
+
+
+def find_subtitles(sub_names: list[str], search_dirs=None) -> list[Path]:
+    """job['subs'](티프리카 첨부 자막 이름)와 같은 이름의 자막 파일을 찾는다"""
+    want = {_sub_key(n) for n in sub_names}
+    found = []
+    for d in search_dirs or SUB_SEARCH_DIRS:
+        if not d.is_dir():
+            continue
+        for p in d.rglob("*"):
+            if MOVIE_DIR_NAME in p.parts or "@eaDir" in p.parts:
+                continue
+            if p.is_file() and p.suffix.lower() in SUB_EXTS and _sub_key(p.name) in want:
+                found.append(p)
+    return found
+
+
+def place_subtitles(subs: list[Path], video: Path, move=None) -> list[Path]:
+    """자막을 영화 파일과 같은 이름(확장자만 자막)으로 영화 옆에 둔다"""
+    import shutil
+    move = move or shutil.move
+    placed = []
+    for p in subs:
+        dest = _unique(video.with_suffix(p.suffix.lower()))
+        move(str(p), str(dest))
+        try:
+            os.chmod(dest, 0o664)
+        except OSError:
+            pass
+        placed.append(dest)
+    return placed
+
+
 def place_files(job_dir: Path, prefix: str, dest_dir: Path, move=None) -> list[Path]:
     """영상·자막 파일 이름 앞에 'prefix.'를 붙여 dest_dir로 옮긴다. 샘플은 뺀다."""
     import shutil

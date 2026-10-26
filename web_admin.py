@@ -1119,15 +1119,16 @@ def start_movie_download(post_id: str) -> tuple[bool, str]:
     })
     job = {"btih": btih, "post_id": post_id, "post_title": post_title, "prefix": prefix,
            "folder": folder, "tmdb_id": found["id"] if found else None,
-           "added": int(time.time()), "status": "downloading"}
+           "subs": view["subs"], "added": int(time.time()), "status": "downloading"}
     movies.update_jobs(MOVIE_JOBS_PATH, lambda jobs: jobs.append(job))
 
     lines = [f"⬇ '{prefix}'(으)로 받기 시작했어요 → 영화/{folder} 폴더."]
     if not found:
         lines.append("⚠ TMDB에서 못 찾아서 글 제목으로 이름을 붙여요. Plex에서 확인해 주세요.")
     if view["subs"]:
-        lines.append("⚠ 이 글에는 자막이 따로 붙어 있는데(" + ", ".join(view["subs"][:2]) +
-                     ") 자동으로는 못 받아요. 필요하면 티프리카에서 직접 받아 주세요.")
+        lines.append("💬 자막이 따로 붙어 있어요 (" + ", ".join(view["subs"][:2]) + ").\n"
+                     "아래 글에서 받아 Drive에 넣어 주시면 영화 파일과 같은 이름으로 옆에 옮길게요.\n"
+                     + movies.post_url(post_id))
     lines.append("다 받으면 이름을 붙여 옮기고 알려 드릴게요 (배치 20분 주기).")
     return True, "\n".join(lines)
 
