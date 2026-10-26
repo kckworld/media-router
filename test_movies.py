@@ -160,6 +160,7 @@ def test_place_files_never_overwrites(tmp_path):
 def wa(monkeypatch, tmp_path):
     import web_admin
     monkeypatch.setattr(web_admin, "MOVIE_JOBS_PATH", tmp_path / "movie_jobs.json")
+    monkeypatch.setattr(web_admin, "MOVIE_TMDB_CACHE", tmp_path / "movie_tmdb_cache.json")
     sent, qbit = [], []
     monkeypatch.setattr(web_admin, "_tg_notify", lambda text, markup=None, token=None: sent.append((text, markup)) or True)
     monkeypatch.setattr(web_admin, "_tg_call", lambda *a, **k: {"ok": True})
@@ -202,15 +203,39 @@ def test_menu_has_movie_button(wa):
     assert [{"text": web_admin.TG_BTN_MOVIES}] in web_admin.TG_MENU["keyboard"]
 
 
-def test_movie_best_sends_buttons(wa, monkeypatch):
+def test_enrich_caches_by_post(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(movies, "tmdb_lookup", lambda key, ko, en, year: calls.append(ko) or
+                        {"id": 1, "title": "'텐징' - Tenzing", "year": 2026, "poster": None, "rating": None, "overview": ""})
+    items = [{"id": "400639", "title": "텐징 Tenzing 2026 1080p"}]
+    out = movies.enrich(items, "k", tmp_path / "c.json")
+    assert out[0]["display"] == "텐징 - Tenzing (2026)" and "namu.wiki/Search?q=" in out[0]["namu"]
+    movies.enrich(items, "k", tmp_path / "c.json")
+    assert calls == ["텐징"]   # 두 번째는 캐시
+
+
+def test_movie_best_sends_buttons(wa, monkeypatch, tmp_path):
     web_admin, sent, _ = wa
+    monkeypatch.setattr(web_admin, "MOVIE_TMDB_CACHE", tmp_path / "movie_tmdb_cache.json")
+    monkeypatch.setattr(web_admin.time, "sleep", lambda s: None)
     monkeypatch.setattr(movies, "fetch_best", lambda: {
         "day": [{"id": "1", "title": "인턴 The.Intern.2026"}], "week": [{"id": "2", "title": "호프 Hope.2026"}]})
+    photos = []
+    lookups = {"인턴": {"id": 607833, "title": "인턴", "year": 2026, "poster": "https://image.tmdb.org/t/p/w342/a.jpg",
+                       "rating": 7.1, "overview": "줄거리"}}
+    monkeypatch.setattr(movies, "tmdb_lookup", lambda key, ko, en, year: lookups.get(ko))
+    monkeypatch.setattr(web_admin, "_tg_call", lambda method, payload, token=None: photos.append((method, payload)) or {"ok": True})
     web_admin._handle_telegram_text(web_admin.TG_BTN_MOVIES)
+    # 인턴: 포스터 메시지 (제목 (연도) ★평점 + 줄거리 + 글 제목, 버튼 3개)
+    method, p = photos[0]
+    assert method == "sendPhoto" and p["photo"].endswith("/a.jpg")
+    assert p["caption"].startswith("🔥 인턴 (2026)  ★7.1\n줄거리\n인턴 The.Intern.2026")
+    kb = p["reply_markup"]["inline_keyboard"]
+    assert kb[0][0]["callback_data"].startswith("mv_1:")
+    assert kb[1][0]["url"].endswith("b_id=tmovie&id=1") and kb[1][1]["url"].startswith("https://namu.wiki/Search?q=")
+    # 호프: TMDB에서 못 찾음 → 포스터 없이 글로
     text, markup = sent[-1]
-    rows = markup["inline_keyboard"]
-    assert rows[0][0]["text"] == "🔥 인턴 The.Intern.2026" and rows[0][0]["callback_data"].startswith("mv_1:")
-    assert rows[1][0]["text"].startswith("📅 호프")
+    assert text.startswith("📅 호프 (2026)") and markup["inline_keyboard"][0][0]["callback_data"].startswith("mv_2:")
 
 
 def test_movie_button_starts_download_and_keeps_list(wa, monkeypatch):

@@ -13,6 +13,7 @@ BTIH = "deadbeef" * 5
 @pytest.fixture
 def wa(monkeypatch, tmp_path):
     monkeypatch.setattr(web_admin, "MOVIE_JOBS_PATH", tmp_path / "movie_jobs.json")
+    monkeypatch.setattr(web_admin, "MOVIE_TMDB_CACHE", tmp_path / "movie_tmdb_cache.json")
     monkeypatch.setattr(movies, "MOVIE_DL_DIR", tmp_path / "dl")
     qbit, torrents = [], {}
 

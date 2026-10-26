@@ -143,7 +143,7 @@ def _pick(results: list[dict], year: int | None) -> dict | None:
 
 
 def tmdb_lookup(api_key: str, ko: str, en: str, year: int | None) -> dict | None:
-    """{'id', 'title'(한글), 'year'} 또는 None"""
+    """{'id', 'title'(한글), 'year', 'poster', 'rating', 'overview'} 또는 None"""
     if not api_key:
         return None
     for q in (ko, en):
@@ -158,8 +158,57 @@ def tmdb_lookup(api_key: str, ko: str, en: str, year: int | None) -> dict | None
             continue
         m = _pick(res.get("results") or [], year)
         if m and (m.get("release_date") or "")[:4].isdigit():
-            return {"id": m["id"], "title": m.get("title") or q, "year": int(m["release_date"][:4])}
+            return {"id": m["id"], "title": m.get("title") or q, "year": int(m["release_date"][:4]),
+                    "poster": f"{TMDB_IMG}/w342{m['poster_path']}" if m.get("poster_path") else None,
+                    "rating": round(m["vote_average"], 1) if m.get("vote_count") else None,
+                    "overview": (m.get("overview") or "").strip()}
     return None
+
+
+TMDB_IMG = "https://image.tmdb.org/t/p"
+
+
+def namu_url(title: str) -> str:
+    """나무위키는 봇 접근을 막아서 문서가 있는지 확인할 수 없으므로 검색 링크로 준다"""
+    return "https://namu.wiki/Search?q=" + requests.utils.quote(f"{title} 영화")
+
+
+def enrich(items: list[dict], api_key: str, cache_path: Path, workers: int = 6) -> list[dict]:
+    """베스트·목록 항목에 TMDB 정보(display, poster, rating, overview)와 나무위키 링크를 붙인다.
+    글 번호별로 data/movie_tmdb_cache.json에 저장해서 같은 글은 다시 찾지 않는다."""
+    from concurrent.futures import ThreadPoolExecutor
+    with _jobs_lock:
+        try:
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cache = {}
+    todo = [m for m in items if m["id"] not in cache]
+
+    def look(m):
+        ko, en, year = split_post_title(m["title"])
+        found = tmdb_lookup(api_key, ko, en, year)
+        if found:
+            return m["id"], found
+        return m["id"], {"title": ko or en or m["title"], "year": year}
+
+    if todo and api_key:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for pid, info in ex.map(look, todo):
+                cache[pid] = info
+        with _jobs_lock:
+            if len(cache) > 2000:  # 오래된 글부터 버림 (글 번호가 커질수록 최신)
+                cache = dict(sorted(cache.items(), key=lambda kv: int(kv[0]))[-1500:])
+            tmp = cache_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, cache_path)
+    out = []
+    for m in items:
+        info = cache.get(m["id"]) or {}
+        title = info.get("title") or split_post_title(m["title"])[0] or m["title"]
+        out.append(dict(m, display=make_prefix(title, info.get("year")), poster=info.get("poster"),
+                        rating=info.get("rating"), overview=info.get("overview") or "",
+                        namu=namu_url(safe_name(title))))
+    return out
 
 
 def safe_name(title: str) -> str:

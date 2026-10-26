@@ -1058,6 +1058,7 @@ def api_processing_pause():
 # yt-dlp로 Drive(영상) / Drive/음악(mp3)에 받는다. 자세한 건 youtube_dl.py
 import movies
 MOVIE_JOBS_PATH = DATA_DIR / "movie_jobs.json"
+MOVIE_TMDB_CACHE = DATA_DIR / "movie_tmdb_cache.json"
 
 
 def _tg_movie_best() -> None:
@@ -1067,18 +1068,43 @@ def _tg_movie_best() -> None:
     except Exception as e:
         _tg_result(False, f"티프리카 영화 베스트를 못 가져왔어요 ({type(e).__name__}). 주소가 바뀌었는지 확인해 주세요.")
         return
-    now = int(time.time())
-    rows = []
-    for icon, items in (("🔥", best["day"]), ("📅", best["week"])):
-        for m in items:
-            label = m["title"] if len(m["title"]) <= 48 else m["title"][:47] + "…"
-            rows.append([{"text": f"{icon} {label}", "callback_data": f"mv_{m['id']}:{now}"}])
-    if not rows:
+    if not best["day"] and not best["week"]:
         _tg_result(False, "티프리카 영화 베스트 목록이 비어 있어요. 페이지 구조가 바뀌었는지 확인해 주세요.")
         return
     _tg_notify(f"🎞 티프리카 영화 베스트 (🔥 일간 {len(best['day'])} · 📅 주간 {len(best['week'])})\n"
-               "받을 영화를 누르세요. 여러 편 골라도 돼요 (버튼은 하루 동안 유효).",
-               {"inline_keyboard": rows})
+               "영화마다 포스터와 버튼을 보낼게요. 여러 편 골라도 돼요 (버튼은 하루 동안 유효).")
+    now = int(time.time())
+    key = get_tmdb_api_key()
+    for icon, items in (("🔥", best["day"]), ("📅", best["week"])):
+        for m in movies.enrich(items, key, MOVIE_TMDB_CACHE):
+            _tg_movie_card(icon, m, now)
+            time.sleep(0.4)  # 한 대화방에 너무 빨리 보내면 텔레그램이 막는다
+
+
+def _movie_caption(icon: str, m: dict) -> str:
+    head = f"{icon} {m['display']}" + (f"  ★{m['rating']}" if m.get("rating") else "")
+    lines = [head]
+    if m.get("overview"):
+        ov = m["overview"]
+        lines.append(ov if len(ov) <= 160 else ov[:159] + "…")
+    lines.append(m["title"])
+    return "\n".join(lines)[:1000]  # 사진 설명은 1024자까지
+
+
+def _tg_movie_card(icon: str, m: dict, now: int) -> None:
+    """영화 하나 = 포스터 + 제목·평점·줄거리 + [받기] [티프리카] [나무위키]"""
+    markup = {"inline_keyboard": [
+        [{"text": "⬇ 받기", "callback_data": f"mv_{m['id']}:{now}"}],
+        [{"text": "티프리카 ↗", "url": movies.post_url(m["id"])}, {"text": "나무위키 ↗", "url": m["namu"]}],
+    ]}
+    tg = _tg_cfg()
+    caption = _movie_caption(icon, m)
+    if m.get("poster"):
+        res = _tg_call("sendPhoto", {"chat_id": tg.get("chat_id"), "photo": m["poster"],
+                                     "caption": caption, "reply_markup": markup})
+        if (res or {}).get("ok"):
+            return
+    _tg_notify(caption, markup)  # 포스터가 없거나 텔레그램이 이미지를 못 가져오면 글로만
 
 
 def _tg_movie_download(post_id: str) -> None:
@@ -1248,12 +1274,16 @@ def api_movies():
             j["qbit_state"] = "waiting_move"
     out = {"ok": True, "jobs": jobs, "errors": []}
     try:
-        out.update(_movie_cached("best", movies.fetch_best, force))
+        best = _movie_cached("best", movies.fetch_best, force)
+        key = get_tmdb_api_key()
+        out.update(day=movies.enrich(best["day"], key, MOVIE_TMDB_CACHE),
+                   week=movies.enrich(best["week"], key, MOVIE_TMDB_CACHE))
     except Exception as e:
         out.update(day=[], week=[])
         out["errors"].append(f"베스트 목록을 못 가져왔어요 ({type(e).__name__})")
     try:
-        out["list"] = _movie_cached(f"list{page}", lambda: movies.fetch_list(page), force)
+        out["list"] = movies.enrich(_movie_cached(f"list{page}", lambda: movies.fetch_list(page), force),
+                                    get_tmdb_api_key(), MOVIE_TMDB_CACHE)
     except Exception as e:
         out["list"] = []
         out["errors"].append(f"최신 목록을 못 가져왔어요 ({type(e).__name__})")
