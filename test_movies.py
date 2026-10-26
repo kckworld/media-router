@@ -142,6 +142,17 @@ def test_subtitle_already_there_when_movie_finishes(tmp_path):
     assert "미리 받아 둔 자막" in sent[0]
 
 
+def test_main_does_not_revive_canceled_job(tmp_path, monkeypatch):
+    jobs_path = tmp_path / "movie_jobs.json"
+    old = _job(tmp_path, status="canceled")
+    new = _job(tmp_path)
+    jobs_path.write_text(json.dumps([old, new]), encoding="utf-8")
+    monkeypatch.setattr(movie_mover, "JOBS_PATH", jobs_path)
+    monkeypatch.setattr(movie_mover, "process", lambda jobs: {"abc": {"status": "done"}})
+    movie_mover.main()
+    assert [j["status"] for j in json.loads(jobs_path.read_text(encoding="utf-8"))] == ["canceled", "done"]
+
+
 def test_place_files_never_overwrites(tmp_path):
     src = tmp_path / "src"
     src.mkdir()

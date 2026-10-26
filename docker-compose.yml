@@ -26,8 +26,9 @@ services:
       # 마운트 안에 있어야 rename이 복사 없이 즉시 된다(마운트가 다르면 EXDEV)
       - /volume1/homes/kck9010:/app/kck_home
       # 영화 받기(2026-10-26): qBittorrent 목록에서 사라진 영화가 "다 받고 옮기기 대기"인지
-      # "취소"인지 구분하려고 받은 폴더를 읽기 전용으로 본다
-      - /volume2/torrent/download/_movies:/app/movies_dl:ro
+      # "취소"인지 구분하려고 받은 폴더를 읽기 전용으로 본다. _movies는 비면 지워질 수 있어서
+      # (지워지면 컨테이너가 못 뜸) 늘 있는 상위 폴더를 붙인다
+      - /volume2/torrent/download:/app/torrent_dl:ro
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}
       # 보기 전용 계정 비밀번호 (비우면 보기 전용 로그인 없음). 값은 .env에
@@ -48,7 +49,7 @@ services:
       - QBIT_URL=http://127.0.0.1:8080
       - QBIT_USERNAME=${QBIT_USERNAME:-}
       - QBIT_PASSWORD=${QBIT_PASSWORD:-}
-      - MOVIE_DL_DIR=/app/movies_dl
+      - MOVIE_DL_DIR=/app/torrent_dl/_movies
       # 사용자 관리 탭(media-stats postgres 연동, 2026-09-18)
       - STATS_DB_HOST=${STATS_DB_HOST:-localhost}
       - STATS_DB_PORT=${STATS_DB_PORT:-15433}

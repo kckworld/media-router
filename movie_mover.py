@@ -110,7 +110,8 @@ def main() -> int:
     if changes:
         def apply(current):
             for j in current:
-                if j.get("btih") in changes:
+                # 같은 영화를 취소했다가 다시 받으면 해시가 같은 옛 기록(취소됨)이 남아 있다
+                if j.get("btih") in changes and j.get("status") != "canceled":
                     j.update(changes[j["btih"]])
         movies.update_jobs(JOBS_PATH, apply)
     return 0
