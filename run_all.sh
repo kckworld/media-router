@@ -90,7 +90,9 @@ fi
 # 3-1. 코난/원피스 자동 한국어 자막: 새 회차에 한국어 자막이 없으면 영상 속 영어 자막을 DeepL로 번역해
 #      "<영상이름>.ko.ass"로 둔다. 팬 자막이 들어오면 자동 자막을 지우고 교체 (2026-10-19, auto_subtitles.py)
 #      aniname 다음에 돌려야 최종 파일명 기준으로 만든다.
-python -u auto_subtitles.py "$CONAN_DIR" "$ONEPIECE_DIR" || echo "$(ra_ts) auto_subtitles.py 실행 중 오류 발생 (계속 진행)"
+#      먼작귀(ToonsHub, 영어 SRT → .ko.srt)도 같이 (2026-10-26)
+CHIIKAWA_DIR="/volume1/video/04.애니메이션/04.시리즈/먼작귀 (2022)/Season 1"
+python -u auto_subtitles.py "$CONAN_DIR" "$ONEPIECE_DIR" "$CHIIKAWA_DIR" || echo "$(ra_ts) auto_subtitles.py 실행 중 오류 발생 (계속 진행)"
 
 # 4. bt4g
 /volume1/web/Python/bt4g/bt4g.sh || echo "$(ra_ts) bt4g.sh 실행 중 오류 발생 (계속 진행)"

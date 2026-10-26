@@ -2,6 +2,8 @@
 
 코난·원피스 SubsPlease 릴에는 영어 자막(ASS)이 들어 있다. 새 회차에 한국어 자막이 없으면
 그 영어 자막을 꺼내 DeepL(무료 API)로 번역해 "<영상이름>.ko.ass"로 둔다. 타이밍·스타일은 원본 그대로.
+먼작귀(ToonsHub, 10-26)처럼 영어 자막이 SRT면 "<영상이름>.ko.srt"로 둔다. 영어 트랙이 없으면
+(중국어만 든 VIU판 등) 만들지 않는다.
 나중에 팬 자막(사용자가 PC/폰에서 받아 Synology Drive → media_router → aniname 경로로 들어옴)이
 오면 자동 자막을 지우고 팬 자막을 쓴다.
 
@@ -36,7 +38,8 @@ MAX_AGE_DAYS = float(os.getenv("AUTO_SUBS_MAX_AGE_DAYS", "7"))   # 이보다 오
 MIN_STABLE_SEC = 120                                             # 막 옮겨진 파일은 다음 실행에
 VIDEO_EXTS = (".mkv", ".mp4")
 SUB_EXTS = (".ass", ".ssa", ".srt", ".smi", ".vtt", ".sub")
-EP_RE = re.compile(r"\.E(\d{2,5})\b")
+# '코난.S01.E1217' 과 '[Gecko] Chiikawa - S01E382' 둘 다
+EP_RE = re.compile(r"(?:\.|S\d{1,2})E(\d{1,5})\b")
 KO_RE = re.compile(r"\.(ko|kor|kr)(_\d+)?\.[^.]+$", re.I)
 MARKER = "; Media Router 자동 번역 자막 (영어 자막 → DeepL). 팬 자막이 들어오면 자동으로 교체됩니다."
 
@@ -137,15 +140,65 @@ def translate_ass(ass_text: str, key: str, context: str, translate=None) -> tupl
     return out, sum(len(j[3]) for j in jobs)
 
 
-def extract_english_ass(video: Path) -> str | None:
-    """영상 안의 첫 자막 트랙(SubsPlease는 영어 ASS 하나)을 꺼낸다. 없으면 None."""
+SUB_STREAM_RE = re.compile(r"Stream #\d+:\d+(?:\((\w+)\))?(?:\[[^\]]*\])?: Subtitle: (\w+)")
+
+
+def subtitle_tracks(video: Path) -> list[tuple[str, str]]:
+    """[(언어, 코덱)] - 호스트엔 ffprobe가 없어서 ffmpeg -i 출력에서 읽는다"""
+    r = subprocess.run([FFMPEG, "-hide_banner", "-i", str(video)], capture_output=True, timeout=60)
+    text = r.stderr.decode("utf-8", errors="replace")
+    return [((m.group(1) or "").lower(), m.group(2).lower()) for m in SUB_STREAM_RE.finditer(text)]
+
+
+def pick_english(tracks: list[tuple[str, str]]) -> int | None:
+    """영어 트랙 번호. 언어 표시가 없으면(und 포함) 첫 트랙을 영어로 본다. 다른 언어뿐이면 None."""
+    for i, (lang, _) in enumerate(tracks):
+        if lang in ("eng", "en"):
+            return i
+    if tracks and tracks[0][0] in ("", "und"):
+        return 0
+    return None
+
+
+def extract_english_sub(video: Path) -> tuple[str, str] | None:
+    """영상 속 영어 자막 → ('ass'|'srt', 내용). 없으면 None."""
+    tracks = subtitle_tracks(video)
+    idx = pick_english(tracks)
+    if idx is None:
+        return None
+    fmt = "srt" if tracks[idx][1] in ("subrip", "srt", "mov_text", "webvtt") else "ass"
     with tempfile.TemporaryDirectory() as td:
-        out = Path(td) / "en.ass"
-        r = subprocess.run([FFMPEG, "-v", "error", "-y", "-i", str(video), "-map", "0:s:0", "-c:s", "ass", str(out)],
+        out = Path(td) / f"en.{fmt}"
+        r = subprocess.run([FFMPEG, "-v", "error", "-y", "-i", str(video), "-map", f"0:s:{idx}", "-c:s", fmt, str(out)],
                            capture_output=True, timeout=300)
         if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
             return None
-        return out.read_text(encoding="utf-8-sig", errors="replace")
+        return fmt, out.read_text(encoding="utf-8-sig", errors="replace")
+
+
+SRT_TAG_RE = re.compile(r"<[^>]+>|\{[^}]*\}")
+
+
+def translate_srt(srt_text: str, key: str, context: str, translate=None) -> tuple[str, int]:
+    """SRT 블록(번호, 시간, 대사)의 대사만 번역. 반환: (번역된 SRT, 보낸 글자 수)"""
+    blocks = [b for b in re.split(r"\r?\n\s*\r?\n", srt_text.strip()) if b.strip()]
+    parsed, jobs = [], []
+    for b in blocks:
+        lines = b.splitlines()
+        t = next((i for i, l in enumerate(lines) if "-->" in l), None)
+        if t is None:
+            continue
+        text = SRT_TAG_RE.sub("", "\n".join(lines[t + 1:])).strip()
+        parsed.append([lines[t], text])
+        if text and re.search(r"[A-Za-z]", text):
+            jobs.append(len(parsed) - 1)
+    chars = sum(len(parsed[i][1]) for i in jobs)
+    if jobs:
+        translated = deepl_translate([parsed[i][1] for i in jobs], key, context, translate)
+        for i, ko in zip(jobs, translated):
+            parsed[i][1] = ko.replace("\r", "").strip()
+    out = "\n\n".join(f"{n}\n{timing}\n{text}" for n, (timing, text) in enumerate(parsed, 1) if text) + "\n"
+    return out, chars
 
 
 # ── 폴더 처리 ──────────────────────────────────────────────
@@ -212,7 +265,8 @@ def process_folder(folder: Path, state: dict, key: str, translate=None, now: flo
         return stats
     prefix = str(folder) + "|"
     reconcile(folder, prefix, state)
-    show = folder.name
+    # '먼작귀 (2022)/Season 1'이면 시즌 폴더 위의 작품 이름을 번역 맥락으로
+    show = folder.parent.name if re.match(r"(?i)season\s*\d+$", folder.name) else folder.name
     for video in sorted(folder.iterdir()):
         if not (video.is_file() and video.suffix.lower() in VIDEO_EXTS):
             continue
@@ -230,14 +284,19 @@ def process_folder(folder: Path, state: dict, key: str, translate=None, now: flo
         if not key and translate is None:
             log(f"E{ep}: 한국어 자막 없음 — DEEPL_API_KEY가 없어 건너뜀")
             continue
-        en = extract_english_ass(video)
-        if en is None:
+        sub = extract_english_sub(video)
+        if sub is None:
             state[skey] = {"ep": ep, "status": "no_track", "at": now}
             stats["skipped_no_track"] += 1
-            log(f"E{ep}: 영상에 자막 트랙이 없어 만들 수 없음 — {video.name}")
+            log(f"E{ep}: 영상에 영어 자막 트랙이 없어 만들 수 없음 — {video.name}")
             continue
-        ko, chars = translate_ass(en, key, f"Subtitles of the anime '{show}'. Translate into natural spoken Korean.", translate)
-        dst = video.with_name(video.stem + ".ko.ass")
+        fmt, en = sub
+        context = f"Subtitles of the anime '{show}'. Translate into natural spoken Korean."
+        if fmt == "srt":
+            ko, chars = translate_srt(en, key, context, translate)
+        else:
+            ko, chars = translate_ass(en, key, context, translate)
+        dst = video.with_name(video.stem + f".ko.{fmt}")
         if dst.exists():               # 혹시 모를 경쟁 상황: 절대 덮어쓰지 않음
             continue
         dst.write_text(ko, encoding="utf-8")
