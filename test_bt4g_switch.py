@@ -74,13 +74,49 @@ def test_drama_keywords_page_saves_its_own_file(qbit, monkeypatch, tmp_path):
     monkeypatch.setattr(web_admin, "DRAMA_KEYWORDS_PATH", drama)
     monkeypatch.setattr(web_admin, "BT4G_KEYWORDS_PATH", variety)
     monkeypatch.setattr(web_admin, "DATA_DIR", tmp_path)
-    r = qbit["client"].post("/drama_keywords", data={"row_keyword": ["100일의 거짓말", " "]})
+    r = qbit["client"].post("/drama_keywords", data={
+        "row_keyword": ["100일의 거짓말", "연애박사", " "],
+        "row_release": ["", "Sniper", "x"],
+    })
     html = r.get_data(as_text=True)
     assert r.status_code == 200
-    assert drama.read_text(encoding="utf-8").splitlines() == ["100일의 거짓말"]
+    assert drama.read_text(encoding="utf-8").splitlines() == ["100일의 거짓말", "연애박사 | Sniper"]
+    assert 'name="row_release" value="Sniper"' in html
+    assert 'name="row_keyword" value="연애박사"' in html
     assert variety.read_text(encoding="utf-8") == "런닝맨\n"
     assert 'action="/drama_keywords"' in html and "드라마 자동 다운로드" in html
     assert 'id="bt4gToggle"' not in html
+
+
+@pytest.mark.parametrize("subfolder,release,expected", [
+    ("연애박사 (2026)", "Sniper", "연애박사 | Sniper"),
+    ("나를 충전해줘 (2026)", "1080p WEB-DL", "나를 충전해줘"),   # 화질만 → 기본(MrHulk·Marco)
+    ("포핸즈 (2026)", "", "포핸즈"),
+    ("닥터X 하얀 마피아의 시대 (2026)", "720p-NEXT", "닥터X 하얀 마피아의 시대 | 720p-NEXT"),
+])
+def test_add_drama_keyword(monkeypatch, tmp_path, subfolder, release, expected):
+    path = tmp_path / "drama_keywords.txt"
+    path.write_text("100일의 거짓말\n", encoding="utf-8")
+    monkeypatch.setattr(web_admin, "DRAMA_KEYWORDS_PATH", path)
+    assert web_admin.add_drama_keyword(subfolder, release) is True
+    assert path.read_text(encoding="utf-8").splitlines() == ["100일의 거짓말", expected]
+    # 같은 제목은 다시 넣지 않음 (띄어쓰기 무시)
+    assert web_admin.add_drama_keyword(subfolder.replace(" ", ""), "Other") is False
+
+
+def test_add_rule_adds_drama_keyword(qbit, monkeypatch, tmp_path):
+    path = tmp_path / "drama_keywords.txt"
+    monkeypatch.setattr(web_admin, "DRAMA_KEYWORDS_PATH", path)
+    saved = {}
+    monkeypatch.setattr(web_admin, "load_cfg", lambda: {"rules": []})
+    monkeypatch.setattr(web_admin, "save_cfg", lambda cfg: saved.update(cfg))
+    monkeypatch.setattr(web_admin, "tmdb_auto_total_episodes", lambda sub: None)
+    qbit["client"].post("/add", data={"category": "드라마", "pattern": "연애 박사",
+                                      "subfolder": "연애박사 (2026)", "release": "Sniper"})
+    assert saved["rules"][0]["subfolder"] == "연애박사 (2026)"
+    assert path.read_text(encoding="utf-8") == "연애박사 | Sniper\n"
+    qbit["client"].post("/add", data={"category": "예능", "pattern": "런닝맨", "subfolder": "런닝맨"})
+    assert path.read_text(encoding="utf-8") == "연애박사 | Sniper\n"
 
 
 def test_page_shows_switch_state(qbit):

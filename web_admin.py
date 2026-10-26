@@ -1914,6 +1914,11 @@ def add():
 
     cfg.setdefault("rules", []).append(rule)
     save_cfg(cfg)
+    if rule["category"] == "드라마":
+        try:
+            add_drama_keyword(rule["subfolder"], rule.get("release", ""))
+        except Exception:
+            app.logger.exception("드라마 키워드 자동 추가 실패")
     
     # 현재 모드와 필터 조건 유지
     mode = request.form.get("mode", "").strip()
@@ -2344,6 +2349,29 @@ def api_bt4g_enabled():
     return jsonify({"ok": True, **bt4g_state()})
 
 
+# 화질·형식만 적힌 릴리즈 값(예: '1080p WEB-DL')은 릴 그룹이 아니므로 기본(MrHulk·Marco)으로 둔다
+_QUALITY_ONLY_RE = re.compile(
+    r"^(?:[\s._-]*(?:2160p|1080p|720p|4k|web-?dl|webrip|nf|x264|h\.?264|aac(?:2\.0)?))+[\s._-]*$", re.I)
+
+
+def add_drama_keyword(subfolder: str, release: str) -> bool:
+    """분류 규칙에 드라마를 추가하면 드라마 키워드(티프리카 자동 다운로드)에도 넣는다.
+    키워드는 폴더 이름에서 '(2026)'을 뗀 한글 제목. 이미 있으면 그대로 둔다."""
+    name = re.sub(r"\s*\(\d{4}\)\s*$", "", subfolder).strip().replace("|", "")
+    if not name:
+        return False
+    lines = parse_bt4g_keywords(DRAMA_KEYWORDS_PATH)
+    norm = lambda s: re.sub(r"\s+", "", s).lower()
+    if any(norm(line.partition("|")[0]) == norm(name) for line in lines):
+        return False
+    release = release.strip().replace("|", "")
+    if _QUALITY_ONLY_RE.match(release):
+        release = ""
+    lines.append(f"{name} | {release}" if release else name)
+    DRAMA_KEYWORDS_PATH.write_text(render_bt4g_keywords(lines), encoding="utf-8")
+    return True
+
+
 @app.route("/bt4g_keywords", methods=["GET", "POST"])
 def bt4g_keywords():
     return _keyword_page("variety", BT4G_KEYWORDS_PATH, "bt4g_keywords.txt.bak", "/bt4g_keywords")
@@ -2366,6 +2394,11 @@ def _keyword_page(kind: str, path: Path, backup_name: str, action: str):
     if request.method == "POST":
         try:
             rows = [k.strip() for k in request.form.getlist("row_keyword")]
+            if kind == "drama":
+                # 드라마는 '키워드 | 릴' (릴을 비우면 tfreeca.py가 MrHulk·Marco로 받음)
+                rels = [r.strip().replace("|", "") for r in request.form.getlist("row_release")]
+                rels += [""] * (len(rows) - len(rels))
+                rows = [f"{k} | {r}" if k and r else k for k, r in zip(rows, rels)]
             content = render_bt4g_keywords(rows)
 
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -2385,7 +2418,10 @@ def _keyword_page(kind: str, path: Path, backup_name: str, action: str):
             error = str(e)
 
     try:
-        keywords = parse_bt4g_keywords(path)
+        keywords = [
+            tuple(part.strip() for part in line.partition("|")[::2])
+            for line in parse_bt4g_keywords(path)
+        ]
         load_error = None
     except Exception as e:
         app.logger.exception("%s 로딩 중 오류", path.name)

@@ -16,6 +16,7 @@
     .col-num { width: 28px; text-align: center; font-size: 12px; color: var(--muted); font-weight: 700; }
     .col-group { width: 90px; text-align: center; font-size: 12px; color: var(--purple); font-weight: 700; white-space: nowrap; }
     .col-actions { width: 100px; white-space: nowrap; }
+    .col-release { width: 34%; }
     thead th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 0 6px 6px; font-weight: 700; }
     .banner.ok { background: var(--success-light); color: var(--success-hover); border: 1px solid var(--ok-line); }
     .example-box { background: var(--accent-light); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; font-size: 13px; margin-top: 6px; }
@@ -50,9 +51,13 @@
       <div class="section-title">드라마 자동 다운로드 안내</div>
       <div class="hint">
         20분마다 <strong>티프리카 드라마 게시판</strong> 최신 글을 읽어서, 아래 키워드가 들어간
-        <strong>1080p NF WEB-DL (MrHulk·Marco)</strong> 글을 qBittorrent가 자동으로 받아요.
-        dramaday의 <code>1080p WEB-DL</code>과 같은 넷플릭스 원본이에요. AV1·x265와 다른 릴(Sniper 등)은 받지 않고,
-        같은 회차는 먼저 올라온 하나만 받아요.
+        글을 qBittorrent가 자동으로 받아요. 기본은 dramaday의 <code>1080p WEB-DL</code>과 같은
+        넷플릭스 원본(<strong>MrHulk·Marco</strong>)이고, 같은 회차는 먼저 올라온 하나만 받아요.
+      </div>
+      <div class="example-box">
+        넷플릭스가 아닌 드라마는 <strong>릴</strong> 칸에 받을 릴 이름을 적으세요. 글 제목에 그 글자가 들어 있으면 받아요
+        (예: <code>Sniper</code>, <code>Phanteam</code>, <code>720p-NEXT</code>, 여러 개는 쉼표로).
+        릴 칸을 비우면 1080p NF WEB-DL MrHulk·Marco만 받아요. AV1·x265는 어느 쪽이든 받지 않아요.
       </div>
       <div class="example-box">
         띄어쓰기는 무시하고 비교해요. 티프리카 글 제목의 한글 이름으로 적으세요 (예: <code>100일의 거짓말</code>).
@@ -105,6 +110,7 @@
               <th class="col-num">#</th>
               <th class="col-group">그룹</th>
               <th>검색어</th>
+              {% if kind == 'drama' %}<th class="col-release">릴</th>{% endif %}
               <th class="col-actions">동작</th>
             </tr>
           </thead>
@@ -113,7 +119,8 @@
             <tr class="rule-row">
               <td class="col-num">{{ loop.index }}</td>
               <td class="col-group"></td>
-              <td><input type="text" name="row_keyword" value="{{ k }}" placeholder="{{ '예: 100일의 거짓말' if kind == 'drama' else '예: 나 혼자 산다' }}"></td>
+              <td><input type="text" name="row_keyword" value="{{ k[0] }}" placeholder="{{ '예: 100일의 거짓말' if kind == 'drama' else '예: 나 혼자 산다' }}"></td>
+              {% if kind == 'drama' %}<td class="col-release"><input type="text" name="row_release" value="{{ k[1] }}" placeholder="비우면 MrHulk·Marco"></td>{% endif %}
               <td class="col-actions">
                 <button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>
                 <button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>
@@ -181,6 +188,7 @@
         '<td class="col-num"></td>' +
         '<td class="col-group"></td>' +
         '<td><input type="text" name="row_keyword" placeholder="{{ '예: 100일의 거짓말' if kind == 'drama' else '예: 나 혼자 산다' }}"></td>' +
+        {% if kind == 'drama' %}'<td class="col-release"><input type="text" name="row_release" placeholder="비우면 MrHulk·Marco"></td>' +{% endif %}
         '<td class="col-actions">' +
           '<button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>' +
           '<button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>' +
