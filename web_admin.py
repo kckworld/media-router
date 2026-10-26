@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
-import os, hashlib, hmac, json, re, secrets, subprocess, time, threading, socket
+import os, base64, hashlib, hmac, json, re, secrets, subprocess, time, threading, socket
 from flask import Flask, request, redirect, render_template, abort, make_response, jsonify, send_file
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -2136,6 +2136,41 @@ def settings_claude_login():
         if not CLAUDE_LOGIN_CODE_RE.match(code):
             return jsonify({"ok": False, "message": "코드 형식이 이상해요. 브라우저에 나온 코드를 그대로 붙여 넣어 주세요."}), 400
         result = _claude_login_ssh(f"code {code}", 45)  # gunicorn timeout(60초)보다 짧게
+    else:
+        return jsonify({"ok": False, "message": "모르는 요청이에요."}), 400
+    return jsonify(result), (200 if result.get("ok") else 502)
+
+
+CLAUDE_SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+CLAUDE_SESSION_NAME_MAX = 40
+
+
+@app.route("/settings/claude_sessions", methods=["GET", "POST"])
+def settings_claude_sessions():
+    """NAS 백그라운드 claude 세션 목록과 다시 열기 (2026-10-26). 데몬은 8시간 쉰 세션을 정리하는데,
+    대화 기록은 남아 있어서 같은 ID로 다시 띄우면 이어서 대화할 수 있다. 같은 강제 명령 키를 쓴다.
+    GET=목록, POST {action:resume, session_id} 다시 열기, POST {action:new, name} 새 세션."""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "message": "로그인이 필요합니다."}), 401
+    if request.method == "GET":
+        return jsonify(_claude_login_ssh("sessions", 30))
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    if action == "resume":
+        session_id = (body.get("session_id") or "").strip()
+        if not CLAUDE_SESSION_ID_RE.match(session_id):
+            return jsonify({"ok": False, "message": "세션 ID 형식이 이상해요."}), 400
+        result = _claude_login_ssh(f"resume {session_id}", 50)
+    elif action == "new":
+        name = " ".join((body.get("name") or "").split())
+        if not name:
+            name = "새 세션 " + datetime.now(APP_TZ).strftime("%m-%d %H:%M")
+        if len(name) > CLAUDE_SESSION_NAME_MAX:
+            return jsonify({"ok": False, "message": f"세션 이름은 {CLAUDE_SESSION_NAME_MAX}자 이내로 적어 주세요."}), 400
+        # 강제 명령은 공백으로 인자를 나누므로 이름은 base64로 넘긴다
+        encoded = base64.b64encode(name.encode("utf-8")).decode("ascii")
+        result = _claude_login_ssh(f"new {encoded}", 50)
     else:
         return jsonify({"ok": False, "message": "모르는 요청이에요."}), 400
     return jsonify(result), (200 if result.get("ok") else 502)
