@@ -198,6 +198,8 @@ def test_library_line_series_and_movie(tmp_path):
     assert media_requests.library_line(m, [], {}, tmp_path / "movies", jobs) == "🎞 1080p"
     # 기록이 없어도 '제목 (연도)'로 찾는다
     assert media_requests.library_line(m, [], {}, tmp_path / "movies", []) == "🎞 1080p"
+    (mv / "인턴 (2026) {tmdb-607833}.The.Intern.2026.1080p.FHD.mkv").rename(mv / "인턴 (2026).Gecko [IQ.WEB-DL 1080P AVC].mkv")
+    assert media_requests.library_line(m, [], {}, tmp_path / "movies", []) == "🎞 1080p · WEB-DL"
 
 
 def test_guess_category():

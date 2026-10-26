@@ -183,7 +183,10 @@ def _episodes_text(eps: list[int]) -> str:
 
 
 def _quality_text(video: Path) -> str:
-    parts = [m.group(1) for m in (_RES_RE.search(video.name), _SRC_RE.search(video.name)) if m]
+    res, src = _RES_RE.search(video.name), _SRC_RE.search(video.name)
+    parts = [res.group(1).lower().replace("4k", "4K")] if res else []   # '1080P' → '1080p'
+    if src:
+        parts.append(src.group(1))
     stem = video.stem
     has_sub = any(p.is_file() and p.suffix.lower() in SUB_EXTS and p.name.startswith(stem)
                   for p in video.parent.iterdir())
