@@ -2277,6 +2277,71 @@ def rename_rules():
     )
 
 
+# ── BT4G 스위치 (2026-10-26) ──────────────────────────
+# 예능은 티프리카 RSS(bt4g/tfreeca.py)로 받고, BT4G는 필요할 때만 켠다.
+# 호스트의 bt4g.sh가 이 파일이 있으면 BT4G 검색도 돌린다(data/는 호스트와 같은 폴더).
+BT4G_ENABLED_PATH = DATA_DIR / "bt4g_enabled"
+QBIT_VARIETY_RULE = "예능"
+QBIT_BT4G_FEED_NAME = "통합 BT4G 검색 RSS"
+QBIT_BT4G_FEED_URL = "http://192.168.50.153/Python/bt4g/xml/bt4g_filtered_sorted_rss.xml"
+
+
+def bt4g_state() -> dict:
+    state = {"enabled": BT4G_ENABLED_PATH.exists(), "in_rule": None, "rule_error": None}
+    try:
+        rule = _qbit_get("/api/v2/rss/rules").get(QBIT_VARIETY_RULE)
+        if rule is None:
+            state["rule_error"] = f"qBittorrent에 '{QBIT_VARIETY_RULE}' 규칙이 없어요."
+        else:
+            state["in_rule"] = QBIT_BT4G_FEED_URL in (rule.get("affectedFeeds") or [])
+    except Exception as e:
+        state["rule_error"] = str(e)
+    return state
+
+
+def _set_bt4g_in_rule(enabled: bool) -> None:
+    rule = _qbit_get("/api/v2/rss/rules").get(QBIT_VARIETY_RULE)
+    if rule is None:
+        raise RuntimeError(f"qBittorrent에 '{QBIT_VARIETY_RULE}' 규칙이 없어요.")
+    feeds = [f for f in (rule.get("affectedFeeds") or []) if f != QBIT_BT4G_FEED_URL]
+    if enabled:
+        # 꺼져 있던 동안 쌓인 BT4G 기사는 이미 티프리카로 받은 것들이다. 읽음 처리하지 않고
+        # 규칙에 넣으면 qBittorrent가 안 읽은 기사를 전부 새로 받아 버린다.
+        _qbit_post("/api/v2/rss/markAsRead", {"itemPath": QBIT_BT4G_FEED_NAME})
+        feeds.append(QBIT_BT4G_FEED_URL)
+    rule["affectedFeeds"] = feeds
+    _qbit_post("/api/v2/rss/setRule", {
+        "ruleName": QBIT_VARIETY_RULE,
+        "ruleDef": json.dumps(rule, ensure_ascii=False),
+    })
+
+
+@app.route("/api/bt4g_enabled", methods=["POST"])
+def api_bt4g_enabled():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"error": "로그인이 필요합니다."}), 401
+    enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
+    try:
+        # 규칙을 먼저 바꾼다. qBittorrent가 안 되면 파일도 그대로 둬서 둘이 어긋나지 않게
+        _set_bt4g_in_rule(enabled)
+    except Exception as e:
+        app.logger.exception("BT4G 스위치: qBittorrent 규칙 변경 실패")
+        return jsonify({"error": f"qBittorrent 규칙을 바꾸지 못했어요: {e}"}), 502
+    if enabled:
+        BT4G_ENABLED_PATH.write_text(datetime.now(APP_TZ).isoformat(timespec="seconds"), encoding="utf-8")
+        try:
+            os.chmod(BT4G_ENABLED_PATH, 0o664)
+        except OSError:
+            pass
+    else:
+        try:
+            BT4G_ENABLED_PATH.unlink()
+        except FileNotFoundError:
+            pass
+    return jsonify({"ok": True, **bt4g_state()})
+
+
 @app.route("/bt4g_keywords", methods=["GET", "POST"])
 def bt4g_keywords():
     auth = authed(request)
@@ -2319,6 +2384,7 @@ def bt4g_keywords():
         "bt4g_keywords.html",
         authed=True,
         keywords=keywords,
+        bt4g=bt4g_state(),
         saved=saved,
         error=error or load_error,
         conf_path=str(BT4G_KEYWORDS_PATH),
@@ -2821,6 +2887,14 @@ _qbit_state = {"lock": threading.Lock(), "session": None, "login_failed_at": 0.0
 
 def _qbit_get(path: str, params: dict | None = None):
     """qBittorrent WebUI API GET. 세션 쿠키를 재사용하고 만료(403)되면 한 번 재로그인."""
+    return _qbit_call("GET", path, params=params).json()
+
+
+def _qbit_post(path: str, data: dict) -> None:
+    _qbit_call("POST", path, data=data)
+
+
+def _qbit_call(method: str, path: str, params: dict | None = None, data: dict | None = None):
     if not QBIT_USERNAME or not QBIT_PASSWORD:
         raise RuntimeError("qBittorrent 계정이 설정되지 않았습니다 (.env의 QBIT_USERNAME/QBIT_PASSWORD).")
     with _qbit_state["lock"]:
@@ -2842,12 +2916,13 @@ def _qbit_get(path: str, params: dict | None = None):
                     _qbit_state["login_failed_at"] = time.time()
                     raise RuntimeError("qBittorrent 로그인 실패 - 계정 정보를 확인하세요.")
                 _qbit_state["session"] = sess
-            r = sess.get(f"{QBIT_URL}{path}", params=params, timeout=8)
+            r = sess.request(method, f"{QBIT_URL}{path}", params=params, data=data,
+                             headers={"Referer": QBIT_URL}, timeout=8)
             if r.status_code == 403:
                 _qbit_state["session"] = None
                 continue
             r.raise_for_status()
-            return r.json()
+            return r
     raise RuntimeError("qBittorrent 인증이 반복해서 거부됐습니다.")
 
 

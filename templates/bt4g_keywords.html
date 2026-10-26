@@ -20,6 +20,8 @@
     .banner.ok { background: var(--success-light); color: var(--success-hover); border: 1px solid var(--ok-line); }
     .example-box { background: var(--accent-light); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; font-size: 13px; margin-top: 6px; }
     .example-box code { background: var(--chip); padding: 1px 6px; border-radius: 4px; }
+    /* 그룹은 BT4G 순환 검색용이라 BT4G가 꺼져 있으면 숨김 */
+    #rulesTable.no-group .col-group { display: none; }
     .empty-state { text-align: center; padding: 32px; color: var(--muted); font-size: 14px; }
     @media (max-width: 640px) {
       .col-actions { width: auto; }
@@ -34,7 +36,7 @@
 
 {% block content %}
     {% if saved %}
-      <div class="banner ok">✓ 저장되었습니다. 다음 bt4g.sh 실행부터 새 키워드 목록이 적용됩니다 (최대 20분 이내).</div>
+      <div class="banner ok">✓ 저장되었습니다. 다음 배치부터 새 키워드 목록이 적용됩니다 (최대 20분 이내).</div>
     {% endif %}
     {% if error %}
       <div class="banner err">✗ 처리 중 오류가 발생했습니다: {{ error }}</div>
@@ -44,24 +46,44 @@
     {% endif %}
 
     <div class="card">
-      <div class="section-title">BT4G 검색 키워드 안내</div>
+      <div class="section-title">예능 자동 다운로드 안내</div>
       <div class="hint">
-        여기 등록한 검색어로 bt4gprx.com에서 토렌트를 찾아 RSS로 만들어 qBittorrent에 제공합니다.
-        전체 키워드를 3개 그룹으로 나눠 20분마다 한 그룹씩 순환 검색하므로, 각 키워드는 대략
-        <strong>1시간에 한 번</strong> 갱신됩니다. 결과는 검색어와 상관없이 <strong>720p 화질만</strong>
-        자동으로 걸러져서 남습니다.
+        20분마다 <strong>티프리카 예능 게시판</strong> 최신 글을 읽어서, 아래 키워드가 들어간
+        <strong>720p-NEXT</strong> 글(방송일 7일 이내)을 qBittorrent가 자동으로 받아요.
+        띄어쓰기는 무시하고 비교해요 (<code>나 혼자</code> = <code>나혼자</code>).
+        방송 이름이 바뀌면 티프리카 글 제목에 맞춰 키워드도 고쳐 주세요.
       </div>
-      <div class="example-box">
-        검색어에 스페이스가 2개 이상 들어가면(단어 3개 이상) bt4g 사이트의 AND 검색이 정상 동작하지
-        않을 수 있으니, 프로그램 이름만 그대로 적으세요 (예: <code>벌거벗은 세계사</code>). 화질(720p)은
-        따로 안 붙여도 결과에서 자동으로 걸러집니다.
+    </div>
+
+    {# BT4G 스위치: 켜면 같은 키워드로 bt4gprx.com도 검색하고 qBittorrent '예능' 규칙에 BT4G 피드를 넣는다 #}
+    <div class="card pause-card" id="bt4gCard">
+      <div class="pause-row">
+        <div class="pause-text">
+          <div class="section-title" style="margin:0;">BT4G 검색도 같이 쓰기</div>
+          <div class="pause-state" id="bt4gState">{{ '켜짐 — 티프리카와 BT4G 둘 다 받아요' if bt4g.enabled else '꺼짐 — 티프리카만 받아요' }}</div>
+          <div class="hint" style="margin-top:4px;">
+            티프리카가 막히거나 주소가 바뀌었을 때 켜세요. BT4G는 같은 토렌트를 몇 시간 늦게 잡고,
+            키워드를 3개 그룹으로 나눠 20분마다 한 그룹씩 검색해서 키워드마다 <strong>1시간에 한 번</strong> 갱신돼요.
+            이미 받은 토렌트는 다시 받지 않아요.
+          </div>
+          {% if bt4g.rule_error %}
+            <div class="hint" style="margin-top:6px; color:var(--danger);">⚠ qBittorrent 규칙 확인 실패: {{ bt4g.rule_error }}</div>
+          {% elif bt4g.in_rule != bt4g.enabled %}
+            <div class="hint" style="margin-top:6px; color:var(--warn);">⚠ 스위치와 qBittorrent '예능' 규칙이 어긋나 있어요. 스위치를 한 번 껐다 켜면 맞춰져요.</div>
+          {% endif %}
+        </div>
+        <label class="switch" data-write>
+          <input type="checkbox" id="bt4gToggle" {{ 'checked' if bt4g.enabled else '' }} onchange="setBt4g(this.checked)">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="sr-only">BT4G 검색 켜기</span>
+        </label>
       </div>
     </div>
 
     <form method="post" action="/bt4g_keywords" id="rulesForm">
       <div class="card">
         <div class="section-title">키워드 목록</div>
-        <table id="rulesTable">
+        <table id="rulesTable" class="{{ '' if bt4g.enabled else 'no-group' }}">
           <thead>
             <tr>
               <th class="col-num">#</th>
@@ -75,7 +97,7 @@
             <tr class="rule-row">
               <td class="col-num">{{ loop.index }}</td>
               <td class="col-group"></td>
-              <td><input type="text" name="row_keyword" value="{{ k }}" placeholder="예: 벌거벗은 세계사"></td>
+              <td><input type="text" name="row_keyword" value="{{ k }}" placeholder="예: 나 혼자 산다"></td>
               <td class="col-actions">
                 <button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>
                 <button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>
@@ -105,6 +127,23 @@
 
 {% block scripts %}
   <script>
+    function setBt4g(enabled) {
+      var toggle = document.getElementById('bt4gToggle');
+      toggle.disabled = true;
+      fetch('/api/bt4g_enabled', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: enabled }) })
+        .then(mrJson)
+        .then(function (res) {
+          toggle.disabled = false;
+          if (!res.ok) { toggle.checked = !enabled; showToast(res.data.error || '바꾸지 못했어요', 'error'); return; }
+          var on = !!res.data.enabled;
+          toggle.checked = on;
+          document.getElementById('rulesTable').classList.toggle('no-group', !on);
+          document.getElementById('bt4gState').textContent = on ? '켜짐 — 티프리카와 BT4G 둘 다 받아요' : '꺼짐 — 티프리카만 받아요';
+          showToast(on ? 'BT4G를 켰어요. 다음 배치(20분 이내)부터 검색해요.' : 'BT4G를 껐어요. 티프리카만 받아요.', 'success');
+        })
+        .catch(function (e) { toggle.disabled = false; toggle.checked = !enabled; showToast('오류: ' + e, 'error'); });
+    }
+
     var GROUP_COUNT = 3;
 
     function renumberRows() {
@@ -125,7 +164,7 @@
       tr.innerHTML =
         '<td class="col-num"></td>' +
         '<td class="col-group"></td>' +
-        '<td><input type="text" name="row_keyword" placeholder="예: 벌거벗은 세계사"></td>' +
+        '<td><input type="text" name="row_keyword" placeholder="예: 나 혼자 산다"></td>' +
         '<td class="col-actions">' +
           '<button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>' +
           '<button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>' +
