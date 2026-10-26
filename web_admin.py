@@ -1230,6 +1230,7 @@ def _movie_reconcile_loop() -> None:
         try:
             if MOVIE_JOBS_PATH.exists():
                 _movie_reconcile()
+                _announce_finished_movie_requests()
         except Exception:
             app.logger.warning("영화 상태 정리 실패")
 
@@ -1435,18 +1436,33 @@ def _notify_media_request(it: dict) -> None:
 
 
 def _set_request_status(req_id: str, status: str, background: bool = False) -> dict | None:
-    """상태를 바꾸고, 새로 '완료'가 되면 카톡방에 옮길 안내를 텔레그램으로 보낸다"""
-    before = next((it for it in media_requests.load(MEDIA_REQUESTS_PATH) if it.get("id") == req_id), None)
+    """상태를 바꾸고, 완료인데 아직 안내를 안 보냈으면 카톡방에 옮길 안내를 텔레그램으로 보낸다.
+    '보냈는지'는 상태와 따로 announced로 남긴다 - 다른 경로(기록 파일 직접 수정 등)로 완료돼도 한 번은 가게."""
     item = media_requests.update(MEDIA_REQUESTS_PATH, req_id, status=status, handled=int(time.time()))
-    if item and status == "done" and (before or {}).get("status") != "done":
+    if item and status == "done" and not item.get("announced"):
         if background:   # 웹 버튼은 TMDB·라이브러리 확인을 기다리지 않게
-            threading.Thread(target=_tg_safe, args=(_notify_request_done, item), daemon=True).start()
+            threading.Thread(target=_tg_safe, args=(_announce_request, item), daemon=True).start()
         else:
-            _notify_request_done(item)
+            _announce_request(item)
     return item
 
 
-def _notify_request_done(it: dict) -> None:
+def _announce_request(it: dict) -> None:
+    if _notify_request_done(it):
+        media_requests.update(MEDIA_REQUESTS_PATH, it["id"], announced=int(time.time()))
+
+
+def _announce_finished_movie_requests() -> None:
+    """요청한 영화(같은 TMDB 번호)가 영화 받기로 라이브러리에 들어왔으면 요청을 완료하고 안내를 보낸다"""
+    done_ids = {j.get("tmdb_id") for j in movies.load_jobs(MOVIE_JOBS_PATH)
+                if j.get("status") == "done" and j.get("tmdb_id")}
+    for it in media_requests.load(MEDIA_REQUESTS_PATH):
+        if (it.get("category") == "영화" and it.get("tmdb_id") in done_ids
+                and not it.get("announced") and it.get("status") != "hold"):
+            _set_request_status(it["id"], "done")
+
+
+def _notify_request_done(it: dict) -> bool:
     """포스터 + '요청하신 작품이 올라왔어요' 안내 (사진은 길게 눌러 전달, 글은 복사해서 카톡방에)"""
     detail = None
     if it.get("tmdb_id"):
@@ -1469,8 +1485,8 @@ def _notify_request_done(it: dict) -> None:
             res = _tg_call("sendPhoto", {"chat_id": tg["chat_id"], "photo": poster.replace("/w185/", "/w500/"),
                                          "caption": caption[:1000]})
             if (res or {}).get("ok"):
-                return
-    _tg_notify(caption)
+                return True
+    return _tg_notify(caption)
 
 
 @app.route("/requests", methods=["GET"])

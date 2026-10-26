@@ -164,6 +164,30 @@ def test_jobs_lock_file_is_world_writable(tmp_path):
     assert oct(os.stat(tmp_path / "movie_jobs.json").st_mode & 0o777) == "0o666"
 
 
+def test_place_files_renames_loose_subs_to_video_name(tmp_path):
+    src = tmp_path / "abc" / "Eye In The Sky (2007) [YTS.MX]"
+    (src / "Subs").mkdir(parents=True)
+    (src / "Eye.In.The.Sky.2007.1080p.BluRay.x264-[YTS.MX].mp4").write_bytes(b"v" * 100)
+    (src / "Eye.In.The.Sky.2007.1080p.BluRay.x264-[YTS.MX].srt").write_text("s")
+    for n in ("English.srt", "Chinese Simplified.chi.srt", "Chinese Traditional.chi.srt", "Thai.srt"):
+        (src / "Subs" / n).write_text(n)
+    (src / "www.YTS.MX.jpg").write_text("x")
+    dest = tmp_path / "lib" / "차"
+    p = "천공의 눈 (2007) {tmdb-37984}"
+    names = sorted(x.name for x in movies.place_files(tmp_path / "abc", p, dest))
+    v = f"{p}.Eye.In.The.Sky.2007.1080p.BluRay.x264-[YTS.MX]"
+    assert names == sorted([v + ".mp4", v + ".srt", v + ".en.srt", v + ".zh.srt", v + ".zh-TW.srt", v + ".Thai.srt"])
+    assert (dest / (v + ".zh-TW.srt")).read_text() == "Chinese Traditional.chi.srt"
+
+
+@pytest.mark.parametrize("name,lang", [
+    ("English.srt", "en"), ("2_English.srt", "en"), ("Chinese Simplified.chi.srt", "zh"),
+    ("Chinese Traditional.chi.srt", "zh-TW"), ("Korean.srt", "ko"), ("movie.kor.smi", "ko"), ("Thai.srt", None),
+])
+def test_sub_lang(name, lang):
+    assert movies.sub_lang(name) == lang
+
+
 def test_place_files_never_overwrites(tmp_path):
     src = tmp_path / "src"
     src.mkdir()

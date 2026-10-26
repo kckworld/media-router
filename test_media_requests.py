@@ -177,6 +177,22 @@ def test_done_sends_kakao_ready_message_once(rq, monkeypatch):
     assert len([1 for m, _ in sent if m == "sendPhoto"]) == 1
 
 
+def test_requested_movie_arrival_announces_once(rq, monkeypatch):
+    c, sent, tmp_path = rq
+    c.post("/request/submit", json=GOOD)                          # 인턴 tmdb 607833
+    rid = saved(tmp_path)[0]["id"]
+    # 다른 경로로 '완료'만 바뀐 경우(안내 안 감)를 흉내
+    media_requests.update(tmp_path / "media_requests.json", rid, status="done")
+    sent.clear()
+    web_admin._announce_finished_movie_requests()                  # 아직 영화 없음
+    assert not sent
+    (tmp_path / "movie_jobs.json").write_text(json.dumps([{"tmdb_id": 607833, "status": "done"}]), encoding="utf-8")
+    web_admin._announce_finished_movie_requests()
+    web_admin._announce_finished_movie_requests()                  # 두 번째는 보내지 않음
+    assert len([1 for m, _ in sent if m == "sendPhoto"]) == 1
+    assert saved(tmp_path)[0]["announced"]
+
+
 def test_library_line_series_and_movie(tmp_path):
     base = tmp_path / "01.드라마"
     show = base / "연애박사 (2026)"

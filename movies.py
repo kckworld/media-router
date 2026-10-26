@@ -349,18 +349,45 @@ def place_subtitles(subs: list[Path], video: Path, move=None) -> list[Path]:
     return placed
 
 
+# 토렌트 안 'Subs/English.srt' 같은 자막의 언어 → Plex가 읽는 언어 표시
+_SUB_LANGS = [
+    (r"simplified|chs|简体|zh-?cn|zh-?hans", "zh"),
+    (r"traditional|cht|繁體|繁体|zh-?tw|zh-?hant", "zh-TW"),
+    (r"korean|\bkor\b|\bko\b|한국어", "ko"),
+    (r"english|\beng\b|\ben\b", "en"),
+    (r"japanese|\bjpn\b|\bja\b", "ja"),
+    (r"chinese|\bchi\b|\bzho\b|\bzh\b", "zh"),
+]
+
+
+def sub_lang(name: str) -> str | None:
+    s = Path(name).stem.lower().replace("_", " ").replace(".", " ")
+    return next((code for pat, code in _SUB_LANGS if re.search(pat, s)), None)
+
+
+def _sample(p: Path) -> bool:
+    return bool(re.search(r"(^|[.\s_-])sample([.\s_-]|$)", p.stem, re.I))
+
+
 def place_files(job_dir: Path, prefix: str, dest_dir: Path, move=None) -> list[Path]:
-    """영상·자막 파일 이름 앞에 'prefix.'를 붙여 dest_dir로 옮긴다. 샘플은 뺀다."""
+    """영상·자막 파일 이름 앞에 'prefix.'를 붙여 dest_dir로 옮긴다. 샘플은 뺀다.
+    영상과 이름이 다른 자막(YTS의 'Subs/English.srt' 등)은 '<영상 이름>.<언어>.srt'로 바꿔야
+    Plex가 그 영화 자막으로 붙인다."""
     import shutil
     move = move or shutil.move
     dest_dir.mkdir(parents=True, exist_ok=True)
+    files = [p for p in sorted(job_dir.rglob("*"))
+             if p.is_file() and p.suffix.lower() in VIDEO_EXTS | SUB_EXTS and not _sample(p)]
+    videos = [p for p in files if p.suffix.lower() in VIDEO_EXTS]
+    main = max(videos, key=lambda p: p.stat().st_size) if videos else None
+    main_name = (main.name if main.name.startswith(prefix + ".") else f"{prefix}.{main.name}") if main else ""
     placed = []
-    for p in sorted(job_dir.rglob("*")):
-        if not p.is_file() or p.suffix.lower() not in VIDEO_EXTS | SUB_EXTS:
-            continue
-        if re.search(r"(^|[.\s_-])sample([.\s_-]|$)", p.stem, re.I):
-            continue
+    for p in files:
         name = p.name if p.name.startswith(prefix + ".") else f"{prefix}.{p.name}"
+        if main and p.suffix.lower() in SUB_EXTS and not p.stem.lower().startswith(main.stem.lower()):
+            # 모르는 언어면 원래 이름을 꼬리로 ('Thai.srt' → '<영상>.Thai.srt')
+            lang = sub_lang(p.name) or re.sub(r"[^\w-]+", "", Path(p.name).stem)[:20] or "sub"
+            name = f"{Path(main_name).stem}.{lang}{p.suffix.lower()}"
         dest = _unique(dest_dir / name)
         move(str(p), str(dest))
         try:
