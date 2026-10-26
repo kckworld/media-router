@@ -11,6 +11,7 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo
 import requests
 from db import load_cfg, update_rule_fields, set_config_value, DATA_DIR
+from movies import MOVIE_DIR_NAME
 
 BASE: Path = Path(__file__).resolve().parent
 LOGDIR: Path = DATA_DIR / "logs"
@@ -181,6 +182,9 @@ def find_matches(source_dir: Path, pattern: str, pattern_or: str = None, pattern
 
     for p in source_dir.rglob("*"):
         if not p.is_file():
+            continue
+        # 텔레그램에서 고른 영화(_movies)는 movie_mover.py가 따로 옮긴다
+        if MOVIE_DIR_NAME in p.parts:
             continue
 
         INCOMPLETE_EXTENSIONS = {'.!qb', '.part', '.crdownload', '.tmp'}
@@ -768,7 +772,7 @@ def main() -> None:
         if not src_root.exists():
             continue
         for video_file in src_root.rglob("*"):
-            if video_file.is_file() and video_file.suffix.lower() in VIDEO_EXTENSIONS:
+            if video_file.is_file() and video_file.suffix.lower() in VIDEO_EXTENSIONS and MOVIE_DIR_NAME not in video_file.parts:
                 remaining_videos.append(video_file)
     
     if remaining_videos:

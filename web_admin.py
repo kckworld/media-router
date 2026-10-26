@@ -410,12 +410,14 @@ TG_BTN_BATCH = "▶ 배치 실행"
 TG_BTN_WAKE = "⚡ PC 켜기"
 TG_BTN_STATUS = "❔ PC 상태"
 TG_BTN_OFF = "🔌 PC 끄기"
+TG_BTN_MOVIES = "🎞 영화 베스트"
 # 아이콘을 ⏻에서 바꾸기 전(10-15)에 띄운 메뉴가 대화창에 남아 있을 수 있어 옛 글자도 받는다
 _TG_BTN_OFF_LEGACY = "⏻ PC 끄기"
 TG_MENU = {
     "keyboard": [
         [{"text": TG_BTN_ENCODE}, {"text": TG_BTN_BATCH}],
         [{"text": TG_BTN_WAKE}, {"text": TG_BTN_STATUS}, {"text": TG_BTN_OFF}],
+        [{"text": TG_BTN_MOVIES}],
     ],
     "resize_keyboard": True,
     "is_persistent": True,
@@ -424,13 +426,17 @@ TG_MENU = {
 _TG_ENCODE_TRIGGER_WORDS = ("인코딩",)
 # 확인 버튼(인라인)은 오래된 걸 실수로 누르지 않게 5분 지나면 무시
 TG_CONFIRM_TTL_SEC = 300
+# 영화 베스트 목록 버튼은 천천히 골라도 되게 하루 동안 유효
+TG_MOVIE_TTL_SEC = 24 * 3600
+# 메뉴 버튼을 바꾸면 올린다 → 이미 메뉴를 받은 대화창에도 새 메뉴를 한 번 띄움
+TG_MENU_VERSION = 2
 # 메뉴 안내는 봇마다 한 번 - 토큰을 바꾸면(새 봇) 그 봇에도 한 번 띄운다
 def _tg_bot_key(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
 
 
 def _tg_menu_marker(token: str) -> Path:
-    return DATA_DIR / f"telegram_menu_{_tg_bot_key(token)}.sent"
+    return DATA_DIR / f"telegram_menu_{_tg_bot_key(token)}_v{TG_MENU_VERSION}.sent"
 # 리스너 스레드는 모듈 중간에서 시작되므로, 아래쪽 라우트 헬퍼(_request_*)까지
 # 정의가 끝난 뒤(파일 맨 끝에서 set)에야 업데이트를 처리한다
 _tg_ready = threading.Event()
@@ -626,6 +632,8 @@ def _handle_telegram_text(text: str) -> None:
         _tg_result(ok, message)
     elif text == TG_BTN_STATUS:
         _tg_notify(_tg_pc_status_text())
+    elif text == TG_BTN_MOVIES:
+        _tg_movie_best()
     elif text in (TG_BTN_OFF, _TG_BTN_OFF_LEGACY):
         _tg_shutdown(force=False)
     elif text == TG_BTN_ENCODE or any(w in text for w in _TG_ENCODE_TRIGGER_WORDS):
@@ -640,8 +648,10 @@ def _handle_telegram_callback(cq: dict) -> None:
     action, _, ts = (cq.get("data") or "").partition(":")
     msg = cq.get("message") or {}
     chat_id = (msg.get("chat") or {}).get("id")
-    expired = action != "cancel_off" and (not ts.isdigit() or time.time() - int(ts) > TG_CONFIRM_TTL_SEC)
-    key = (chat_id, msg.get("message_id"))
+    is_movie = action.startswith("mv_")
+    ttl = TG_MOVIE_TTL_SEC if is_movie else TG_CONFIRM_TTL_SEC
+    expired = action != "cancel_off" and (not ts.isdigit() or time.time() - int(ts) > ttl)
+    key = (chat_id, msg.get("message_id"), action if is_movie else "")
     with _tg_handled["lock"]:
         duplicate = key in _tg_handled["messages"]
         _tg_handled["messages"].add(key)
@@ -652,10 +662,13 @@ def _handle_telegram_callback(cq: dict) -> None:
         return
     _tg_call("answerCallbackQuery", {"callback_query_id": cq.get("id"),
                                      "text": "만료된 버튼이에요. 메뉴에서 다시 눌러주세요." if expired else ""})
-    if chat_id and msg.get("message_id"):
+    if chat_id and msg.get("message_id") and not is_movie:
         _tg_call("editMessageReplyMarkup", {"chat_id": chat_id, "message_id": msg["message_id"],
                                             "reply_markup": {"inline_keyboard": []}})
     if expired or action == "dismiss":
+        return
+    if is_movie:
+        _tg_movie_download(action[3:])
         return
     if action == "batch":
         ok, message, _code = _request_batch_run("telegram-trigger")
@@ -687,7 +700,7 @@ def _tg_show_menu_once(token: str) -> None:
     _tg_handled["menu_tried"][key] = time.time()
     # getUpdates가 성공한 바로 그 토큰으로 보낸다 (그 사이 설정이 바뀌어도 엉뚱한 봇에 안 가게)
     _tg_call("setMyCommands", {"commands": [{"command": "menu", "description": "버튼 메뉴 열기"}]}, token)
-    if not _tg_notify("이제 아래 버튼으로 인코딩·배치·PC 켜기/끄기를 할 수 있어요.\n메뉴가 안 보이면 /menu 를 보내세요.", TG_MENU, token):
+    if not _tg_notify("이제 아래 버튼으로 인코딩·배치·PC 켜기/끄기와 영화 베스트 받기를 할 수 있어요.\n메뉴가 안 보이면 /menu 를 보내세요.", TG_MENU, token):
         return  # 5분 뒤 다시 시도 (그 전에도 봇에 아무 메시지나 보내면 메뉴가 뜸)
     try:
         marker.touch()
@@ -1043,6 +1056,82 @@ def api_processing_pause():
 # ── 유튜브 다운로드 (2026-10-19) ──────────────────────────
 # 휴대폰 유튜브 앱 → 공유 → 텔레그램 봇, 또는 웹 "작업 > 유튜브" 화면에서 링크를 넣으면
 # yt-dlp로 Drive(영상) / Drive/음악(mp3)에 받는다. 자세한 건 youtube_dl.py
+import movies
+MOVIE_JOBS_PATH = DATA_DIR / "movie_jobs.json"
+
+
+def _tg_movie_best() -> None:
+    """티프리카 영화 일간·주간 베스트를 인라인 버튼으로 보낸다. 누르면 _tg_movie_download"""
+    try:
+        best = movies.fetch_best()
+    except Exception as e:
+        _tg_result(False, f"티프리카 영화 베스트를 못 가져왔어요 ({type(e).__name__}). 주소가 바뀌었는지 확인해 주세요.")
+        return
+    now = int(time.time())
+    rows = []
+    for icon, items in (("🔥", best["day"]), ("📅", best["week"])):
+        for m in items:
+            label = m["title"] if len(m["title"]) <= 48 else m["title"][:47] + "…"
+            rows.append([{"text": f"{icon} {label}", "callback_data": f"mv_{m['id']}:{now}"}])
+    if not rows:
+        _tg_result(False, "티프리카 영화 베스트 목록이 비어 있어요. 페이지 구조가 바뀌었는지 확인해 주세요.")
+        return
+    _tg_notify(f"🎞 티프리카 영화 베스트 (🔥 일간 {len(best['day'])} · 📅 주간 {len(best['week'])})\n"
+               "받을 영화를 누르세요. 여러 편 골라도 돼요 (버튼은 하루 동안 유효).",
+               {"inline_keyboard": rows})
+
+
+def _tg_movie_download(post_id: str) -> None:
+    if not post_id.isdigit():
+        return
+    try:
+        ok, message = start_movie_download(post_id)
+    except Exception as e:
+        app.logger.exception("영화 받기 실패")
+        ok, message = False, f"영화를 받지 못했어요 ({type(e).__name__}: {e})"
+    _tg_result(ok, message)
+
+
+def start_movie_download(post_id: str) -> tuple[bool, str]:
+    """티프리카 영화 글 → TMDB 제목·연도 → qBittorrent (_movies/<해시>) + movie_jobs.json"""
+    view = movies.fetch_view(post_id)
+    if not view["btih"]:
+        return False, "글에서 토렌트(마그넷)를 찾지 못했어요."
+    post_title = re.sub(r"^토렌트\s*-\s*", "", view["page_title"]).strip() or post_id
+    ko, en, year = movies.split_post_title(post_title)
+    found = movies.tmdb_lookup(get_tmdb_api_key(), ko, en, year)
+    if found:
+        title, year = found["title"], found["year"]
+    else:
+        title = ko or en or post_title
+    prefix = movies.make_prefix(title, year)
+    folder = movies.initial_folder(title)
+    btih = view["btih"]
+
+    if any(j.get("btih") == btih and j.get("status") == "downloading" for j in movies.load_jobs(MOVIE_JOBS_PATH)):
+        return False, f"'{prefix}'은(는) 이미 받는 중이에요."
+    _qbit_post("/api/v2/torrents/add", {
+        "urls": f"magnet:?xt=urn:btih:{btih}",
+        "savepath": f"{movies.QBIT_MOVIE_DIR}/{btih}",
+        "autoTMM": "false",
+        "tags": "영화",
+        "rename": post_title,
+    })
+    job = {"btih": btih, "post_id": post_id, "post_title": post_title, "prefix": prefix,
+           "folder": folder, "tmdb_id": found["id"] if found else None,
+           "added": int(time.time()), "status": "downloading"}
+    movies.update_jobs(MOVIE_JOBS_PATH, lambda jobs: jobs.append(job))
+
+    lines = [f"⬇ '{prefix}'(으)로 받기 시작했어요 → 영화/{folder} 폴더."]
+    if not found:
+        lines.append("⚠ TMDB에서 못 찾아서 글 제목으로 이름을 붙여요. Plex에서 확인해 주세요.")
+    if view["subs"]:
+        lines.append("⚠ 이 글에는 자막이 따로 붙어 있는데(" + ", ".join(view["subs"][:2]) +
+                     ") 자동으로는 못 받아요. 필요하면 티프리카에서 직접 받아 주세요.")
+    lines.append("다 받으면 이름을 붙여 옮기고 알려 드릴게요 (배치 20분 주기).")
+    return True, "\n".join(lines)
+
+
 import youtube_dl as ytdl
 
 youtube = ytdl.Downloader(DATA_DIR / "youtube_jobs.json", notify=lambda text: _tg_notify(text),

@@ -70,6 +70,8 @@ fi
 # 3. venv + media_router
 cd /volume1/docker/media-router
 . .venv/bin/activate
+# 3-0. 텔레그램 "영화 베스트"로 고른 영화: 다 받아졌으면 "제목 (연도)."를 붙여 영화 라이브러리로 (2026-10-26)
+python -u movie_mover.py || echo "$(ra_ts) movie_mover.py 실행 중 오류 발생 (계속 진행)"
 CONAN_DIR="/volume1/video/04.애니메이션/04.시리즈/명탐정 코난 (1996)"
 ONEPIECE_DIR="/volume1/video/04.애니메이션/04.시리즈/원피스/One Piece Season 23"
 if [ "$PROCESSING_PAUSED" -eq 0 ]; then
