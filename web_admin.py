@@ -428,6 +428,8 @@ _TG_ENCODE_TRIGGER_WORDS = ("인코딩",)
 TG_CONFIRM_TTL_SEC = 300
 # 영화 베스트 목록 버튼은 천천히 골라도 되게 하루 동안 유효
 TG_MOVIE_TTL_SEC = 24 * 3600
+# 단톡방 요청 알림의 [완료]/[보류] 버튼
+TG_REQUEST_TTL_SEC = 30 * 24 * 3600
 # 메뉴 버튼을 바꾸면 올린다 → 이미 메뉴를 받은 대화창에도 새 메뉴를 한 번 띄움
 TG_MENU_VERSION = 2
 # 메뉴 안내는 봇마다 한 번 - 토큰을 바꾸면(새 봇) 그 봇에도 한 번 띄운다
@@ -649,7 +651,7 @@ def _handle_telegram_callback(cq: dict) -> None:
     msg = cq.get("message") or {}
     chat_id = (msg.get("chat") or {}).get("id")
     is_movie = action.startswith("mv_")
-    ttl = TG_MOVIE_TTL_SEC if is_movie else TG_CONFIRM_TTL_SEC
+    ttl = TG_MOVIE_TTL_SEC if is_movie else TG_REQUEST_TTL_SEC if action.startswith("rq_") else TG_CONFIRM_TTL_SEC
     expired = action != "cancel_off" and (not ts.isdigit() or time.time() - int(ts) > ttl)
     key = (chat_id, msg.get("message_id"), action if is_movie else "")
     with _tg_handled["lock"]:
@@ -669,6 +671,12 @@ def _handle_telegram_callback(cq: dict) -> None:
         return
     if is_movie:
         _tg_movie_download(action[3:])
+        return
+    if action[:8] in ("rq_done_", "rq_hold_"):
+        status = "done" if action.startswith("rq_done_") else "hold"
+        item = media_requests.update(MEDIA_REQUESTS_PATH, action[8:], status=status, handled=int(time.time()))
+        if item:
+            _tg_result(True, f"'{item['title']}' 요청을 {media_requests.STATUSES[status]}(으)로 표시했어요.")
         return
     if action == "batch":
         ok, message, _code = _request_batch_run("telegram-trigger")
@@ -980,7 +988,8 @@ def authed(req):
 
 
 # 보기 전용 계정에 숨기는 화면 (가족 Jellyfin·Plex 계정명, 서버 경로·연결 정보)
-VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users", "/skills", "/api/skills")
+VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users", "/skills", "/api/skills",
+                          "/requests", "/api/requests")  # 요청 목록엔 단톡방 사람 이름이 있다
 READONLY_MESSAGE = "읽기 전용 계정이라 바꿀 수 없어요."
 
 
@@ -1306,6 +1315,168 @@ def api_movies_download():
         app.logger.exception("영화 받기 실패")
         return jsonify({"ok": False, "error": f"받지 못했어요 ({type(e).__name__}: {e})"}), 502
     return jsonify({"ok": ok, "message": message, "error": None if ok else message}), (200 if ok else 409)
+
+
+# ── 단톡방 영상 요청 (2026-10-26) ──
+# /request 는 로그인 없이 연다. REQUEST_PUBLIC_HOSTS(별도 주소, 예: request.kckworld.com)로
+# 들어오면 요청 페이지만 열리고 관리 화면은 404 - 공개 주소에서 로그인 화면조차 안 보이게.
+import media_requests
+MEDIA_REQUESTS_PATH = DATA_DIR / "media_requests.json"
+MEDIA_REQUEST_SETTINGS = DATA_DIR / "media_request_settings.json"
+REQUEST_PUBLIC_HOSTS = {h.strip().lower() for h in os.getenv("REQUEST_PUBLIC_HOSTS", "request.kckworld.com").split(",") if h.strip()}
+# '/requests'(관리 화면)가 걸리지 않게 '/request'는 정확히 비교하고, 하위 경로는 '/request/'로
+_REQUEST_PUBLIC_PATHS = ("/request/", "/static/")
+_rq_search_limit = media_requests.RateLimiter(30, 60)        # 검색: 1분에 30번
+_rq_submit_limit = media_requests.RateLimiter(5, 3600)       # 요청: 1시간에 5번
+_rq_code_fail_limit = media_requests.RateLimiter(10, 3600)   # 코드 틀림: 1시간에 10번
+# 443이 공유기에서 NAS로 바로 열려 있어 Cloudflare를 안 거치면 CF-Connecting-IP를 위조할 수 있다
+# → 접속지와 상관없는 전체 한도도 둔다 (코드 맞히기·도배 방지)
+_rq_code_fail_total = media_requests.RateLimiter(50, 3600)
+_rq_submit_total = media_requests.RateLimiter(30, 3600)
+
+
+def _public_ip(req) -> str:
+    # cloudflared가 붙이는 실제 접속 IP를 먼저 본다 (DSM 리버스 프록시 뒤라 remote_addr는 127.0.0.1)
+    return req.headers.get("CF-Connecting-IP") or _client_ip(req)
+
+
+@app.before_request
+def _public_host_guard():
+    host = (request.host or "").split(":")[0].lower()
+    if host not in REQUEST_PUBLIC_HOSTS:
+        return None
+    if request.path == "/":
+        return media_request_page()
+    if request.path == "/request" or request.path.startswith(_REQUEST_PUBLIC_PATHS):
+        return None
+    return make_response("Not Found", 404)
+
+
+def _request_code() -> str:
+    try:
+        return str(json.loads(MEDIA_REQUEST_SETTINGS.read_text(encoding="utf-8")).get("code") or "")
+    except (OSError, ValueError):
+        return ""
+
+
+@app.route("/request", methods=["GET"])
+def media_request_page():
+    return render_template("request.html", categories=media_requests.CATEGORIES,
+                           platforms=media_requests.PLATFORMS, open=bool(_request_code()))
+
+
+@app.route("/request/search", methods=["GET"])
+def media_request_search():
+    if not _rq_search_limit.allow(_public_ip(request)):
+        return jsonify({"ok": False, "error": "검색이 너무 많아요. 잠시 뒤에 다시 해 주세요."}), 429
+    try:
+        results = media_requests.tmdb_search(get_tmdb_api_key(), request.args.get("q", ""))
+    except Exception:
+        return jsonify({"ok": False, "error": "검색이 잠시 안 돼요. 제목을 직접 적어 주세요."}), 502
+    return jsonify({"ok": True, "results": results})
+
+
+@app.route("/request/submit", methods=["POST"])
+def media_request_submit():
+    form = request.get_json(silent=True) or {}
+    ip = _public_ip(request)
+    if form.get("website"):  # 사람은 못 보는 칸 - 봇이 채움
+        return jsonify({"ok": True})
+    code = _request_code()
+    if not code:
+        return jsonify({"ok": False, "error": "지금은 요청을 받지 않아요."}), 403
+    if not hmac.compare_digest(str(form.get("code") or "").strip(), code):
+        if not (_rq_code_fail_limit.allow(ip) and _rq_code_fail_total.allow("*")):
+            return jsonify({"ok": False, "error": "잠시 뒤에 다시 해 주세요."}), 429
+        return jsonify({"ok": False, "error": "단톡방 코드가 맞지 않아요."}), 403
+    data, err = media_requests.validate(form)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    if not (_rq_submit_limit.allow(ip) and _rq_submit_total.allow("*")):
+        return jsonify({"ok": False, "error": "요청이 너무 많아요. 한 시간 뒤에 다시 해 주세요."}), 429
+    detail = None
+    if data["tmdb_id"]:
+        try:
+            detail = media_requests.tmdb_detail(get_tmdb_api_key(), data["media_type"], data["tmdb_id"])
+        except Exception:
+            detail = None
+    if detail:
+        data.update(title=detail["title"], year=detail["year"], poster=detail["poster"])
+    else:
+        data.update(tmdb_id=None, media_type="", year=None, poster=None)
+        if not data["title"]:
+            return jsonify({"ok": False, "error": "작품을 찾지 못했어요. 제목을 직접 적어 주세요."}), 400
+    item = media_requests.add(MEDIA_REQUESTS_PATH, data)
+    _notify_media_request(item)
+    return jsonify({"ok": True})
+
+
+def _request_label(it: dict) -> str:
+    return f"{it['title']} ({it['year']})" if it.get("year") else it["title"]
+
+
+def _notify_media_request(it: dict) -> None:
+    lines = [f"🙋 {it['name']}님 요청", f"{_request_label(it)}",
+             " · ".join(x for x in (it["category"], it.get("platform")) if x)]
+    if it.get("memo"):
+        lines.append(f"메모: {it['memo']}")
+    if it.get("tmdb_id"):
+        lines.append(f"https://www.themoviedb.org/{it['media_type']}/{it['tmdb_id']}")
+    text = "\n".join(lines)
+    markup = _tg_confirm(("✅ 완료", f"rq_done_{it['id']}"), ("⏸ 보류", f"rq_hold_{it['id']}"))
+    if it.get("poster"):
+        tg = _tg_cfg()
+        if tg.get("enabled") and tg.get("chat_id"):
+            res = _tg_call("sendPhoto", {"chat_id": tg["chat_id"], "photo": it["poster"].replace("/w185/", "/w342/"),
+                                         "caption": text[:1000], "reply_markup": markup})
+            if (res or {}).get("ok"):
+                return
+    _tg_notify(text, markup)
+
+
+@app.route("/requests", methods=["GET"])
+def media_requests_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("requests.html", authed=True, statuses=media_requests.STATUSES,
+                           code=_request_code(), public_hosts=sorted(REQUEST_PUBLIC_HOSTS))
+
+
+@app.route("/api/requests", methods=["GET"])
+def api_media_requests():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    return jsonify({"ok": True, "items": media_requests.load(MEDIA_REQUESTS_PATH)[::-1]})
+
+
+@app.route("/api/requests/<req_id>", methods=["POST"])
+def api_media_request_update(req_id):
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    body = request.get_json(silent=True) or {}
+    if body.get("delete"):
+        ok = media_requests.delete(MEDIA_REQUESTS_PATH, req_id)
+    else:
+        status = body.get("status")
+        if status not in media_requests.STATUSES:
+            return jsonify({"ok": False, "error": "잘못된 상태예요."}), 400
+        ok = media_requests.update(MEDIA_REQUESTS_PATH, req_id, status=status, handled=int(time.time())) is not None
+    return jsonify({"ok": ok}), (200 if ok else 404)
+
+
+@app.route("/api/requests/code", methods=["POST"])
+def api_media_request_code():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    code = str((request.get_json(silent=True) or {}).get("code") or "").strip()
+    if len(code) > 20:
+        return jsonify({"ok": False, "error": "코드는 20자까지예요."}), 400
+    MEDIA_REQUEST_SETTINGS.write_text(json.dumps({"code": code}, ensure_ascii=False), encoding="utf-8")
+    return jsonify({"ok": True, "code": code})
 
 
 import youtube_dl as ytdl

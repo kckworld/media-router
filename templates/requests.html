@@ -1,0 +1,114 @@
+{% set active_page = 'requests' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .rq-code { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .rq-code input { width: 160px; }
+    .rq-filter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .rq-filter button.on { background: var(--accent-light); color: var(--accent-hover); border-color: var(--accent); }
+    .rq-list { list-style: none; margin: 0; padding: 0; }
+    .rq-item { display: flex; gap: 12px; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+    .rq-item:last-child { border-bottom: 0; }
+    .rq-poster { flex: none; width: 54px; height: 80px; border-radius: 6px; object-fit: cover; background: var(--bg-solid); }
+    .rq-main { flex: 1; min-width: 0; }
+    .rq-title { font-weight: 700; color: var(--fg); }
+    .rq-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .rq-memo { font-size: 13px; margin-top: 4px; white-space: pre-wrap; word-break: break-all; }
+    .rq-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .state { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-left: 4px; }
+    .state.new { background: var(--accent-light); color: var(--accent-hover); }
+    .state.done { background: var(--success-light); color: var(--success-hover); }
+    .state.hold { background: var(--warn-soft); color: var(--warn); }
+    .rq-empty { color: var(--muted); padding: 12px 2px; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="section-title">요청 페이지</div>
+      <div class="hint">
+        단톡방에 아래 주소와 코드를 알려 주세요. 코드를 비우면 요청을 받지 않아요.<br>
+        {% for h in public_hosts %}<code>https://{{ h }}</code> (리버스 프록시 등록 후) · {% endfor %}<code>https://media.kckworld.com/request</code>
+      </div>
+      <div class="rq-code" style="margin-top:10px;">
+        <input type="text" id="rqCode" value="{{ code }}" maxlength="20" placeholder="단톡방 코드" data-write>
+        <button type="button" class="btn small primary" data-write onclick="saveCode()">코드 저장</button>
+        <span class="hint" id="codeState">{{ '요청 받는 중' if code else '⚠ 코드가 없어서 요청을 안 받고 있어요' }}</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">들어온 요청</div>
+      <div class="rq-filter" id="rqFilter">
+        <button type="button" class="btn small on" data-f="new" onclick="setFilter('new')">새 요청</button>
+        <button type="button" class="btn small" data-f="hold" onclick="setFilter('hold')">보류</button>
+        <button type="button" class="btn small" data-f="done" onclick="setFilter('done')">완료</button>
+        <button type="button" class="btn small" data-f="all" onclick="setFilter('all')">전체</button>
+      </div>
+      <ul class="rq-list" id="rqList"><li class="rq-empty">불러오는 중…</li></ul>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    var STATUS = {{ statuses | tojson }};
+    var items = [], filter = "new";
+
+    function fmtTime(t) {
+      var d = new Date(t * 1000);
+      return (d.getMonth() + 1) + "/" + d.getDate() + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    }
+    function setFilter(f) {
+      filter = f;
+      document.querySelectorAll("#rqFilter button").forEach(function(b) { b.classList.toggle("on", b.dataset.f === f); });
+      render();
+    }
+    function render() {
+      var list = items.filter(function(it) { return filter === "all" || it.status === filter; });
+      var el = document.getElementById("rqList");
+      if (!list.length) { el.innerHTML = '<li class="rq-empty">요청이 없어요.</li>'; return; }
+      el.innerHTML = list.map(function(it) {
+        var title = esc(it.title) + (it.year ? " (" + it.year + ")" : "");
+        if (it.tmdb_id) title = '<a href="https://www.themoviedb.org/' + esc(it.media_type) + '/' + esc(it.tmdb_id) + '" target="_blank" rel="noopener">' + title + '</a>';
+        var acts = ["new", "hold", "done"].filter(function(s) { return s !== it.status; }).map(function(s) {
+          return '<button type="button" class="btn small" data-write onclick="setStatus(\'' + esc(it.id) + '\', \'' + s + '\')">' + esc(STATUS[s]) + '</button>';
+        }).join("") + '<button type="button" class="btn small danger" data-write onclick="removeReq(\'' + esc(it.id) + '\')">삭제</button>';
+        return '<li class="rq-item">' + (it.poster ? '<img class="rq-poster" src="' + esc(it.poster) + '" alt="" loading="lazy">' : '<div class="rq-poster"></div>') +
+          '<div class="rq-main"><div class="rq-title">' + title + '<span class="state ' + esc(it.status) + '">' + esc(STATUS[it.status] || it.status) + '</span></div>' +
+          '<div class="rq-sub">' + esc([it.category, it.platform].filter(Boolean).join(" · ")) + ' · ' + esc(it.name) + ' · ' + fmtTime(it.created) + '</div>' +
+          (it.memo ? '<div class="rq-memo">' + esc(it.memo) + '</div>' : '') +
+          '<div class="rq-actions">' + acts + '</div></div></li>';
+      }).join("");
+    }
+    function load() {
+      fetch("/api/requests", { cache: "no-store" }).then(mrJson).then(function(res) {
+        if (res.ok && res.data.ok) { items = res.data.items; render(); }
+      }).catch(function() {});
+    }
+    function post(url, body) {
+      return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(mrJson);
+    }
+    function setStatus(id, status) {
+      post("/api/requests/" + encodeURIComponent(id), { status: status }).then(function(res) {
+        if (!res.ok) { showToast("바꾸지 못했어요", "error"); return; }
+        load();
+      });
+    }
+    function removeReq(id) {
+      if (!confirm("이 요청을 지울까요?")) return;
+      post("/api/requests/" + encodeURIComponent(id), { delete: true }).then(function() { load(); });
+    }
+    function saveCode() {
+      var code = document.getElementById("rqCode").value.trim();
+      post("/api/requests/code", { code: code }).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); return; }
+        document.getElementById("codeState").textContent = code ? "요청 받는 중" : "⚠ 코드가 없어서 요청을 안 받고 있어요";
+        showToast(code ? "코드를 저장했어요." : "코드를 지웠어요. 이제 요청을 안 받아요.", "success");
+      });
+    }
+    load();
+    setInterval(function() { if (!document.hidden) load(); }, 30000);
+  </script>
+{% endblock %}
