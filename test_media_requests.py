@@ -168,7 +168,8 @@ def test_done_sends_kakao_ready_message_once(rq, monkeypatch):
     web_admin._handle_telegram_callback(cb)
     photos = [p for m, p in sent if m == "sendPhoto"]
     assert len(photos) == 1 and photos[0]["photo"].endswith("/w500/a.jpg") and "reply_markup" not in photos[0]
-    assert photos[0]["caption"] == "🎬 요청하신 작품이 올라왔어요!\n인턴 (2026) · 영화 · ★6.5\n줄거리입니다.\n요청: 홍길동님"
+    assert photos[0]["caption"] == "🎬 요청하신 작품이 올라왔어요!\n인턴 (2026) · 영화 · ★6.5\n줄거리입니다.\n요청: 홍** 님"
+    assert media_requests.mask_name("Tom") == "T**" and media_requests.mask_name(" 손 ") == "손**"
     # 이미 완료인 걸 다시 완료로 바꿔도 또 보내지 않음
     monkeypatch.setattr(web_admin, "authed", lambda req: True)
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")

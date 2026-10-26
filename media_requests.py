@@ -257,8 +257,14 @@ def done_caption(it: dict, detail: dict | None, library: str) -> str:
         lines.append(overview if len(overview) <= 150 else overview[:149] + "…")
     if library:
         lines.append(library)
-    lines.append(f"요청: {it['name']}님")
+    lines.append(f"요청: {mask_name(it['name'])} 님")
     return "\n".join(lines)
+
+
+def mask_name(name: str) -> str:
+    """카톡방에 붙일 안내에서는 첫 글자만 ('손흥민' → '손**')"""
+    name = (name or "").strip()
+    return name[:1] + "**" if name else "**"
 
 
 def validate(form: dict) -> tuple[dict | None, str | None]:
