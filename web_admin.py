@@ -49,6 +49,8 @@ APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Seoul"))
 
 RENAME_RULES_PATH = Path(os.getenv("RENAME_RULES_PATH", "/volume1/web/video_auto/rename_rules.conf"))
 BT4G_KEYWORDS_PATH = Path(os.getenv("BT4G_KEYWORDS_PATH", "/volume1/web/Python/bt4g/bt4g_keywords.txt"))
+# 드라마 자동 다운로드 키워드 (2026-10-26, bt4g/tfreeca.py가 티프리카 드라마 게시판에서 찾음)
+DRAMA_KEYWORDS_PATH = Path(os.getenv("DRAMA_KEYWORDS_PATH", "/volume1/web/Python/bt4g/drama_keywords.txt"))
 
 # 전체 배치(run_all.sh) 수동 실행 - 호스트로 SSH 접속해 강제 명령(run_all.sh)만 실행
 RUN_BATCH_SSH_KEY = os.getenv("RUN_BATCH_SSH_KEY", "/app/secrets/run_batch_key")
@@ -2344,6 +2346,16 @@ def api_bt4g_enabled():
 
 @app.route("/bt4g_keywords", methods=["GET", "POST"])
 def bt4g_keywords():
+    return _keyword_page("variety", BT4G_KEYWORDS_PATH, "bt4g_keywords.txt.bak", "/bt4g_keywords")
+
+
+@app.route("/drama_keywords", methods=["GET", "POST"])
+def drama_keywords():
+    return _keyword_page("drama", DRAMA_KEYWORDS_PATH, "drama_keywords.txt.bak", "/drama_keywords")
+
+
+def _keyword_page(kind: str, path: Path, backup_name: str, action: str):
+    """예능·드라마 키워드 화면 (한 줄에 검색어 하나, tfreeca.py·bt4g.py가 읽는 형식)"""
     auth = authed(request)
     if auth is not True:
         return auth
@@ -2356,39 +2368,41 @@ def bt4g_keywords():
             rows = [k.strip() for k in request.form.getlist("row_keyword")]
             content = render_bt4g_keywords(rows)
 
-            BT4G_KEYWORDS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            if BT4G_KEYWORDS_PATH.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
                 # 백업은 소스 파일 옆이 아니라 DATA_DIR(영구 볼륨)에 남긴다.
-                # docker-compose가 bt4g_keywords.txt "파일 하나만" 바인드 마운트하므로,
+                # docker-compose가 키워드 파일 "하나만" 바인드 마운트하므로,
                 # 옆에 .bak을 쓰면 컨테이너의 임시 레이어에만 생겼다가 재배포 시 사라진다.
-                backup_path = DATA_DIR / "bt4g_keywords.txt.bak"
+                backup_path = DATA_DIR / backup_name
                 backup_path.write_text(
-                    BT4G_KEYWORDS_PATH.read_text(encoding="utf-8", errors="replace"),
+                    path.read_text(encoding="utf-8", errors="replace"),
                     encoding="utf-8",
                 )
-            BT4G_KEYWORDS_PATH.write_text(content, encoding="utf-8")
+            path.write_text(content, encoding="utf-8")
             saved = True
         except Exception as e:
-            app.logger.exception("bt4g_keywords.txt 저장 중 오류")
+            app.logger.exception("%s 저장 중 오류", path.name)
             error = str(e)
 
     try:
-        keywords = parse_bt4g_keywords(BT4G_KEYWORDS_PATH)
+        keywords = parse_bt4g_keywords(path)
         load_error = None
     except Exception as e:
-        app.logger.exception("bt4g_keywords.txt 로딩 중 오류")
+        app.logger.exception("%s 로딩 중 오류", path.name)
         keywords = []
         load_error = str(e)
 
     return render_template(
         "bt4g_keywords.html",
         authed=True,
+        kind=kind,
+        form_action=action,
         keywords=keywords,
-        bt4g=bt4g_state(),
+        bt4g=bt4g_state() if kind == "variety" else None,
         saved=saved,
         error=error or load_error,
-        conf_path=str(BT4G_KEYWORDS_PATH),
-        conf_exists=BT4G_KEYWORDS_PATH.exists(),
+        conf_path=str(path),
+        conf_exists=path.exists(),
     )
 
 

@@ -1,4 +1,4 @@
-{% set active_page = 'bt4g' %}
+{% set active_page = 'drama' if kind == 'drama' else 'bt4g' %}
 {% extends "base.html" %}
 
 {% block page_css %}
@@ -45,6 +45,21 @@
       <div class="banner warn">⚠ 키워드 파일 경로({{ conf_path }})를 찾을 수 없습니다. 저장하면 새로 생성됩니다. 컨테이너에 해당 경로가 마운트되어 있는지 확인하세요.</div>
     {% endif %}
 
+    {% if kind == 'drama' %}
+    <div class="card">
+      <div class="section-title">드라마 자동 다운로드 안내</div>
+      <div class="hint">
+        20분마다 <strong>티프리카 드라마 게시판</strong> 최신 글을 읽어서, 아래 키워드가 들어간
+        <strong>1080p NF WEB-DL (MrHulk·Marco)</strong> 글을 qBittorrent가 자동으로 받아요.
+        dramaday의 <code>1080p WEB-DL</code>과 같은 넷플릭스 원본이에요. AV1·x265와 다른 릴(Sniper 등)은 받지 않고,
+        같은 회차는 먼저 올라온 하나만 받아요.
+      </div>
+      <div class="example-box">
+        띄어쓰기는 무시하고 비교해요. 티프리카 글 제목의 한글 이름으로 적으세요 (예: <code>100일의 거짓말</code>).
+        제목이 숫자로 시작하는 드라마는 <a href="/rename_rules">파일명 치환</a>에 <code>.S01E</code> 규칙도 같이 넣어 주세요.
+      </div>
+    </div>
+    {% else %}
     <div class="card">
       <div class="section-title">예능 자동 다운로드 안내</div>
       <div class="hint">
@@ -79,11 +94,12 @@
         </label>
       </div>
     </div>
+    {% endif %}
 
-    <form method="post" action="/bt4g_keywords" id="rulesForm">
+    <form method="post" action="{{ form_action }}" id="rulesForm">
       <div class="card">
         <div class="section-title">키워드 목록</div>
-        <table id="rulesTable" class="{{ '' if bt4g.enabled else 'no-group' }}">
+        <table id="rulesTable" class="{{ '' if bt4g and bt4g.enabled else 'no-group' }}">
           <thead>
             <tr>
               <th class="col-num">#</th>
@@ -97,7 +113,7 @@
             <tr class="rule-row">
               <td class="col-num">{{ loop.index }}</td>
               <td class="col-group"></td>
-              <td><input type="text" name="row_keyword" value="{{ k }}" placeholder="예: 나 혼자 산다"></td>
+              <td><input type="text" name="row_keyword" value="{{ k }}" placeholder="{{ '예: 100일의 거짓말' if kind == 'drama' else '예: 나 혼자 산다' }}"></td>
               <td class="col-actions">
                 <button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>
                 <button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>
@@ -164,7 +180,7 @@
       tr.innerHTML =
         '<td class="col-num"></td>' +
         '<td class="col-group"></td>' +
-        '<td><input type="text" name="row_keyword" placeholder="예: 나 혼자 산다"></td>' +
+        '<td><input type="text" name="row_keyword" placeholder="{{ '예: 100일의 거짓말' if kind == 'drama' else '예: 나 혼자 산다' }}"></td>' +
         '<td class="col-actions">' +
           '<button type="button" class="btn small" onclick="moveRuleRow(this,-1)" title="위로 이동">↑</button>' +
           '<button type="button" class="btn small" onclick="moveRuleRow(this,1)" title="아래로 이동">↓</button>' +

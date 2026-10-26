@@ -67,6 +67,22 @@ def test_viewer_cannot_toggle(qbit, monkeypatch):
     assert not qbit["flag"].exists()
 
 
+def test_drama_keywords_page_saves_its_own_file(qbit, monkeypatch, tmp_path):
+    drama = tmp_path / "drama_keywords.txt"
+    variety = tmp_path / "bt4g_keywords.txt"
+    variety.write_text("런닝맨\n", encoding="utf-8")
+    monkeypatch.setattr(web_admin, "DRAMA_KEYWORDS_PATH", drama)
+    monkeypatch.setattr(web_admin, "BT4G_KEYWORDS_PATH", variety)
+    monkeypatch.setattr(web_admin, "DATA_DIR", tmp_path)
+    r = qbit["client"].post("/drama_keywords", data={"row_keyword": ["100일의 거짓말", " "]})
+    html = r.get_data(as_text=True)
+    assert r.status_code == 200
+    assert drama.read_text(encoding="utf-8").splitlines() == ["100일의 거짓말"]
+    assert variety.read_text(encoding="utf-8") == "런닝맨\n"
+    assert 'action="/drama_keywords"' in html and "드라마 자동 다운로드" in html
+    assert 'id="bt4gToggle"' not in html
+
+
 def test_page_shows_switch_state(qbit):
     qbit["client"].post("/api/bt4g_enabled", json={"enabled": True})
     html = qbit["client"].get("/bt4g_keywords").get_data(as_text=True)

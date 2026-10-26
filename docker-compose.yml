@@ -10,6 +10,8 @@ services:
       - /volume1/video:/volume1/video:ro
       - /volume1/web/video_auto:/volume1/web/video_auto
       - /volume1/web/Python/bt4g/bt4g_keywords.txt:/volume1/web/Python/bt4g/bt4g_keywords.txt
+      # 드라마 키워드 화면(2026-10-26). 파일이 없으면 docker가 폴더로 만들어 버리니 먼저 만들어 둘 것
+      - /volume1/web/Python/bt4g/drama_keywords.txt:/volume1/web/Python/bt4g/drama_keywords.txt
       - ./secrets:/app/secrets:ro
       # run_all.sh(호스트에서 SSH 강제 명령/DSM 예약작업으로 실행)가 남기는
       # 로그를 웹 관리자의 "실행 로그" 탭에서 읽기 위한 마운트
