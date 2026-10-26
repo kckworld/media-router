@@ -153,6 +153,17 @@ def test_main_does_not_revive_canceled_job(tmp_path, monkeypatch):
     assert [j["status"] for j in json.loads(jobs_path.read_text(encoding="utf-8"))] == ["canceled", "done"]
 
 
+def test_jobs_lock_file_is_world_writable(tmp_path):
+    import os
+    old = os.umask(0o022)
+    try:
+        movies.update_jobs(tmp_path / "movie_jobs.json", lambda jobs: jobs.append({"btih": "x"}))
+    finally:
+        os.umask(old)
+    assert oct(os.stat(tmp_path / "movie_jobs.json.lock").st_mode & 0o777) == "0o666"
+    assert oct(os.stat(tmp_path / "movie_jobs.json").st_mode & 0o777) == "0o666"
+
+
 def test_place_files_never_overwrites(tmp_path):
     src = tmp_path / "src"
     src.mkdir()

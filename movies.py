@@ -262,7 +262,14 @@ def save_jobs(path: Path, jobs: list[dict]) -> None:
 def update_jobs(path: Path, fn) -> list[dict]:
     """컨테이너(텔레그램 버튼)와 호스트 배치가 같은 파일을 고치므로 파일 잠금까지 건다"""
     import fcntl
-    with _jobs_lock, open(str(path) + ".lock", "a") as lf:
+    lock_path = str(path) + ".lock"
+    # 컨테이너는 root, 웹 '배치 실행' 버튼의 호스트 배치는 kck9010 → 누가 먼저 만들든 둘 다 열 수 있게 666
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o666)
+    try:
+        os.fchmod(fd, 0o666)
+    except OSError:
+        pass  # 소유자가 아니면 못 바꿈 - 이미 666이면 상관없다
+    with _jobs_lock, os.fdopen(fd, "r+") as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         jobs = load_jobs(path)
         fn(jobs)
