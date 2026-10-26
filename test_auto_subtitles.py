@@ -203,6 +203,41 @@ def test_pick_english_track():
     assert a.pick_english([]) is None
 
 
+def test_pick_source_falls_back_to_chinese():
+    assert a.pick_source([("chi", "subrip"), ("eng", "subrip")]) == (1, "EN")
+    assert a.pick_source([("chi", "subrip")]) == (0, "ZH")          # 먼작귀 VIU판
+    assert a.pick_source([("tha", "subrip")]) is None
+
+
+ZH_SRT = """1
+00:00:01,000 --> 00:00:02,000
+吉伊卡哇
+
+2
+00:00:03,000 --> 00:00:04,000
+(Chiikawa)
+"""
+
+
+def test_translate_srt_from_chinese(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(a, "deepl_translate", lambda texts, key, ctx, translate=None, source="EN": seen.update(t=texts, s=source) or ["치이카와"] * len(texts))
+    out, chars = a.translate_srt(ZH_SRT, "k", "ctx", source="ZH")
+    assert seen == {"t": ["吉伊卡哇"], "s": "ZH"}                  # 한자가 없는 줄은 보내지 않음
+    assert out.startswith("1\n00:00:01,000 --> 00:00:02,000\n치이카와\n\n2\n") and chars == 4
+
+
+def test_chinese_only_video_gets_ko_srt(tmp_path, monkeypatch):
+    folder = tmp_path / "먼작귀 (2022)" / "Season 1"
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(a, "extract_english_sub", lambda v: ("srt", ZH_SRT, "ZH"))
+    monkeypatch.setattr(a, "deepl_translate", lambda texts, key, ctx, translate=None, source="EN": ["치이카와"] * len(texts))
+    v = video(folder, "[Gecko] Chiikawa - S01E384 [VIU.WEB-DL 1080P AVC, AAC, SUB][X].mkv")
+    state = {}
+    a.process_folder(folder, state, key="k")
+    assert (folder / (v.stem + ".ko.srt")).exists() and state[str(folder) + "|384"]["source"] == "ZH"
+
+
 EN_SRT = """1
 00:00:01,000 --> 00:00:02,500
 <i>Hello there!</i>
@@ -231,7 +266,7 @@ def test_season_folder_makes_ko_srt_with_show_context(tmp_path, monkeypatch):
     folder.mkdir(parents=True)
     monkeypatch.setattr(a, "extract_english_sub", lambda v: ("srt", EN_SRT))
     ctx = []
-    monkeypatch.setattr(a, "deepl_translate", lambda texts, key, context, translate=None: ctx.append(context) or ["번역"] * len(texts))
+    monkeypatch.setattr(a, "deepl_translate", lambda texts, key, context, translate=None, source="EN": ctx.append(context) or ["번역"] * len(texts))
     v = video(folder, "Chiikawa - S01E383.1080p.TVER.WEB-DL.JPN.AAC2.0.H.264.MSubs-ToonsHub.mkv")
     state = {}
     a.process_folder(folder, state, key="k")

@@ -674,7 +674,7 @@ def _handle_telegram_callback(cq: dict) -> None:
         return
     if action[:8] in ("rq_done_", "rq_hold_"):
         status = "done" if action.startswith("rq_done_") else "hold"
-        item = media_requests.update(MEDIA_REQUESTS_PATH, action[8:], status=status, handled=int(time.time()))
+        item = _set_request_status(action[8:], status)
         if item:
             _tg_result(True, f"'{item['title']}' 요청을 {media_requests.STATUSES[status]}(으)로 표시했어요.")
         return
@@ -1434,6 +1434,45 @@ def _notify_media_request(it: dict) -> None:
     _tg_notify(text, markup)
 
 
+def _set_request_status(req_id: str, status: str, background: bool = False) -> dict | None:
+    """상태를 바꾸고, 새로 '완료'가 되면 카톡방에 옮길 안내를 텔레그램으로 보낸다"""
+    before = next((it for it in media_requests.load(MEDIA_REQUESTS_PATH) if it.get("id") == req_id), None)
+    item = media_requests.update(MEDIA_REQUESTS_PATH, req_id, status=status, handled=int(time.time()))
+    if item and status == "done" and (before or {}).get("status") != "done":
+        if background:   # 웹 버튼은 TMDB·라이브러리 확인을 기다리지 않게
+            threading.Thread(target=_tg_safe, args=(_notify_request_done, item), daemon=True).start()
+        else:
+            _notify_request_done(item)
+    return item
+
+
+def _notify_request_done(it: dict) -> None:
+    """포스터 + '요청하신 작품이 올라왔어요' 안내 (사진은 길게 눌러 전달, 글은 복사해서 카톡방에)"""
+    detail = None
+    if it.get("tmdb_id"):
+        try:
+            detail = media_requests.tmdb_detail(get_tmdb_api_key(), it["media_type"], it["tmdb_id"])
+        except Exception:
+            detail = None
+    try:
+        cfg = load_cfg()
+        library = media_requests.library_line(it, cfg.get("rules") or [], cfg.get("base_paths") or {},
+                                              movies.MOVIE_LIBRARY, movies.load_jobs(MOVIE_JOBS_PATH))
+    except Exception:
+        app.logger.exception("요청 완료: 라이브러리 확인 실패")
+        library = ""
+    caption = media_requests.done_caption(it, detail, library)
+    poster = (detail or {}).get("poster") or it.get("poster")
+    if poster:
+        tg = _tg_cfg()
+        if tg.get("enabled") and tg.get("chat_id"):
+            res = _tg_call("sendPhoto", {"chat_id": tg["chat_id"], "photo": poster.replace("/w185/", "/w500/"),
+                                         "caption": caption[:1000]})
+            if (res or {}).get("ok"):
+                return
+    _tg_notify(caption)
+
+
 @app.route("/requests", methods=["GET"])
 def media_requests_page():
     auth = authed(request)
@@ -1463,7 +1502,7 @@ def api_media_request_update(req_id):
         status = body.get("status")
         if status not in media_requests.STATUSES:
             return jsonify({"ok": False, "error": "잘못된 상태예요."}), 400
-        ok = media_requests.update(MEDIA_REQUESTS_PATH, req_id, status=status, handled=int(time.time())) is not None
+        ok = _set_request_status(req_id, status, background=True) is not None
     return jsonify({"ok": ok}), (200 if ok else 404)
 
 

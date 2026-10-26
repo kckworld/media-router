@@ -3,7 +3,7 @@
 코난·원피스 SubsPlease 릴에는 영어 자막(ASS)이 들어 있다. 새 회차에 한국어 자막이 없으면
 그 영어 자막을 꺼내 DeepL(무료 API)로 번역해 "<영상이름>.ko.ass"로 둔다. 타이밍·스타일은 원본 그대로.
 먼작귀(ToonsHub, 10-26)처럼 영어 자막이 SRT면 "<영상이름>.ko.srt"로 둔다. 영어 트랙이 없으면
-(중국어만 든 VIU판 등) 만들지 않는다.
+중국어 트랙(먼작귀 VIU판 등)을 번역한다. 둘 다 없으면 만들지 않는다.
 나중에 팬 자막(사용자가 PC/폰에서 받아 Synology Drive → media_router → aniname 경로로 들어옴)이
 오면 자동 자막을 지우고 팬 자막을 쓴다.
 
@@ -86,7 +86,7 @@ class DeepLError(Exception):
     pass
 
 
-def deepl_translate(texts: list[str], key: str, context: str, translate=None) -> list[str]:
+def deepl_translate(texts: list[str], key: str, context: str, translate=None, source: str = "EN") -> list[str]:
     """texts → 한국어. 중복 문장은 한 번만 보낸다. 50개씩 나눠 보낸다(DeepL 한 요청 최대 50개)."""
     if translate is not None:          # 테스트용 주입
         return translate(texts)
@@ -95,7 +95,7 @@ def deepl_translate(texts: list[str], key: str, context: str, translate=None) ->
     out: dict[str, str] = {}
     for i in range(0, len(uniq), 50):
         chunk = uniq[i:i + 50]
-        body = json.dumps({"text": chunk, "source_lang": "EN", "target_lang": "KO",
+        body = json.dumps({"text": chunk, "source_lang": source, "target_lang": "KO",
                            "context": context, "preserve_formatting": True}).encode()
         req = urllib.request.Request(url, data=body, method="POST", headers={
             "Authorization": f"DeepL-Auth-Key {key}", "Content-Type": "application/json"})
@@ -110,7 +110,12 @@ def deepl_translate(texts: list[str], key: str, context: str, translate=None) ->
     return [out.get(t, t) for t in texts]
 
 
-def translate_ass(ass_text: str, key: str, context: str, translate=None) -> tuple[str, int]:
+def _has_text(s: str, source: str) -> bool:
+    """번역할 글자가 있는지 (영어는 알파벳, 중국어는 한자)"""
+    return bool(re.search(r"[\u4e00-\u9fff]" if source == "ZH" else r"[A-Za-z]", s))
+
+
+def translate_ass(ass_text: str, key: str, context: str, translate=None, source: str = "EN") -> tuple[str, int]:
     """Dialogue의 대사만 번역. 맨 앞 스타일 태그({\\an8} 등)는 남기고, 대사 중간 태그는 뺀다.
     도형(\\p1)·빈 줄은 그대로. 반환: (번역된 ASS, 보낸 글자 수)"""
     lines = ass_text.splitlines()
@@ -126,16 +131,17 @@ def translate_ass(ass_text: str, key: str, context: str, translate=None) -> tupl
             continue
         lead = re.match(r"^(\{[^}]*\})*", text).group(0)
         plain = TAG_RE.sub("", text[len(lead):]).replace("\\N", "\n").replace("\\n", "\n").strip()
-        if not plain or not re.search(r"[A-Za-z]", plain):
+        if not plain or not _has_text(plain, source):
             continue
         jobs.append((i, ",".join(parts[:9]) + ",", lead, plain))
     if not jobs:
         return ass_text, 0
-    translated = deepl_translate([j[3] for j in jobs], key, context, translate)
+    translated = deepl_translate([j[3] for j in jobs], key, context, translate, source)
     for (i, head, lead, _), ko in zip(jobs, translated):
         lines[i] = head + lead + ko.replace("\r", "").replace("\n", "\\N")
     out = "\n".join(lines) + "\n"
-    out = out.replace("[Script Info]", "[Script Info]\n" + MARKER, 1)
+    marker = MARKER if source == "EN" else MARKER.replace("영어 자막", "중국어 자막")
+    out = out.replace("[Script Info]", "[Script Info]\n" + marker, 1)
     out = re.sub(r"^Title:.*$", "Title: 한국어 자동 번역 (DeepL)", out, count=1, flags=re.M)
     return out, sum(len(j[3]) for j in jobs)
 
@@ -160,12 +166,24 @@ def pick_english(tracks: list[tuple[str, str]]) -> int | None:
     return None
 
 
-def extract_english_sub(video: Path) -> tuple[str, str] | None:
-    """영상 속 영어 자막 → ('ass'|'srt', 내용). 없으면 None."""
-    tracks = subtitle_tracks(video)
+def pick_source(tracks: list[tuple[str, str]]) -> tuple[int, str] | None:
+    """번역할 트랙 (번호, DeepL 원문 언어). 영어 우선, 없으면 중국어(간·번체 모두 ZH)."""
     idx = pick_english(tracks)
-    if idx is None:
+    if idx is not None:
+        return idx, "EN"
+    for i, (lang, _) in enumerate(tracks):
+        if lang in ("chi", "zho", "zh"):
+            return i, "ZH"
+    return None
+
+
+def extract_english_sub(video: Path) -> tuple[str, str, str] | None:
+    """영상 속 영어(없으면 중국어) 자막 → ('ass'|'srt', 내용, 'EN'|'ZH'). 없으면 None."""
+    tracks = subtitle_tracks(video)
+    picked = pick_source(tracks)
+    if picked is None:
         return None
+    idx, source = picked
     fmt = "srt" if tracks[idx][1] in ("subrip", "srt", "mov_text", "webvtt") else "ass"
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / f"en.{fmt}"
@@ -173,13 +191,13 @@ def extract_english_sub(video: Path) -> tuple[str, str] | None:
                            capture_output=True, timeout=300)
         if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
             return None
-        return fmt, out.read_text(encoding="utf-8-sig", errors="replace")
+        return fmt, out.read_text(encoding="utf-8-sig", errors="replace"), source
 
 
 SRT_TAG_RE = re.compile(r"<[^>]+>|\{[^}]*\}")
 
 
-def translate_srt(srt_text: str, key: str, context: str, translate=None) -> tuple[str, int]:
+def translate_srt(srt_text: str, key: str, context: str, translate=None, source: str = "EN") -> tuple[str, int]:
     """SRT 블록(번호, 시간, 대사)의 대사만 번역. 반환: (번역된 SRT, 보낸 글자 수)"""
     blocks = [b for b in re.split(r"\r?\n\s*\r?\n", srt_text.strip()) if b.strip()]
     parsed, jobs = [], []
@@ -190,11 +208,11 @@ def translate_srt(srt_text: str, key: str, context: str, translate=None) -> tupl
             continue
         text = SRT_TAG_RE.sub("", "\n".join(lines[t + 1:])).strip()
         parsed.append([lines[t], text])
-        if text and re.search(r"[A-Za-z]", text):
+        if text and _has_text(text, source):
             jobs.append(len(parsed) - 1)
     chars = sum(len(parsed[i][1]) for i in jobs)
     if jobs:
-        translated = deepl_translate([parsed[i][1] for i in jobs], key, context, translate)
+        translated = deepl_translate([parsed[i][1] for i in jobs], key, context, translate, source)
         for i, ko in zip(jobs, translated):
             parsed[i][1] = ko.replace("\r", "").strip()
     out = "\n\n".join(f"{n}\n{timing}\n{text}" for n, (timing, text) in enumerate(parsed, 1) if text) + "\n"
@@ -288,23 +306,24 @@ def process_folder(folder: Path, state: dict, key: str, translate=None, now: flo
         if sub is None:
             state[skey] = {"ep": ep, "status": "no_track", "at": now}
             stats["skipped_no_track"] += 1
-            log(f"E{ep}: 영상에 영어 자막 트랙이 없어 만들 수 없음 — {video.name}")
+            log(f"E{ep}: 영상에 영어·중국어 자막 트랙이 없어 만들 수 없음 — {video.name}")
             continue
-        fmt, en = sub
+        fmt, en, source = sub if len(sub) == 3 else (*sub, "EN")
         context = f"Subtitles of the anime '{show}'. Translate into natural spoken Korean."
         if fmt == "srt":
-            ko, chars = translate_srt(en, key, context, translate)
+            ko, chars = translate_srt(en, key, context, translate, source)
         else:
-            ko, chars = translate_ass(en, key, context, translate)
+            ko, chars = translate_ass(en, key, context, translate, source)
         dst = video.with_name(video.stem + f".ko.{fmt}")
         if dst.exists():               # 혹시 모를 경쟁 상황: 절대 덮어쓰지 않음
             continue
         dst.write_text(ko, encoding="utf-8")
         copy_owner(video, dst)
-        state[skey] = {"ep": ep, "status": "auto", "path": str(dst), "sha256": sha256(dst), "at": now, "chars": chars}
+        state[skey] = {"ep": ep, "status": "auto", "path": str(dst), "sha256": sha256(dst), "at": now, "chars": chars,
+                       "source": source}
         stats["created"] += 1
         stats["chars"] += chars
-        log(f"E{ep}: 자동 자막 생성 {dst.name} ({chars}자)")
+        log(f"E{ep}: 자동 자막 생성 {dst.name} ({chars}자{', 중국어 원문' if source == 'ZH' else ''})")
     return stats
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -71,6 +72,7 @@ def _item(m: dict, media_type: str) -> dict:
         "poster": f"{TMDB_IMG}/w185{m['poster_path']}" if m.get("poster_path") else None,
         "overview": (m.get("overview") or "").strip()[:200],
         "category": guess_category(media_type, genres),
+        "rating": round(m["vote_average"], 1) if m.get("vote_count") else None,
     }
 
 
@@ -142,6 +144,118 @@ def delete(path: Path, req_id: str) -> bool:
             return False
         _save(path, kept)
         return True
+
+
+# ── 완료 알림: 라이브러리에 받은 내용 한 줄 ─────────────────
+VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".ts", ".wmv", ".mov"}
+SUB_EXTS = {".srt", ".smi", ".ass", ".ssa", ".vtt"}
+_EP_RE = re.compile(r"(?:^|[.\s_-])(?:S\d{1,2}[.\s]?)?E(\d{1,5})(?=[.\s\[\]_-]|$)", re.I)
+_RES_RE = re.compile(r"(2160p|1080p|720p|4K)", re.I)
+_SRC_RE = re.compile(r"(WEB-DL|WEBRip|BluRay|BDRip|HDTV|FHDRip|HDRip)", re.I)
+
+
+def norm(s: str) -> str:
+    return re.sub(r"[\W_]+", "", re.sub(r"\s*\(\d{4}\)\s*$", "", s or "")).lower()
+
+
+def _videos(folder: Path, depth: int = 2) -> list[Path]:
+    out = []
+    try:
+        for p in folder.iterdir():
+            if p.name.startswith(("@", ".")):
+                continue
+            if p.is_dir() and depth > 1:
+                out += _videos(p, depth - 1)
+            elif p.is_file() and p.suffix.lower() in VIDEO_EXTS:
+                out.append(p)
+    except OSError:
+        pass
+    return out
+
+
+def _episodes_text(eps: list[int]) -> str:
+    eps = sorted(set(eps))
+    if not eps:
+        return ""
+    if eps == list(range(eps[0], eps[-1] + 1)):
+        return f"{eps[0]}~{eps[-1]}화" if len(eps) > 1 else f"{eps[0]}화"
+    return f"{len(eps)}개 회차 (최신 {eps[-1]}화)"
+
+
+def _quality_text(video: Path) -> str:
+    parts = [m.group(1) for m in (_RES_RE.search(video.name), _SRC_RE.search(video.name)) if m]
+    stem = video.stem
+    has_sub = any(p.is_file() and p.suffix.lower() in SUB_EXTS and p.name.startswith(stem)
+                  for p in video.parent.iterdir())
+    if has_sub:
+        parts.append("한국어 자막")
+    return " · ".join(parts)
+
+
+def find_series_folder(it: dict, rules: list[dict], base_paths: dict) -> Path | None:
+    """분류 규칙의 폴더 중 요청 제목과 맞는 것, 없으면 분류 폴더 바로 아래에서 이름으로 찾는다"""
+    key = norm(it.get("title", ""))
+    if not key:
+        return None
+    base = base_paths.get(it.get("category"))
+    for r in rules:
+        if r.get("category") != it.get("category") or not base:
+            continue
+        sub = Path(r.get("subfolder") or "")
+        # '먼작귀 (2022)/Season 1'이면 시즌 폴더 위 이름으로 비교
+        name = norm(sub.parent.name if re.match(r"(?i)season\s*\d+$", sub.name) else sub.name)
+        if name and (key in name or name in key):
+            return Path(base) / sub
+    if base and Path(base).is_dir():
+        for d in Path(base).iterdir():
+            if d.is_dir() and norm(d.name) and key in norm(d.name):
+                return d
+    return None
+
+
+def library_line(it: dict, rules: list[dict], base_paths: dict, movie_root: Path, movie_jobs: list[dict]) -> str:
+    """'📺 1~6화 · 1080p WEB-DL · 한국어 자막' / '🎞 1080p WEB-DL · 한국어 자막'. 못 찾으면 ''"""
+    if it.get("category") == "영화":
+        video = None
+        for j in movie_jobs:   # 영화 받기로 받은 것 (TMDB 번호로 정확히)
+            if it.get("tmdb_id") and j.get("tmdb_id") == it["tmdb_id"] and j.get("status") == "done" and j.get("video"):
+                p = movie_root / j["folder"] / j["video"]
+                if p.exists():
+                    video = p
+        if video is None and it.get("year"):
+            from movies import initial_folder, safe_name
+            title = safe_name(it["title"])
+            cands = [p for p in _videos(movie_root / initial_folder(it["title"]), 1)
+                     if p.name.startswith(title) and f"({it['year']})" in p.name]
+            video = max(cands, key=lambda p: p.stat().st_size) if cands else None
+        q = _quality_text(video) if video else ""
+        return f"🎞 {q}" if q else ""
+    folder = find_series_folder(it, rules, base_paths)
+    if not folder or not folder.is_dir():
+        return ""
+    vids = _videos(folder)
+    eps = [int(m.group(1)) for v in vids for m in [_EP_RE.search(v.name)] if m]
+    text = _episodes_text(eps)
+    if not text:
+        return ""
+    latest = max(vids, key=lambda v: v.stat().st_mtime)
+    q = _quality_text(latest)
+    return f"📺 {text}" + (f" · {q}" if q else "")
+
+
+def done_caption(it: dict, detail: dict | None, library: str) -> str:
+    """카톡방에 그대로 붙여 넣을 완료 안내"""
+    head = (f"{it['title']} ({it['year']})" if it.get("year") else it["title"]) + f" · {it['category']}"
+    if detail and detail.get("rating"):
+        head += f" · ★{detail['rating']}"
+    lines = ["🎬 요청하신 작품이 올라왔어요!", head]
+    overview = (detail or {}).get("overview") or ""
+    if overview:
+        lines.append(overview if len(overview) <= 150 else overview[:149] + "…")
+    if library:
+        lines.append(library)
+    lines.append(f"요청: {it['name']}님")
+    return "\n".join(lines)
 
 
 def validate(form: dict) -> tuple[dict | None, str | None]:

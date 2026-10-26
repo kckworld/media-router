@@ -26,6 +26,8 @@ def rq(monkeypatch, tmp_path):
     monkeypatch.setattr(web_admin, "_tg_call", lambda method, payload, token=None: sent.append((method, payload)) or {"ok": True})
     monkeypatch.setattr(web_admin, "_tg_cfg", lambda: {"enabled": True, "chat_id": "1", "bot_token": "t"})
     monkeypatch.setattr(web_admin, "_tg_notify", lambda text, markup=None, token=None: sent.append(("text", {"text": text, "reply_markup": markup})) or True)
+    monkeypatch.setattr(web_admin, "load_cfg", lambda: {"rules": [], "base_paths": {}})
+    monkeypatch.setattr(web_admin, "MOVIE_JOBS_PATH", tmp_path / "movie_jobs.json")
     web_admin.app.config["TESTING"] = True
     return web_admin.app.test_client(), sent, tmp_path
 
@@ -151,6 +153,51 @@ def test_telegram_done_button(rq):
     web_admin._handle_telegram_callback({"id": "q", "data": f"rq_done_{rid}:{int(time.time()) - 86400 * 3}",
                                          "message": {"chat": {"id": 1}, "message_id": 5}})
     assert saved(tmp_path)[0]["status"] == "done"
+
+
+def test_done_sends_kakao_ready_message_once(rq, monkeypatch):
+    c, sent, tmp_path = rq
+    monkeypatch.setattr(media_requests, "tmdb_detail", lambda key, mt, tid: {
+        "tmdb_id": tid, "media_type": mt, "title": "인턴", "year": 2026, "rating": 6.5,
+        "poster": "https://image.tmdb.org/t/p/w185/a.jpg", "overview": "줄거리입니다.", "category": "영화"})
+    c.post("/request/submit", json=GOOD)
+    rid = saved(tmp_path)[0]["id"]
+    sent.clear()
+    import time
+    cb = {"id": "q", "data": f"rq_done_{rid}:{int(time.time())}", "message": {"chat": {"id": 1}, "message_id": 9}}
+    web_admin._handle_telegram_callback(cb)
+    photos = [p for m, p in sent if m == "sendPhoto"]
+    assert len(photos) == 1 and photos[0]["photo"].endswith("/w500/a.jpg") and "reply_markup" not in photos[0]
+    assert photos[0]["caption"] == "🎬 요청하신 작품이 올라왔어요!\n인턴 (2026) · 영화 · ★6.5\n줄거리입니다.\n요청: 홍길동님"
+    # 이미 완료인 걸 다시 완료로 바꿔도 또 보내지 않음
+    monkeypatch.setattr(web_admin, "authed", lambda req: True)
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
+    c.post(f"/api/requests/{rid}", json={"status": "done"})
+    assert len([1 for m, _ in sent if m == "sendPhoto"]) == 1
+
+
+def test_library_line_series_and_movie(tmp_path):
+    base = tmp_path / "01.드라마"
+    show = base / "연애박사 (2026)"
+    show.mkdir(parents=True)
+    for e in (1, 2, 3):
+        (show / f"Between.Steps.S01E0{e}.1080p.DSNP.WEB-DL.mkv").write_text("v")
+    (show / "Between.Steps.S01E03.1080p.DSNP.WEB-DL.ko.srt").write_text("s")
+    rules = [{"category": "드라마", "subfolder": "연애박사 (2026)"}]
+    it = {"title": "연애박사", "category": "드라마"}
+    line = media_requests.library_line(it, rules, {"드라마": str(base)}, tmp_path / "movies", [])
+    assert line.startswith("📺 1~3화 · 1080p · WEB-DL")
+    # 시즌 폴더 + 규칙 이름이 TMDB 제목과 달라도 분류 폴더에서 이름으로 못 찾으면 빈 줄
+    assert media_requests.library_line({"title": "치이카와", "category": "애니메이션"}, [], {}, tmp_path, []) == ""
+    # 영화: 영화 받기 기록(TMDB 번호)으로
+    mv = tmp_path / "movies" / "아"
+    mv.mkdir(parents=True)
+    (mv / "인턴 (2026) {tmdb-607833}.The.Intern.2026.1080p.FHD.mkv").write_text("v")
+    jobs = [{"tmdb_id": 607833, "status": "done", "folder": "아", "video": "인턴 (2026) {tmdb-607833}.The.Intern.2026.1080p.FHD.mkv"}]
+    m = {"title": "인턴", "year": 2026, "category": "영화", "tmdb_id": 607833}
+    assert media_requests.library_line(m, [], {}, tmp_path / "movies", jobs) == "🎞 1080p"
+    # 기록이 없어도 '제목 (연도)'로 찾는다
+    assert media_requests.library_line(m, [], {}, tmp_path / "movies", []) == "🎞 1080p"
 
 
 def test_guess_category():
