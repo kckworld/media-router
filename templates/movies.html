@@ -62,7 +62,17 @@
   <script>
     function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
     var tab = "day", page = 1, data = null;
-    var JOB_STATE = { downloading: ["받는 중", "dl"], done: ["완료", "done"], stalled: ["멈춤", "err"] };
+    var JOB_STATE = { downloading: ["받는 중", "dl"], done: ["완료", "done"], stalled: ["멈춤", "err"], canceled: ["취소됨", "err"] };
+    var QBIT_STOPPED = { stoppedDL: 1, pausedDL: 1 };
+
+    // 받는 중인 영화는 qBittorrent 상태로 더 자세히 (일시정지 / 진행률 / 옮기기 대기)
+    function jobState(j) {
+      if (j.status !== "downloading") return JOB_STATE[j.status] || [j.status, ""];
+      if (j.qbit_state === "waiting_move") return ["다 받음 · 옮기기 대기", "dl"];
+      if (QBIT_STOPPED[j.qbit_state]) return ["일시정지 " + ((j.progress || 0) * 100).toFixed(1) + "%", "sub"];
+      if (j.progress != null) return ["받는 중 " + (j.progress * 100).toFixed(1) + "%", "dl"];
+      return JOB_STATE.downloading;
+    }
 
     function postUrl(id) { return data.base + "/board.php?mode=view&b_id=tmovie&id=" + encodeURIComponent(id); }
     function fmtTime(t) {
@@ -96,7 +106,7 @@
       }
       list.innerHTML = items.map(function(m) {
         var job = jobsByPost[m.id];
-        var badge = job ? '<span class="state ' + (JOB_STATE[job.status] || ["", ""])[1] + '">' + (JOB_STATE[job.status] || [job.status])[0] + '</span> ' : "";
+        var badge = job ? '<span class="state ' + jobState(job)[1] + '">' + esc(jobState(job)[0]) + '</span> ' : "";
         var sub = m.when ? '<div class="mv-sub">' + esc(m.when) + '</div>' : "";
         return '<li class="mv-item"><div class="mv-main"><div class="mv-title">' + badge + esc(m.title) + '</div>' + sub + '</div>' +
           '<div class="mv-actions">' +
@@ -111,14 +121,14 @@
       var el = document.getElementById("mvJobs");
       if (!jobs.length) { el.innerHTML = '<li class="mv-empty">아직 받은 영화가 없어요.</li>'; return; }
       el.innerHTML = jobs.map(function(j) {
-        var st = JOB_STATE[j.status] || [j.status, ""];
-        var badges = '<span class="state ' + st[1] + '">' + st[0] + '</span>';
+        var st = jobState(j);
+        var badges = '<span class="state ' + st[1] + '">' + esc(st[0]) + '</span>';
         if (j.subs_pending) badges += ' <span class="state sub">자막 기다리는 중</span>';
         var sub = "영화/" + esc(j.folder) + " · " + fmtTime(j.added);
         if (j.video) sub += "<br>" + esc(j.video);
         var actions = j.subs && j.subs.length
           ? '<div class="mv-actions"><a class="btn small" href="' + esc(postUrl(j.post_id)) + '" target="_blank" rel="noopener">자막 받기 ↗</a></div>' : "";
-        return '<li class="mv-item"><div class="mv-main"><div class="mv-title">' + esc(j.prefix) + ' ' + badges + '</div>' +
+        return '<li class="mv-item"><div class="mv-main"><div class="mv-title">' + esc(j.display || j.prefix) + ' ' + badges + '</div>' +
           '<div class="mv-sub">' + sub + '</div></div>' + actions + '</li>';
       }).join("");
     }

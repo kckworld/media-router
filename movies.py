@@ -26,6 +26,8 @@ MOVIE_LIBRARY = Path("/volume1/video/02.영화-정리")
 # qBittorrent 컨테이너 기준 경로와 호스트 경로 (/volume2/torrent/download -> /downloads)
 QBIT_MOVIE_DIR = "/downloads/_movies"
 HOST_MOVIE_DIR = Path("/volume2/torrent/download/_movies")
+# 컨테이너에서는 같은 폴더를 읽기 전용으로 붙여서 "다 받고 옮기기 대기 중"인지 본다
+MOVIE_DL_DIR = Path(os.getenv("MOVIE_DL_DIR", str(HOST_MOVIE_DIR)))
 MOVIE_DIR_NAME = "_movies"  # media_router.py가 이 폴더는 건드리지 않는다
 
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".ts", ".wmv", ".mov"}
@@ -161,9 +163,9 @@ def tmdb_lookup(api_key: str, ko: str, en: str, year: int | None) -> dict | None
 
 
 def safe_name(title: str) -> str:
-    """파일·폴더 이름에 못 쓰는 글자 정리 (콜론은 ' -'로)"""
+    """파일·폴더 이름에 못 쓰는 글자 정리 (콜론은 ' -'로, TMDB "'텐징' - Tenzing"의 따옴표는 뺌)"""
     t = re.sub(r"\s*[:：]\s*", " - ", title)
-    t = re.sub(r'[\\/*?"<>|]', "", t)
+    t = re.sub(r'[\\/*?"<>|\'‘’“”]', "", t)
     return re.sub(r"\s+", " ", t).strip(" .")
 
 
@@ -183,8 +185,10 @@ def initial_folder(title: str) -> str:
     return "1-Z"
 
 
-def make_prefix(title: str, year: int | None) -> str:
-    return f"{safe_name(title)} ({year})" if year else safe_name(title)
+def make_prefix(title: str, year: int | None, tmdb_id: int | None = None) -> str:
+    """'인턴 (2026) {tmdb-607833}' - Plex Movie 에이전트는 {tmdb-번호}가 있으면 검색 없이 그 영화로 매칭한다"""
+    base = f"{safe_name(title)} ({year})" if year else safe_name(title)
+    return f"{base} {{tmdb-{tmdb_id}}}" if tmdb_id else base
 
 
 # ── 작업 목록 (data/movie_jobs.json) ───────────────────

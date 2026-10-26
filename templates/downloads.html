@@ -82,10 +82,10 @@
       </div>
       <div id="errBanner" class="banner err" style="display:none;"></div>
       <table class="dl-table">
-        <thead><tr><th>이름</th><th>진행률</th><th>상태</th><th>↓ 속도</th><th class="opt">↑ 속도</th><th>남은 시간</th><th class="opt">시드/피어</th><th class="opt">크기</th></tr></thead>
-        <tbody id="dlBody"><tr><td colspan="8" class="hint">불러오는 중...</td></tr></tbody>
+        <thead><tr><th>이름</th><th>진행률</th><th>상태</th><th>↓ 속도</th><th class="opt">↑ 속도</th><th>남은 시간</th><th class="opt">시드/피어</th><th class="opt">크기</th><th></th></tr></thead>
+        <tbody id="dlBody"><tr><td colspan="9" class="hint">불러오는 중...</td></tr></tbody>
       </table>
-      <div class="hint" style="margin-top:10px;">보기 전용입니다. 일시정지·삭제 등 조작은 qBittorrent 화면에서 하세요.</div>
+      <div class="hint" style="margin-top:10px;"><b>취소</b>하면 qBittorrent에서 지우고 받던 파일도 지워요. 일시정지 같은 다른 조작은 qBittorrent 화면에서 하세요.</div>
     </div>
   
 {% endblock %}
@@ -140,7 +140,7 @@
       var nActive = LAST.torrents.filter(function(t) { return !isDone(t); }).length;
       document.getElementById("countBadge").textContent = "진행 중 " + nActive + " / 전체 " + LAST.torrents.length;
       if (!list.length) {
-        body.innerHTML = '<tr><td colspan="8" class="hint">' + (FILTER === "active" ? "진행 중인 다운로드가 없습니다." : "항목이 없습니다.") + '</td></tr>';
+        body.innerHTML = '<tr><td colspan="9" class="hint">' + (FILTER === "active" ? "진행 중인 다운로드가 없습니다." : "항목이 없습니다.") + '</td></tr>';
         return;
       }
       body.innerHTML = list.map(function(t) {
@@ -157,8 +157,23 @@
           '<td>' + (isDone(t) ? "-" : fmtEta(t.eta)) + '</td>' +
           '<td class="opt">' + (t.num_seeds || 0) + ' / ' + (t.num_leechs || 0) + '</td>' +
           '<td class="opt">' + fmtBytes(t.size) + '</td>' +
+          '<td><button type="button" class="btn small danger" data-write onclick="cancelTorrent(\'' + esc(t.hash) + '\', this)">취소</button></td>' +
         '</tr>';
       }).join("");
+    }
+
+    function cancelTorrent(hash, btn) {
+      var t = (LAST && LAST.torrents || []).filter(function(x) { return x.hash === hash; })[0];
+      if (!confirm("'" + (t ? t.name : hash) + "'\n\n취소할까요? 받던 파일도 지워져요.")) return;
+      btn.disabled = true;
+      fetch("/api/downloads/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hash: hash }) })
+        .then(mrJson)
+        .then(function(res) {
+          if (!res.ok || !res.data.success) { btn.disabled = false; showToast((res.data && res.data.message) || "취소하지 못했어요", "error"); return; }
+          showToast("취소했어요.", "success");
+          load();
+        })
+        .catch(function(e) { btn.disabled = false; showToast("오류: " + e, "error"); });
     }
 
     function load() {

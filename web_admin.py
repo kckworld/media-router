@@ -1104,12 +1104,24 @@ def start_movie_download(post_id: str) -> tuple[bool, str]:
         title, year = found["title"], found["year"]
     else:
         title = ko or en or post_title
-    prefix = movies.make_prefix(title, year)
+    display = movies.make_prefix(title, year)
+    prefix = movies.make_prefix(title, year, found["id"] if found else None)
     folder = movies.initial_folder(title)
     btih = view["btih"]
 
+    # 기록만 보지 않고 qBittorrent를 확인한다 (qBittorrent 화면에서 지우거나 멈춘 경우)
+    _movie_reconcile()
     if any(j.get("btih") == btih and j.get("status") == "downloading" for j in movies.load_jobs(MOVIE_JOBS_PATH)):
-        return False, f"'{prefix}'은(는) 이미 받는 중이에요."
+        info = _qbit_torrents([btih])
+        t = info.get(btih) if info else None
+        if t and t.get("state") in _QBIT_STOPPED_STATES:
+            _qbit_post("/api/v2/torrents/start", {"hashes": btih})
+            return True, f"⏯ 멈춰 있던 '{display}'을(를) 다시 받기 시작했어요."
+        if t:
+            pct = f" ({t['progress'] * 100:.1f}%)"
+        else:  # 목록에 없는데 취소로 안 바뀌었으면 다 받고 옮기기 기다리는 중 (연결 실패면 표시 없이)
+            pct = "" if info is None else " (다 받고 옮기기 기다리는 중)"
+        return False, f"'{display}'은(는) 이미 받는 중이에요{pct}."
     _qbit_post("/api/v2/torrents/add", {
         "urls": f"magnet:?xt=urn:btih:{btih}",
         "savepath": f"{movies.QBIT_MOVIE_DIR}/{btih}",
@@ -1117,12 +1129,12 @@ def start_movie_download(post_id: str) -> tuple[bool, str]:
         "tags": "영화",
         "rename": post_title,
     })
-    job = {"btih": btih, "post_id": post_id, "post_title": post_title, "prefix": prefix,
+    job = {"btih": btih, "post_id": post_id, "post_title": post_title, "prefix": prefix, "display": display,
            "folder": folder, "tmdb_id": found["id"] if found else None,
            "subs": view["subs"], "added": int(time.time()), "status": "downloading"}
     movies.update_jobs(MOVIE_JOBS_PATH, lambda jobs: jobs.append(job))
 
-    lines = [f"⬇ '{prefix}'(으)로 받기 시작했어요 → 영화/{folder} 폴더."]
+    lines = [f"⬇ '{display}'(으)로 받기 시작했어요 → 영화/{folder} 폴더."]
     if not found:
         lines.append("⚠ TMDB에서 못 찾아서 글 제목으로 이름을 붙여요. Plex에서 확인해 주세요.")
     if view["subs"]:
@@ -1131,6 +1143,63 @@ def start_movie_download(post_id: str) -> tuple[bool, str]:
                      + movies.post_url(post_id))
     lines.append("다 받으면 이름을 붙여 옮기고 알려 드릴게요 (배치 20분 주기).")
     return True, "\n".join(lines)
+
+
+# qBittorrent 5.x는 멈춤이 stopped, 4.x는 paused
+_QBIT_STOPPED_STATES = {"stoppedDL", "pausedDL", "stoppedUP", "pausedUP"}
+
+
+def _qbit_torrents(hashes: list[str]) -> dict | None:
+    """{해시: 토렌트 정보}. qBittorrent에 연결이 안 되면 None (그때는 기록을 건드리지 않음)"""
+    if not hashes:
+        return {}
+    try:
+        return {t["hash"].lower(): t for t in _qbit_get("/api/v2/torrents/info", {"hashes": "|".join(hashes)})}
+    except Exception:
+        app.logger.warning("qBittorrent 목록 확인 실패 (영화 상태)")
+        return None
+
+
+def _movie_reconcile() -> dict:
+    """받는 중인 영화 중 qBittorrent에서 사라졌고 다 받은 파일도 없는 건 '취소됨'으로.
+    (다 받으면 qBittorrent가 공유 비율 제한으로 바로 지우므로, 목록에 없다고 다 취소는 아니다)
+    돌려주는 값: {해시: qBittorrent 토렌트 정보} (진행률 표시용)"""
+    jobs = movies.load_jobs(MOVIE_JOBS_PATH)
+    hashes = [j["btih"] for j in jobs if j.get("status") == "downloading"]
+    torrents = _qbit_torrents(hashes)
+    if torrents is None:
+        return {}
+    gone = {h for h in hashes if h not in torrents and not movies.is_complete(movies.MOVIE_DL_DIR / h)}
+    if gone:
+        def apply(current):
+            for j in current:
+                if j.get("btih") in gone and j.get("status") == "downloading":
+                    j.update(status="canceled", canceled=int(time.time()))
+        movies.update_jobs(MOVIE_JOBS_PATH, apply)
+    return torrents
+
+
+def _movie_cancel_job(btih: str) -> None:
+    def apply(current):
+        for j in current:
+            if j.get("btih") == btih and j.get("status") == "downloading":
+                j.update(status="canceled", canceled=int(time.time()))
+    if MOVIE_JOBS_PATH.exists():
+        movies.update_jobs(MOVIE_JOBS_PATH, apply)
+
+
+def _movie_reconcile_loop() -> None:
+    """화면을 안 열어도 qBittorrent에서 지운 영화가 '받는 중'으로 남아 일주일 뒤 경고가 가지 않게"""
+    while True:
+        time.sleep(600)
+        try:
+            if MOVIE_JOBS_PATH.exists():
+                _movie_reconcile()
+        except Exception:
+            app.logger.warning("영화 상태 정리 실패")
+
+
+threading.Thread(target=_movie_reconcile_loop, daemon=True).start()
 
 
 # ── 영화 화면 (작업 > 영화) ──
@@ -1165,7 +1234,19 @@ def api_movies():
     force = request.args.get("refresh") == "1"
     pg = request.args.get("page", "1")
     page = min(10, max(1, int(pg))) if pg.isdigit() else 1
-    out = {"ok": True, "jobs": movies.load_jobs(MOVIE_JOBS_PATH)[-30:][::-1], "errors": []}
+    torrents = _movie_reconcile()
+    jobs = movies.load_jobs(MOVIE_JOBS_PATH)[-30:][::-1]
+    for j in jobs:
+        if j.get("status") != "downloading":
+            continue
+        t = torrents.get(j["btih"])
+        if t:
+            j["progress"] = t.get("progress", 0)
+            j["qbit_state"] = t.get("state")
+        elif movies.is_complete(movies.MOVIE_DL_DIR / j["btih"]):
+            j["progress"] = 1
+            j["qbit_state"] = "waiting_move"
+    out = {"ok": True, "jobs": jobs, "errors": []}
     try:
         out.update(_movie_cached("best", movies.fetch_best, force))
     except Exception as e:
@@ -2068,11 +2149,11 @@ def add():
 
     cfg.setdefault("rules", []).append(rule)
     save_cfg(cfg)
-    if rule["category"] == "드라마":
+    if rule["category"] in ("드라마", "예능"):
         try:
-            add_drama_keyword(rule["subfolder"], rule.get("release", ""))
+            add_rule_keyword(rule["category"], rule["subfolder"], rule.get("release", ""))
         except Exception:
-            app.logger.exception("드라마 키워드 자동 추가 실패")
+            app.logger.exception("키워드 자동 추가 실패")
     
     # 현재 모드와 필터 조건 유지
     mode = request.form.get("mode", "").strip()
@@ -2102,8 +2183,15 @@ def delete():
         return auth
     idx=int(request.form.get("idx","-1"))
     cfg=load_cfg()
+    removed = [r for r in cfg["rules"] if r.get("id") == idx]
     cfg["rules"] = [r for r in cfg["rules"] if r.get("id") != idx]
     save_cfg(cfg)
+    for r in removed:
+        if r.get("category") in ("드라마", "예능"):
+            try:
+                remove_rule_keyword(r["category"], r.get("subfolder", ""), cfg["rules"])
+            except Exception:
+                app.logger.exception("키워드 자동 삭제 실패")
     
     # 현재 모드와 필터 조건 유지
     mode = request.form.get("mode", "").strip()
@@ -2508,22 +2596,64 @@ _QUALITY_ONLY_RE = re.compile(
     r"^(?:[\s._-]*(?:2160p|1080p|720p|4k|web-?dl|webrip|nf|x264|h\.?264|aac(?:2\.0)?))+[\s._-]*$", re.I)
 
 
-def add_drama_keyword(subfolder: str, release: str) -> bool:
-    """분류 규칙에 드라마를 추가하면 드라마 키워드(티프리카 자동 다운로드)에도 넣는다.
-    키워드는 폴더 이름에서 '(2026)'을 뗀 한글 제목. 이미 있으면 그대로 둔다."""
-    name = re.sub(r"\s*\(\d{4}\)\s*$", "", subfolder).strip().replace("|", "")
-    if not name:
+def _kw_norm(s: str) -> str:
+    """키워드 비교용 - tfreeca.py와 같게 띄어쓰기·기호를 무시하고, BT4G용 ' 720p'는 뗀다"""
+    s = re.sub(r"\s*720p\s*$", "", s.partition("|")[0].strip(), flags=re.I)
+    return re.sub(r"[\W_]+", "", s).lower()
+
+
+def _rule_title(subfolder: str) -> str:
+    return re.sub(r"\s*\(\d{4}\)\s*$", "", subfolder).strip().replace("|", "")
+
+
+def _keyword_path(category: str) -> Path:
+    return DRAMA_KEYWORDS_PATH if category == "드라마" else BT4G_KEYWORDS_PATH
+
+
+def add_rule_keyword(category: str, subfolder: str, release: str = "") -> bool:
+    """분류 규칙에 드라마·예능을 추가하면 키워드(티프리카 자동 다운로드)에도 넣는다.
+    키워드는 폴더 이름에서 '(2026)'을 뗀 제목. 이미 그 제목을 잡는 키워드가 있으면 그대로 둔다
+    ('나 혼자' 키워드가 있으면 '나 혼자 산다'는 안 넣음). 드라마만 릴리즈 값을 릴로 쓴다."""
+    name = _rule_title(subfolder)
+    key = _kw_norm(name)
+    if not key:
         return False
-    lines = parse_bt4g_keywords(DRAMA_KEYWORDS_PATH)
-    norm = lambda s: re.sub(r"\s+", "", s).lower()
-    if any(norm(line.partition("|")[0]) == norm(name) for line in lines):
+    path = _keyword_path(category)
+    lines = parse_bt4g_keywords(path)
+    if any(_kw_norm(line) and _kw_norm(line) in key for line in lines):
         return False
     release = release.strip().replace("|", "")
-    if _QUALITY_ONLY_RE.match(release):
+    if category != "드라마" or _QUALITY_ONLY_RE.match(release):
         release = ""
     lines.append(f"{name} | {release}" if release else name)
-    DRAMA_KEYWORDS_PATH.write_text(render_bt4g_keywords(lines), encoding="utf-8")
+    path.write_text(render_bt4g_keywords(lines), encoding="utf-8")
     return True
+
+
+def add_drama_keyword(subfolder: str, release: str) -> bool:
+    return add_rule_keyword("드라마", subfolder, release)
+
+
+def remove_rule_keyword(category: str, subfolder: str, remaining_rules: list[dict]) -> list[str]:
+    """분류 규칙을 지우면 그 제목을 잡던 키워드도 지운다. 같은 분류의 다른 규칙도 잡는
+    키워드는 남긴다 ('미운 우리'는 '우리들의 발라드'에도 걸림). 지운 키워드 목록을 돌려준다."""
+    key = _kw_norm(_rule_title(subfolder))
+    if not key:
+        return []
+    others = [_kw_norm(_rule_title(r.get("subfolder", ""))) for r in remaining_rules
+              if r.get("category") == category]
+    path = _keyword_path(category)
+    lines = parse_bt4g_keywords(path)
+    keep, removed = [], []
+    for line in lines:
+        k = _kw_norm(line)
+        if k and k in key and not any(k in o for o in others if o):
+            removed.append(line)
+        else:
+            keep.append(line)
+    if removed:
+        path.write_text(render_bt4g_keywords(keep), encoding="utf-8")
+    return removed
 
 
 @app.route("/bt4g_keywords", methods=["GET", "POST"])
@@ -3136,6 +3266,23 @@ def downloads_page():
     if auth is not True:
         return auth
     return render_template("downloads.html", authed=True, qbit_public_url="https://bit.kckworld.com/")
+
+
+@app.route("/api/downloads/cancel", methods=["POST"])
+def api_downloads_cancel():
+    """다운로드 탭의 취소 버튼: qBittorrent에서 지우고 받던 파일도 지운다"""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+    h = str((request.get_json(silent=True) or {}).get("hash") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", h):
+        return jsonify({"success": False, "message": "잘못된 토렌트예요."}), 400
+    try:
+        _qbit_post("/api/v2/torrents/delete", {"hashes": h, "deleteFiles": "true"})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"qBittorrent에서 지우지 못했어요: {e}"}), 502
+    _movie_cancel_job(h)
+    return jsonify({"success": True})
 
 
 @app.route("/downloads/data", methods=["GET"])

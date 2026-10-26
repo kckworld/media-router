@@ -190,7 +190,7 @@ def test_movies_page_and_api(wa, monkeypatch):
     assert d["day"][0]["title"] == "인턴" and d["list"][0]["id"] == "2" and d["page"] == 2
     r = c.post("/api/movies/download", json={"post_id": "400643"})
     assert r.status_code == 200 and r.get_json()["ok"] and qbit[0][0] == "/api/v2/torrents/add"
-    assert c.get("/api/movies").get_json()["jobs"][0]["prefix"] == "인턴 (2026)"
+    assert c.get("/api/movies").get_json()["jobs"][0]["display"] == "인턴 (2026)"
     assert c.post("/api/movies/download", json={"post_id": "400643"}).status_code == 409   # 이미 받는 중
     assert c.post("/api/movies/download", json={"post_id": "../x"}).status_code == 400
     monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
@@ -225,7 +225,7 @@ def test_movie_button_starts_download_and_keeps_list(wa, monkeypatch):
     assert path == "/api/v2/torrents/add"
     assert data["savepath"] == "/downloads/_movies/" + "deadbeef" * 5 and data["tags"] == "영화"
     jobs = json.loads(web_admin.MOVIE_JOBS_PATH.read_text(encoding="utf-8"))
-    assert jobs[0]["prefix"] == "인턴 (2026)" and jobs[0]["folder"] == "아"
+    assert jobs[0]["prefix"] == "인턴 (2026) {tmdb-607833}" and jobs[0]["display"] == "인턴 (2026)" and jobs[0]["folder"] == "아"
     assert "인턴 (2026)" in sent[-1][0] and "영화/아" in sent[-1][0]
     # 같은 버튼을 또 누르면 처리하지 않음, 같은 영화를 다른 목록에서 눌러도 '이미 받는 중'
     web_admin._handle_telegram_callback(cq)

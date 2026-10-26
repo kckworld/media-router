@@ -36,6 +36,11 @@ def tg_send(text: str) -> None:
         log(f"텔레그램 전송 실패: {type(e).__name__}")
 
 
+def _display(job: dict) -> str:
+    """알림용 이름 - prefix의 {tmdb-번호}는 빼고 보여 준다"""
+    return job.get("display") or job["prefix"]
+
+
 def _attach_subs(job: dict, video_path, sub_dirs, notify) -> bool:
     """기다리던 자막이 들어왔으면 영화 옆으로 옮긴다. 옮겼으면 True"""
     subs = movies.find_subtitles(job.get("subs") or [], sub_dirs)
@@ -43,7 +48,7 @@ def _attach_subs(job: dict, video_path, sub_dirs, notify) -> bool:
         return False
     placed = movies.place_subtitles(subs, video_path)
     log(f"{job['prefix']} 자막 {len(placed)}개 → {video_path.parent}")
-    notify(f"💬 '{job['prefix']}' 자막을 영화 옆에 넣었어요.\n" + "\n".join(f"• {p.name}" for p in placed))
+    notify(f"💬 '{_display(job)}' 자막을 영화 옆에 넣었어요.\n" + "\n".join(f"• {p.name}" for p in placed))
     return True
 
 
@@ -68,7 +73,7 @@ def process(jobs: list[dict], host_dir=movies.HOST_MOVIE_DIR, library=movies.MOV
         if not movies.is_complete(job_dir):
             if now - job.get("added", now) > STALL_SEC:
                 changes[job["btih"]] = {"status": "stalled"}
-                notify(f"⚠ '{job['prefix']}'이(가) 일주일째 다 안 받아졌어요. qBittorrent에서 확인해 주세요.")
+                notify(f"⚠ '{_display(job)}'이(가) 일주일째 다 안 받아졌어요. qBittorrent에서 확인해 주세요.")
             continue
         try:
             placed = movies.place_files(job_dir, job["prefix"], dest_dir)
@@ -83,7 +88,7 @@ def process(jobs: list[dict], host_dir=movies.HOST_MOVIE_DIR, library=movies.MOV
             change["video"] = videos[0].name
         log(f"{job['prefix']} → {dest_dir} ({len(placed)}개)")
         names = "\n".join(f"• {p.name}" for p in placed[:5])
-        msg = f"✅ '{job['prefix']}' 받아서 영화/{job['folder']} 폴더에 넣었어요.\n{names}"
+        msg = f"✅ '{_display(job)}' 받아서 영화/{job['folder']} 폴더에 넣었어요.\n{names}"
         if job.get("subs") and videos:
             if _attach_subs(job, videos[0], sub_dirs, lambda t: None):
                 msg += "\n💬 미리 받아 둔 자막도 같은 이름으로 옆에 넣었어요."
