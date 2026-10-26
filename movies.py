@@ -66,6 +66,21 @@ def _parse_links(part: str, title_re: str) -> list[dict]:
     return out
 
 
+def parse_list(list_html: str) -> list[dict]:
+    """영화 게시판 목록 (글 id, 제목, 올린 시각 'HH:MM' 또는 'MM-DD')"""
+    out = []
+    for pid, title, when in re.findall(
+            r'mode=view&b_id=tmovie&id=(\d+)[^"]*" class="stitle\d">\s*(.*?)\s*</a>.*?class="datetime">([^<]*)<',
+            list_html, re.S):
+        out.append({"id": pid, "title": html.unescape(re.sub(r"<[^>]+>", "", title)).strip(), "when": when.strip()})
+    return out
+
+
+def fetch_list(page: int = 1) -> list[dict]:
+    # 영화만 목록 주소가 mode=lists (mode=list는 비로그인에 빈 목록)
+    return parse_list(_fetch(f"{TFREECA_BASE}/board.php?mode=lists&b_id=tmovie&page={page}"))
+
+
 def fetch_best() -> dict:
     """{'day': [...], 'week': [...]} - 주간에서 일간과 겹치는 글은 뺀다"""
     day = parse_daily_best(_fetch(f"{TFREECA_BASE}/board.php?mode=lists&b_id=tmovie"))

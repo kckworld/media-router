@@ -1133,6 +1133,70 @@ def start_movie_download(post_id: str) -> tuple[bool, str]:
     return True, "\n".join(lines)
 
 
+# ── 영화 화면 (작업 > 영화) ──
+# 티프리카를 매번 긁지 않게 목록은 5분 캐시 (새로고침 버튼은 캐시 무시)
+MOVIE_CACHE_SEC = 300
+_movie_cache: dict = {"lock": threading.Lock(), "at": {}, "data": {}}
+
+
+def _movie_cached(key: str, fn, force: bool = False):
+    with _movie_cache["lock"]:
+        if not force and time.time() - _movie_cache["at"].get(key, 0) < MOVIE_CACHE_SEC:
+            return _movie_cache["data"][key]
+    data = fn()
+    with _movie_cache["lock"]:
+        _movie_cache["at"][key], _movie_cache["data"][key] = time.time(), data
+    return data
+
+
+@app.route("/movies", methods=["GET"])
+def movies_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("movies.html", authed=True)
+
+
+@app.route("/api/movies", methods=["GET"])
+def api_movies():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    force = request.args.get("refresh") == "1"
+    pg = request.args.get("page", "1")
+    page = min(10, max(1, int(pg))) if pg.isdigit() else 1
+    out = {"ok": True, "jobs": movies.load_jobs(MOVIE_JOBS_PATH)[-30:][::-1], "errors": []}
+    try:
+        out.update(_movie_cached("best", movies.fetch_best, force))
+    except Exception as e:
+        out.update(day=[], week=[])
+        out["errors"].append(f"베스트 목록을 못 가져왔어요 ({type(e).__name__})")
+    try:
+        out["list"] = _movie_cached(f"list{page}", lambda: movies.fetch_list(page), force)
+    except Exception as e:
+        out["list"] = []
+        out["errors"].append(f"최신 목록을 못 가져왔어요 ({type(e).__name__})")
+    out["page"] = page
+    out["base"] = movies.TFREECA_BASE
+    return jsonify(out)
+
+
+@app.route("/api/movies/download", methods=["POST"])
+def api_movies_download():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    post_id = str((request.get_json(silent=True) or {}).get("post_id") or "")
+    if not post_id.isdigit():
+        return jsonify({"ok": False, "error": "잘못된 글 번호예요."}), 400
+    try:
+        ok, message = start_movie_download(post_id)
+    except Exception as e:
+        app.logger.exception("영화 받기 실패")
+        return jsonify({"ok": False, "error": f"받지 못했어요 ({type(e).__name__}: {e})"}), 502
+    return jsonify({"ok": ok, "message": message, "error": None if ok else message}), (200 if ok else 409)
+
+
 import youtube_dl as ytdl
 
 youtube = ytdl.Downloader(DATA_DIR / "youtube_jobs.json", notify=lambda text: _tg_notify(text),

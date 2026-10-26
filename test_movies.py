@@ -171,6 +171,32 @@ def wa(monkeypatch, tmp_path):
     return web_admin, sent, qbit
 
 
+def test_parse_latest_list():
+    rows = movies.parse_list(fixture("tfreeca_movie_list.html.gz"))
+    assert len(rows) == 35
+    assert rows[0]["id"] == "400651" and rows[0]["title"].startswith("쇼타씨의 마지막 출장") and rows[0]["when"]
+
+
+def test_movies_page_and_api(wa, monkeypatch):
+    web_admin, sent, qbit = wa
+    monkeypatch.setattr(web_admin, "authed", lambda req: True)
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
+    monkeypatch.setattr(movies, "fetch_best", lambda: {"day": [{"id": "1", "title": "인턴"}], "week": []})
+    monkeypatch.setattr(movies, "fetch_list", lambda page: [{"id": str(page), "title": "목록", "when": "10-26"}])
+    web_admin._movie_cache["at"].clear()
+    c = web_admin.app.test_client()
+    assert "티프리카 영화" in c.get("/movies").get_data(as_text=True)
+    d = c.get("/api/movies?page=2").get_json()
+    assert d["day"][0]["title"] == "인턴" and d["list"][0]["id"] == "2" and d["page"] == 2
+    r = c.post("/api/movies/download", json={"post_id": "400643"})
+    assert r.status_code == 200 and r.get_json()["ok"] and qbit[0][0] == "/api/v2/torrents/add"
+    assert c.get("/api/movies").get_json()["jobs"][0]["prefix"] == "인턴 (2026)"
+    assert c.post("/api/movies/download", json={"post_id": "400643"}).status_code == 409   # 이미 받는 중
+    assert c.post("/api/movies/download", json={"post_id": "../x"}).status_code == 400
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
+    assert c.post("/api/movies/download", json={"post_id": "1"}).status_code == 403
+
+
 def test_menu_has_movie_button(wa):
     web_admin, sent, _ = wa
     assert [{"text": web_admin.TG_BTN_MOVIES}] in web_admin.TG_MENU["keyboard"]

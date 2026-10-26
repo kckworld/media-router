@@ -1,0 +1,156 @@
+{% set active_page = 'movies' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .mv-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .mv-tabs button { border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 999px; padding: 6px 14px; font-weight: 600; font-size: 13px; cursor: pointer; }
+    .mv-tabs button.active { background: var(--accent-light); color: var(--accent-hover); border-color: var(--accent); }
+    .mv-list { list-style: none; margin: 0; padding: 0; }
+    .mv-item { display: flex; gap: 10px; align-items: center; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+    .mv-item:last-child { border-bottom: 0; }
+    .mv-main { flex: 1; min-width: 0; }
+    .mv-title { font-weight: 600; color: var(--fg); word-break: break-all; }
+    .mv-sub { font-size: 12px; color: var(--muted); margin-top: 3px; word-break: break-all; }
+    .mv-actions { display: flex; gap: 6px; flex: none; }
+    .mv-empty { color: var(--muted); padding: 12px 2px; }
+    .state { display: inline-block; flex: none; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--bg-solid); color: var(--muted); }
+    .state.dl { background: var(--accent-light); color: var(--accent-hover); }
+    .state.done { background: var(--success-light); color: var(--success-hover); }
+    .state.err { background: var(--danger-light); color: var(--danger-hover); }
+    .state.sub { background: var(--warn-soft); color: var(--warn); }
+    .mv-pager { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
+    @media (max-width: 640px) {
+      .mv-item { flex-wrap: wrap; }
+      .mv-actions { width: 100%; justify-content: flex-end; }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>티프리카 영화</span>
+        <button type="button" class="btn small" id="mvRefresh" onclick="load(true)">↻ 새로고침</button>
+      </div>
+      <div class="mv-tabs" id="mvTabs">
+        <button type="button" data-tab="day" class="active" onclick="setTab('day')">🔥 일간 베스트</button>
+        <button type="button" data-tab="week" onclick="setTab('week')">📅 주간 베스트</button>
+        <button type="button" data-tab="list" onclick="setTab('list')">🆕 최신 목록</button>
+      </div>
+      <ul class="mv-list" id="mvList"><li class="mv-empty">불러오는 중…</li></ul>
+      <div class="mv-pager" id="mvPager" hidden>
+        <button type="button" class="btn small" onclick="movePage(-1)">← 이전</button>
+        <span class="mv-sub" id="mvPage" style="align-self:center;">1쪽</span>
+        <button type="button" class="btn small" onclick="movePage(1)">다음 →</button>
+      </div>
+      <div class="hint" style="margin-top:10px;">
+        <b>받기</b>를 누르면 TMDB에서 한글 제목·연도를 찾아 qBittorrent로 받고, 다 받으면
+        <code>제목 (연도).</code>를 붙여 <b>02.영화-정리/첫 글자 자음 폴더</b>로 옮겨요 (배치 20분 주기).
+        자막이 따로 붙은 글은 <b>티프리카</b>를 눌러 자막을 받아 Drive에 넣으면 영화 이름에 맞춰 옮겨요.
+        텔레그램 봇의 <b>🎞 영화 베스트</b> 버튼으로도 받을 수 있어요.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">받은 영화</div>
+      <ul class="mv-list" id="mvJobs"><li class="mv-empty">불러오는 중…</li></ul>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    var tab = "day", page = 1, data = null;
+    var JOB_STATE = { downloading: ["받는 중", "dl"], done: ["완료", "done"], stalled: ["멈춤", "err"] };
+
+    function postUrl(id) { return data.base + "/board.php?mode=view&b_id=tmovie&id=" + encodeURIComponent(id); }
+    function fmtTime(t) {
+      if (!t) return "";
+      var d = new Date(t * 1000);
+      return (d.getMonth() + 1) + "/" + d.getDate() + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    }
+
+    function setTab(t) {
+      tab = t;
+      document.querySelectorAll("#mvTabs button").forEach(function(b) { b.classList.toggle("active", b.dataset.tab === t); });
+      renderList();
+    }
+
+    function movePage(d) {
+      page = Math.max(1, Math.min(10, page + d));
+      load(false);
+    }
+
+    function renderList() {
+      if (!data) return;
+      var items = data[tab] || [];
+      var jobsByPost = {};
+      (data.jobs || []).forEach(function(j) { jobsByPost[j.post_id] = j; });
+      document.getElementById("mvPager").hidden = tab !== "list";
+      document.getElementById("mvPage").textContent = page + "쪽";
+      var list = document.getElementById("mvList");
+      if (!items.length) {
+        list.innerHTML = '<li class="mv-empty">' + esc((data.errors || []).join(" · ") || "목록이 비어 있어요.") + '</li>';
+        return;
+      }
+      list.innerHTML = items.map(function(m) {
+        var job = jobsByPost[m.id];
+        var badge = job ? '<span class="state ' + (JOB_STATE[job.status] || ["", ""])[1] + '">' + (JOB_STATE[job.status] || [job.status])[0] + '</span> ' : "";
+        var sub = m.when ? '<div class="mv-sub">' + esc(m.when) + '</div>' : "";
+        return '<li class="mv-item"><div class="mv-main"><div class="mv-title">' + badge + esc(m.title) + '</div>' + sub + '</div>' +
+          '<div class="mv-actions">' +
+          '<a class="btn small" href="' + esc(postUrl(m.id)) + '" target="_blank" rel="noopener">티프리카 ↗</a>' +
+          '<button type="button" class="btn small primary" data-write onclick="download(\'' + esc(m.id) + '\', this)"' + (job && job.status === "downloading" ? " disabled" : "") + '>⬇ 받기</button>' +
+          '</div></li>';
+      }).join("");
+    }
+
+    function renderJobs() {
+      var jobs = (data && data.jobs) || [];
+      var el = document.getElementById("mvJobs");
+      if (!jobs.length) { el.innerHTML = '<li class="mv-empty">아직 받은 영화가 없어요.</li>'; return; }
+      el.innerHTML = jobs.map(function(j) {
+        var st = JOB_STATE[j.status] || [j.status, ""];
+        var badges = '<span class="state ' + st[1] + '">' + st[0] + '</span>';
+        if (j.subs_pending) badges += ' <span class="state sub">자막 기다리는 중</span>';
+        var sub = "영화/" + esc(j.folder) + " · " + fmtTime(j.added);
+        if (j.video) sub += "<br>" + esc(j.video);
+        var actions = j.subs && j.subs.length
+          ? '<div class="mv-actions"><a class="btn small" href="' + esc(postUrl(j.post_id)) + '" target="_blank" rel="noopener">자막 받기 ↗</a></div>' : "";
+        return '<li class="mv-item"><div class="mv-main"><div class="mv-title">' + esc(j.prefix) + ' ' + badges + '</div>' +
+          '<div class="mv-sub">' + sub + '</div></div>' + actions + '</li>';
+      }).join("");
+    }
+
+    function load(force) {
+      var btn = document.getElementById("mvRefresh");
+      btn.disabled = true;
+      fetch("/api/movies?page=" + page + (force ? "&refresh=1" : ""), { cache: "no-store" }).then(mrJson).then(function(res) {
+        btn.disabled = false;
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "목록을 못 가져왔어요", "error"); return; }
+        data = res.data;
+        renderList();
+        renderJobs();
+      }).catch(function(e) { btn.disabled = false; showToast("오류: " + e, "error"); });
+    }
+
+    function download(id, btn) {
+      var done = mrBusy(btn, "넣는 중");
+      fetch("/api/movies/download", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ post_id: id }) })
+        .then(mrJson)
+        .then(function(res) {
+          done();
+          if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "받지 못했어요", "error"); return; }
+          showToast(res.data.message.split("\n")[0], "success");
+          if (res.data.message.indexOf("자막이 따로") >= 0 && confirm("이 글에는 자막이 따로 붙어 있어요. 티프리카 글을 열까요?")) {
+            window.open(postUrl(id), "_blank", "noopener");
+          }
+          load(false);
+        })
+        .catch(function(e) { done(); showToast("오류: " + e, "error"); });
+    }
+
+    load(false);
+  </script>
+{% endblock %}
