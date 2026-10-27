@@ -118,7 +118,7 @@
         <div class="set-head">
           <div>
             <div class="set-title">📨 텔레그램 알림</div>
-            <div class="set-desc">배치·인코딩 결과 알림을 받고, 봇 대화창 아래 버튼으로 인코딩 시작·배치 실행·PC 켜기/상태/끄기를 할 수 있어요.</div>
+            <div class="set-desc">배치·재인코딩 결과 알림을 받고, 봇 대화창 아래 버튼으로 재인코딩·배치 실행·PC 켜기/상태/끄기를 할 수 있어요.</div>
           </div>
           <label class="set-switch">
             <input type="checkbox" name="tg_enabled" value="1" {{ 'checked' if cfg.telegram and cfg.telegram.enabled else '' }}>
@@ -404,7 +404,7 @@
             ['주소', escapeHtml(d.pc.user + '@' + d.pc.host)],
             ['MAC (WOL)', escapeHtml(d.pc.mac)],
             ['SSH 키', okText(d.pc.ssh_key, '있음', '없음 (secrets/kck_gaming_key)')],
-            ['스크립트', '<span class="ps-path">' + escapeHtml(d.pc.script_path) + '</span>']
+            ['인코딩', '<span class="ps-path">' + escapeHtml(d.pc.script_path) + '</span>']
           ]);
           statusRows(document.getElementById('statusQbit'), [
             ['연결', okText(d.qbit.ok, escapeHtml(d.qbit.message), escapeHtml(d.qbit.message))],

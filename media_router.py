@@ -320,7 +320,12 @@ def probe_video_stream(path: Path) -> Optional[Dict]:
         log(f"ffmpeg probe error: {path} - {e}")
         return None
 
-ENCODING_HOLD_DIR = Path("/volume1/homes/kck9010/Drive/인코딩")
+# 720p가 아닌 예능은 재인코딩 워커의 보류 폴더로 (2026-10-27). Drive/인코딩 → EncodeAll 흐름은 없앴다.
+# reencode.py run의 feed_new가 여기 들어온 파일을 작업("N0001"…)으로 바로 넣고, PC 워커가 인코딩하면
+# collect가 결과를 /volume1/video/임시/download로 옮긴다 → 다음 배치에서 이 스크립트가 다시 분류.
+ENCODING_HOLD_DIR = Path("/volume1/video/임시/재인코딩/new")
+REENCODE_PY = Path("/volume1/docker/reencode/reencode.py")
+_held_any = False
 
 # check_variety_encoding이 "720p 아님"을 보류 사유로 판단하더라도, 그 쇼의
 # 규칙(rename_rules)에 설정된 "릴리즈 정보"에 이 토큰이 있으면 "이 쇼는
@@ -333,8 +338,9 @@ ENCODING_HOLD_DIR = Path("/volume1/homes/kck9010/Drive/인코딩")
 VARIETY_1080_EXEMPT_TOKEN = "1080"
 
 def move_to_encoding_hold(cfg: Dict, f: Path, reason: str) -> Path | None:
-    """f를 ENCODING_HOLD_DIR(Drive/인코딩)로 옮기고 텔레그램으로 알린다.
+    """f를 ENCODING_HOLD_DIR(재인코딩 new 폴더)로 옮기고 텔레그램으로 알린다.
     성공하면 이동된 경로를, 실패하면 None을 돌려준다."""
+    global _held_any
     try:
         ENCODING_HOLD_DIR.mkdir(parents=True, exist_ok=True)
         dst = ENCODING_HOLD_DIR / f.name
@@ -352,39 +358,30 @@ def move_to_encoding_hold(cfg: Dict, f: Path, reason: str) -> Path | None:
         return None
 
     log(f"ENCODING_HOLD: {f.name} ({reason}) -> {dst}")
-    tg_send(cfg, f"⚠️ 인코딩 보류: {f.name}\n{reason}\n{ENCODING_HOLD_DIR}로 옮겨뒀어요. PC에서 재인코딩 후 Drive에 다시 넣어주세요.")
+    # 워커가 안 돌 땐 reencode.py가 [▶ 지금 인코딩] 버튼 달린 알림을 따로 보낸다
+    tg_send(cfg, f"🆕 인코딩 대기열에 넣었어요: {f.name}\n({reason})")
+    _held_any = True
     return dst
 
-def mark_original_in_hold_done(f: Path) -> None:
-    """f(이번에 인코딩이 정상 확인되어 최종 폴더로 이동되는 파일)와 이름이
-    같은(확장자 제외) 원본이 ENCODING_HOLD_DIR(Drive/인코딩)에 아직 남아있으면
-    "[완료] " 접두사를 붙여, 재인코딩이 끝나서 더 이상 필요 없는 원본임을
-    표시해둔다. 삭제는 하지 않음 — 확인 후 사용자가 직접 지운다."""
+
+def kick_reencode_feed() -> None:
+    """보류한 게 있으면 reencode.py run을 한 번 돌려 바로 작업으로 넣는다(1분 기다리지 않게)."""
+    if not _held_any or not REENCODE_PY.exists():
+        return
     try:
-        if not ENCODING_HOLD_DIR.exists():
-            return
-        for cand in ENCODING_HOLD_DIR.iterdir():
-            if not cand.is_file() or cand.name.startswith("[완료]"):
-                continue
-            if cand.stem == f.stem:
-                new_name = f"[완료] {cand.name}"
-                try:
-                    cand.rename(cand.with_name(new_name))
-                    log(f"ORIGINAL_MARKED_DONE: {cand.name} -> {new_name}")
-                except Exception as e:
-                    log(f"원본 완료 표시 실패: {cand} - {e}")
+        subprocess.run([sys.executable, str(REENCODE_PY), "run"], timeout=600,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
-        log(f"ENCODING_HOLD_DIR 스캔 실패: {e}")
+        log(f"reencode.py run 실패: {e}")
 
 def check_variety_encoding(cfg: Dict, f: Path, release: str = "") -> bool:
     """예능 파일 자신의 해상도만으로 판단한다(기존 라이브러리 파일과는
     비교하지 않음 - 2026-10-08 SNL 오탐 사고 이후 정책 변경).
     이미 720p면 통과, 아니면 이 쇼의 규칙에 설정된 release 문자열(Web
     Admin에서 입력, 파일명이 아님)에 "1080"이 포함돼 있지 않은 한
-    ENCODING_HOLD_DIR(Drive/인코딩)로 보류하고 텔레그램으로 알린다.
-    사용자가 PC에서 재인코딩해서 다시 Drive에 넣으면 drama_name.sh →
-    media_router.py 파이프라인을 다시 타고 재검사된다(drama_name.sh는 이
-    ENCODING_HOLD_DIR만 훑지 않도록 제외돼 있음).
+    ENCODING_HOLD_DIR(재인코딩 new 폴더)로 보류하고 텔레그램으로 알린다.
+    재인코딩 워커가 720p로 줄인 결과가 /volume1/video/임시/download로 돌아오면
+    이 파이프라인을 다시 타고 재검사된다.
     반환값이 True면 이미 이 함수 안에서 옮겼다는 뜻이니, 호출자는 추가로
     최종 폴더로 이동시키지 말고 건너뛰어야 한다."""
     info = probe_video_stream(f)
@@ -704,7 +701,7 @@ def main() -> None:
                                 log(f"Rename fail: {f} -> {new_src} ({e})")
 
                     # 예능: 720p가 아니면(이 쇼의 release 설정에 1080 허용이
-                    # 없는 한) 최종 폴더로 옮기지 않고 보류 폴더(Drive/인코딩)로
+                    # 없는 한) 최종 폴더로 옮기지 않고 보류 폴더(재인코딩 new)로
                     # 옮긴 뒤 다음 파일로 넘어간다. 예전엔 "불꽃야구"를 해상도
                     # 확인 없이 무조건 보류시키는 별도 규칙(FORCE_ENCODE_SHOWS)이
                     # 있었는데, 그게 이미 720p로 재인코딩되어 돌아온 완성본까지
@@ -715,8 +712,6 @@ def main() -> None:
                         try:
                             if check_variety_encoding(cfg, f, r.get("release", "")):
                                 continue
-                            else:
-                                mark_original_in_hold_done(f)
                         except Exception as e:
                             log(f"Encoding check fail: {f} - {e}")
 
@@ -786,6 +781,7 @@ def main() -> None:
         tg_send(cfg, "\n".join(msg_lines))
         log(f"Found {len(remaining_videos)} remaining video files in source folders")
     
+    kick_reencode_feed()
     log(f"Done. moved={moved_count}")
 
 if __name__ == "__main__":

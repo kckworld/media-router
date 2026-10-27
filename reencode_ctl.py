@@ -46,9 +46,19 @@ def worker() -> dict:
     return _read(WORK / "status.json", {}) or {}
 
 
-def has_work() -> bool:
+_OPEN = ("pending", "fed", "collecting")
+
+
+def batch_has_work() -> bool:
+    """일괄 재인코딩(items)에만 남은 작업이 있는지 - 새 예능만 남았으면 일괄 쪽은 켜지 않는다"""
     q = _read(QUEUE, {}) or {}
-    return any(it.get("status") in ("pending", "fed") for it in q.get("items") or [])
+    return any(it.get("status") in _OPEN for it in q.get("items") or [])
+
+
+def has_work() -> bool:
+    """일괄 재인코딩이나 새로 받은 예능(new_items, 10-27)에 남은 작업이 있는지"""
+    q = _read(QUEUE, {}) or {}
+    return any(it.get("status") in _OPEN for it in (q.get("items") or []) + (q.get("new_items") or []))
 
 
 def needs_collect() -> bool:
@@ -75,7 +85,10 @@ def state() -> dict:
         t["expect"] += it.get("expect_save", 0)
     saved = sum(it.get("saved", 0) for it in items if it.get("status") == "done")
     expect = sum(it.get("expect_save", 0) for it in items)
-    by_id = {it.get("id"): it for it in items}
+    new_items = q.get("new_items") or []      # media_router가 보류한 새 예능 (id N0001…)
+    new_open = [it for it in new_items if it.get("status") in _OPEN]
+    new_failed = [it for it in new_items if it.get("status") == "failed"]
+    by_id = {it.get("id"): it for it in items + new_items}
     w = worker()
     cur = by_id.get(w.get("current")) if w.get("current") else None
     is_running = running()
@@ -83,21 +96,27 @@ def state() -> dict:
     summary = (f"완료 {counts.get('done', 0)}/{len(items)} · 진행 {counts.get('fed', 0)} · 대기 {counts.get('pending', 0)}"
                f" · 실패 {counts.get('failed', 0)}\n줄인 용량 {gb(saved)} / 예상 {gb(expect)}"
                + ("\n▶ 실행 중" if is_running else "\n⏹ 멈춤")
+               + ("\n🆕 새 예능 " + " · ".join(([f"인코딩 대기 {len(new_open)}개"] if new_open else [])
+                                             + ([f"실패 {len(new_failed)}개(new 폴더에 [손상] 표시)"] if new_failed else []))
+                  if new_open or new_failed else "")
                + (f"\nPC: {w.get('state', '?')}" + (f" — #{w['current']}" if w.get("current") else "")
                   + f" ({str(w.get('updated', ''))[5:16]})" if w else "")
                + (f"\n🗑 Drive 휴지통에 예전 방식 재인코딩 파일 약 {gb(trash)} — 비워 주세요" if trash >= TRASH_WARN else ""))
 
     def row(it):
-        return {"id": it.get("id"), "name": Path(it.get("src", "")).name, "tier": it.get("tier"),
+        return {"id": it.get("id"), "name": Path(it.get("src", "")).name,
+                "tier": "새" if it.get("kind") == "new" else it.get("tier"),
                 "size": it.get("size", 0), "new_size": it.get("new_size"), "saved": it.get("saved"),
                 "mbps": it.get("mbps"), "res": it.get("res"), "dur": it.get("dur"), "status": it.get("status"),
                 "expect_save": it.get("expect_save", 0), "done_at": it.get("done_at"), "msg": it.get("msg") or ""}
     done = sorted((it for it in items if it.get("status") == "done"), key=lambda it: it.get("done_at") or "", reverse=True)
-    waiting = [it for it in items if it.get("status") == "fed"] + [it for it in items if it.get("status") == "pending"]
+    # 새 예능은 일괄 재인코딩보다 먼저 집히므로 대기 목록 맨 앞
+    waiting = new_open + [it for it in items if it.get("status") == "fed"] + [it for it in items if it.get("status") == "pending"]
     return {"available": True, "counts": counts, "total": len(items), "saved": saved, "expect": expect,
             "tiers": {str(k): v for k, v in sorted(tiers.items())}, "running": is_running, "worker": w,
             "current": row(cur) if cur else None, "summary": summary,
-            "failed": [row(it) for it in items if it.get("status") == "failed"],
+            "failed": [row(it) for it in new_failed + [it for it in items if it.get("status") == "failed"]],
+            "new_waiting": len(new_open),
             "done_list": [row(it) for it in done[:30]], "waiting_list": [row(it) for it in waiting[:20]],
             "waiting_total": len(waiting), "trash_bytes": trash, "trash_warn": trash >= TRASH_WARN}
 

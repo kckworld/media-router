@@ -160,3 +160,70 @@ def test_schedule_due_once_per_day():
     assert not web_admin._reencode_due("01:00", at(2, 5), {})
     assert not web_admin._reencode_due("01:00", at(0, 59), {})
     assert not web_admin._reencode_due("01:00", at(1, 10), {"01:00": "2026-10-28"})
+
+
+def _add_new_items(re_env, items):
+    q = json.loads(reencode_ctl.QUEUE.read_text(encoding="utf-8"))
+    q["new_items"] = items
+    reencode_ctl.QUEUE.write_text(json.dumps(q), encoding="utf-8")
+
+
+def test_new_items_in_state_and_has_work(re_env, monkeypatch):
+    _add_new_items(re_env, [{"id": "N0001", "kind": "new", "src": "/v/임시/재인코딩/new/런닝맨.E826.mkv", "status": "fed", "size": 3 * 2 ** 30},
+                            {"id": "N0002", "kind": "new", "src": "/v/new/x.mkv", "status": "failed", "msg": "길이가 다름"}])
+    st = reencode_ctl.state()
+    assert "🆕 새 예능 인코딩 대기 1개 · 실패 1개(new 폴더에 [손상] 표시)" in st["summary"]
+    assert st["waiting_list"][0]["id"] == "N0001" and st["waiting_list"][0]["tier"] == "새"
+    assert st["failed"][0]["id"] == "N0002" and st["new_waiting"] == 1
+    write_status(re_env, state="encoding", current="N0001", updated="2026-10-27 20:00:00")
+    assert reencode_ctl.state()["current"]["name"] == "런닝맨.E826.mkv"
+    # 일괄 쪽 일이 없어도 새 예능이 남았으면 새벽 시작 대상
+    q = json.loads(reencode_ctl.QUEUE.read_text(encoding="utf-8"))
+    for it in q["items"]:
+        it["status"] = "done"
+    reencode_ctl.QUEUE.write_text(json.dumps(q), encoding="utf-8")
+    assert reencode_ctl.has_work() and not reencode_ctl.batch_has_work()
+
+
+def test_newstart_does_not_resume_batch(re_env):
+    now = int(time.time())
+    web_admin._handle_telegram_callback({"id": "q", "data": f"re_newstart:{now}", "message": {"chat": {"id": 1}, "message_id": 7850}})
+    assert re_env["tasks"] == ["ReencodeWorker"]
+    assert not any(cmd == "resume" for cmd, _ in re_env["host"])     # 멈춤(STOP)은 그대로
+    assert ("run", "") in re_env["host"]
+
+
+def test_night_with_only_new_items_keeps_stop(re_env, monkeypatch):
+    monkeypatch.setattr(reencode_ctl, "has_work", lambda: True)
+    monkeypatch.setattr(reencode_ctl, "batch_has_work", lambda: False)
+    monkeypatch.setattr(web_admin, "_is_pc_online", lambda host: False)
+    web_admin._run_reencode_night()
+    assert re_env["tasks"] == ["ReencodeWorker"] and not any(cmd == "resume" for cmd, _ in re_env["host"])
+
+
+def test_encoding_in_progress_from_worker_heartbeat(re_env):
+    fmt = lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(web_admin.APP_TZ)
+    write_status(re_env, state="encoding", updated=fmt(now))
+    assert web_admin._is_encoding_in_progress()
+    write_status(re_env, state="uploading", updated=fmt(now))
+    assert web_admin._is_encoding_in_progress()
+    write_status(re_env, state="waiting", updated=fmt(now))
+    assert not web_admin._is_encoding_in_progress()
+    from datetime import timedelta
+    write_status(re_env, state="encoding", updated=fmt(now - timedelta(minutes=30)))   # 하트비트 끊김
+    assert not web_admin._is_encoding_in_progress()
+
+
+def test_telegram_menu_reencode_button(re_env):
+    assert [{"text": web_admin.TG_BTN_REENCODE}, {"text": web_admin.TG_BTN_BATCH}] in web_admin.TG_MENU["keyboard"]
+    web_admin._handle_telegram_text("🎬 인코딩 시작")          # 예전 메뉴 글자도 재인코딩 상태로
+    assert re_env["sent"][-1][0].startswith("♻️ 예능 재인코딩")
+
+
+def test_encode_page_and_removed_routes(re_env):
+    c = re_env["client"]
+    html = c.get("/encode_log").get_data(as_text=True)
+    assert "재인코딩 (예능 일괄 · 새로 받은 예능)" in html and "PC 예약 종료" in html and "runEncode" not in html
+    assert c.post("/run_encode").status_code == 404
+    assert c.get("/encode_hold_stats").status_code == 404 and c.get("/encode_log/tail").status_code == 404

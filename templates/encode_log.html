@@ -39,60 +39,10 @@
 {% endblock %}
 
 {% block content %}
-    {% if not dir_mounted %}
-      <div class="banner warn">
-        ⚠ 인코딩 로그 디렉토리가 컨테이너에 마운트되어 있지 않습니다.
-        docker-compose.yml의 media-router 서비스 volumes에 Drive의 "인코딩 완료" 폴더를
-        <code>/app/encode_logs:ro</code> 로 추가하고 컨테이너를 재시작하세요.
-      </div>
-    {% elif not log_exists %}
-      <div class="banner warn">⚠ 아직 인코딩 로그 파일이 없습니다 (PC에서 encode_all.ps1을 한 번도 안 돌렸거나, 아직 동기화 전).</div>
-    {% endif %}
-
-    <div class="card">
-      {# 배치·인코딩 화면 공통 배치: 제목+상태 / 실행 버튼 / 로그 도구 #}
-      <div class="log-head">
-        <div class="section-title">PC 인코딩 로그 (KCK-GAMING)</div>
-        <div class="badges">
-          <span id="statusBadge" class="status-badge unknown"><span class="dot"></span>확인 중</span>
-          <span id="etaBadge" class="status-badge unknown">예상 완료: -</span>
-        </div>
-      </div>
-
-      <div class="log-actions" data-write>
-        <button type="button" class="run-batch-btn" id="runEncodeBtn" onclick="runEncode()">
-          <span class="icon">▶</span> 인코딩 시작
-        </button>
-        <span class="divider" aria-hidden="true"></span>
-        <button type="button" class="btn" id="scheduleShutdownBtn" onclick="toggleScheduleShutdown()" title="다운로드(브라우저·JDownloader)와 인코딩이 모두 끝나면 PC를 자동으로 종료합니다">⏳ PC 예약 종료</button>
-        <button type="button" class="btn" id="cancelShutdownBtn" onclick="cancelShutdown()" title="인코딩 끝나고 5분 후 예약된 PC 종료를 취소합니다">⏸ PC 종료 취소</button>
-      </div>
-
-      <div class="log-tools">
-        <div class="group grow">
-          <input type="text" id="searchInput" placeholder="로그 내용 검색..." aria-label="로그 내용 검색">
-        </div>
-        <div class="group">
-          <label class="switch-label"><input type="checkbox" id="autoRefreshChk" checked> 실시간 갱신</label>
-          <label class="switch-label"><input type="checkbox" id="autoScrollChk" checked> 자동 스크롤</label>
-          <button type="button" class="btn small" onclick="manualRefresh()">↻ 새로고침</button>
-          {% if log_exists %}
-            <a class="btn small" href="/encode_log/download">⬇ 다운로드</a>
-          {% endif %}
-        </div>
-      </div>
-
-      <div class="log-view" id="logView"><span class="empty">로딩 중...</span></div>
-      <div class="hint" style="margin-top:10px;">
-        Synology Drive 동기화로 PC → 나스로 넘어오는 로그라, PC에서 로그가 찍혀도 동기화 지연(보통 몇 초~1분)만큼 늦게 보일 수 있습니다.
-        <span class="path-tag">{{ log_path }}</span>
-      </div>
-    </div>
-
     {# 예능 일괄 재인코딩 v2 (2026-10-27): PC 워커가 NAS 영상을 SMB로 직접 읽어 인코딩, NAS가 원본 자리로 교체 #}
     <div class="card" id="reCard" hidden>
       <div class="log-head">
-        <div class="section-title">예능 일괄 재인코딩</div>
+        <div class="section-title">재인코딩 (예능 일괄 · 새로 받은 예능)</div>
         <div class="badges">
           <span id="reRunBadge" class="status-badge unknown"><span class="dot"></span>-</span>
           <span id="reWorkerBadge" class="status-badge unknown">PC: -</span>
@@ -125,25 +75,17 @@
       <div class="log-view" id="reLog" style="max-height:300px; margin-top:8px;" hidden></div>
     </div>
 
+    {# PC 종료 관리: 재인코딩 워커는 끝나면 5분 뒤 PC를 끈다 / 다운로드가 끝나면 끄기 #}
     <div class="card">
-      <div class="section-title">인코딩 보류 현황 (Drive\인코딩)</div>
-      <div class="toolbar">
+      <div class="section-title">PC (KCK-GAMING) 종료</div>
+      <div class="toolbar" data-write>
         <div class="group">
-          <span id="holdPendingBadge" class="status-badge unknown">대기중: -</span>
-          <span id="holdDoneBadge" class="status-badge unknown">완료표시 미삭제: -</span>
-        </div>
-        <div class="group">
-          <button type="button" class="btn small" onclick="loadHoldStats()">↻ 새로고침</button>
+          <button type="button" class="btn" id="scheduleShutdownBtn" onclick="toggleScheduleShutdown()">⏳ PC 예약 종료</button>
+          <button type="button" class="btn" id="cancelShutdownBtn" onclick="cancelShutdown()" title="재인코딩이 끝나고 5분 후 예약된 PC 종료를 취소합니다">⏸ PC 종료 취소</button>
         </div>
       </div>
-      <table class="hold-table" id="holdCompareTable" style="display:none;">
-        <thead><tr><th>회차</th><th>원본 용량</th><th>인코딩 후</th><th>절감률</th><th>코덱 (전 → 후)</th><th>비트레이트 (전 → 후)</th></tr></thead>
-        <tbody id="holdCompareBody"></tbody>
-      </table>
-      <div class="hint" id="holdCompareEmpty">완료표시된 원본과 라이브러리 결과물을 짝지을 수 있는 항목이 없습니다.</div>
-      <div class="hint" id="holdTotalLine" style="margin-top:10px; font-weight:600;"></div>
+      <div class="hint" style="margin-top:6px;">PC 예약 종료: PC·Drive에서 받는 중인 파일과 재인코딩이 모두 끝나면 PC를 꺼요.</div>
     </div>
-  
 {% endblock %}
 
 {% block scripts %}
@@ -243,195 +185,6 @@
     loadReencode();
     setInterval(function() { if (!document.hidden) loadReencode(); }, 30000);
 
-    var offset = {{ initial_offset }};
-    var allLines = [];
-    var pendingPartial = "";
-    var searchTerm = "";
-    var stickToBottom = true;
-    var pollTimer = null;
-
-    var initialContent = {{ content|tojson }};
-
-    function escapeHtml(s) {
-      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-
-    function ingest(chunk) {
-      if (!chunk) return;
-      var combined = pendingPartial + chunk;
-      var parts = combined.split("\n");
-      if (chunk.charAt(chunk.length - 1) !== "\n") {
-        pendingPartial = parts.pop();
-      } else {
-        pendingPartial = "";
-        parts.pop();
-      }
-      for (var i = 0; i < parts.length; i++) {
-        if (parts[i] !== "") allLines.push(parts[i]);
-      }
-    }
-
-    function colorizeLine(line) {
-      var esc = escapeHtml(line);
-      if (/\([0-9]+\/[0-9]+\)/.test(line)) {
-        return '<span class="l-run">' + esc + '</span>';
-      }
-      if (/실패|오류|건너뜀|error|Error/i.test(line)) {
-        return '<span class="l-err">' + esc + '</span>';
-      }
-      if (/완료|끝:/.test(line)) {
-        return '<span class="l-ok">' + esc + '</span>';
-      }
-      return esc;
-    }
-
-    function render() {
-      var view = document.getElementById("logView");
-      var filtered = searchTerm
-        ? allLines.filter(function(l) { return l.toLowerCase().indexOf(searchTerm) !== -1; })
-        : allLines;
-      if (filtered.length === 0) {
-        view.innerHTML = '<span class="empty">표시할 로그가 없습니다.</span>';
-        return;
-      }
-      view.innerHTML = filtered.map(colorizeLine).join("\n");
-      if (stickToBottom) view.scrollTop = view.scrollHeight;
-    }
-
-    function updateStatusBadge() {
-      var badge = document.getElementById("statusBadge");
-      var lastProgressIdx = -1;
-      for (var i = allLines.length - 1; i >= 0; i--) {
-        if (/\([0-9]+\/[0-9]+\)/.test(allLines[i])) { lastProgressIdx = i; break; }
-      }
-      if (lastProgressIdx === -1) {
-        badge.className = "status-badge unknown";
-        badge.innerHTML = '<span class="dot"></span>기록 없음';
-        return;
-      }
-      var finishedAfter = false;
-      for (var j = lastProgressIdx + 1; j < allLines.length; j++) {
-        if (/완료|실패|건너뜀|끝:/.test(allLines[j])) { finishedAfter = true; break; }
-      }
-      if (allLines.length > 0 && /^끝:/.test(allLines[allLines.length - 1].replace(/^\[[^\]]*\]\s*/, ''))) {
-        badge.className = "status-badge idle";
-        badge.innerHTML = '<span class="dot"></span>완료됨';
-      } else if (finishedAfter) {
-        badge.className = "status-badge running";
-        badge.innerHTML = '<span class="dot"></span>실행 중 (다음 파일 대기)';
-      } else {
-        badge.className = "status-badge running";
-        badge.innerHTML = '<span class="dot"></span>실행 중';
-      }
-    }
-
-    var PROGRESS_LINE_RE = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s*\((\d+)\/(\d+)\)/;
-
-    function parseTs(s) {
-      // "YYYY-MM-DD HH:MM:SS" -> epoch ms (로그가 PC 로컬시간 기준이라 그대로 파싱)
-      var m = s.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
-      if (!m) return null;
-      return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
-    }
-
-    function formatClock(d) {
-      var hh = ('0' + d.getHours()).slice(-2);
-      var mm = ('0' + d.getMinutes()).slice(-2);
-      return hh + ':' + mm;
-    }
-
-    // 로그의 "(i/N) 파일명" 줄 타임스탬프들로 평균 처리시간을 뽑아 남은 시간을 추정.
-    // 손상으로 건너뛴 파일(수초 이내 처리)과 실제 인코딩(수분)이 섞여있어서
-    // 평균이 다소 낙관적/비관적으로 튈 수 있는 추정치임.
-    function updateEta() {
-      var badge = document.getElementById("etaBadge");
-      // 로그는 회전 없이 계속 쌓이므로(2026-10-11~) 마지막 "인코딩 시작" 이후 줄만 본다.
-      // 안 그러면 며칠 전 실행의 첫 줄부터 평균을 내서 예상 완료가 하루 뒤로 튐(2026-10-14).
-      var runStart = 0;
-      for (var k = allLines.length - 1; k >= 0; k--) {
-        if (/인코딩 시작:/.test(allLines[k])) { runStart = k; break; }
-      }
-      var starts = [];
-      for (var i = runStart; i < allLines.length; i++) {
-        var m = allLines[i].match(PROGRESS_LINE_RE);
-        if (m) starts.push({ ts: parseTs(m[1]), idx: +m[2], total: +m[3] });
-      }
-      if (starts.length === 0) {
-        badge.className = "status-badge unknown";
-        badge.textContent = "예상 완료: -";
-        return;
-      }
-      var total = starts[starts.length - 1].total;
-      var finished = /^끝:/.test((allLines[allLines.length - 1] || '').replace(/^\[[^\]]*\]\s*/, ''));
-      if (finished) {
-        badge.className = "status-badge idle";
-        badge.textContent = "완료됨";
-        return;
-      }
-      if (starts.length < 2) {
-        badge.className = "status-badge unknown";
-        badge.textContent = "예상 완료: 계산 중...";
-        return;
-      }
-      var firstTs = starts[0].ts;
-      var lastStart = starts[starts.length - 1];
-      var completedCount = starts.length - 1; // 마지막 건 아직 진행중이라 완료로 안 침
-      var avgPerItem = completedCount > 0 ? (lastStart.ts - firstTs) / completedCount : 0;
-      var remainingItems = total - lastStart.idx; // 마지막 항목 이후 남은 개수
-      var elapsedOnCurrent = Date.now() - lastStart.ts;
-      var remainMs = remainingItems * avgPerItem + Math.max(avgPerItem - elapsedOnCurrent, 0);
-      if (!isFinite(remainMs) || remainMs < 0) remainMs = 0;
-      var eta = new Date(Date.now() + remainMs);
-      badge.className = "status-badge running";
-      badge.textContent = "예상 완료: " + formatClock(eta) + " (약 " + Math.round(remainMs / 60000) + "분 남음)";
-    }
-
-    function onLogViewScroll() {
-      var view = document.getElementById("logView");
-      stickToBottom = (view.scrollTop + view.clientHeight >= view.scrollHeight - 40);
-    }
-
-    function poll() {
-      fetch("/encode_log/tail?offset=" + offset)
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.error) return;
-          if (data.exists && data.content) {
-            ingest(data.content);
-            render();
-            updateStatusBadge();
-            updateEta();
-          }
-          if (typeof data.offset === "number") offset = data.offset;
-        })
-        .catch(function() {});
-    }
-
-    function manualRefresh() { poll(); }
-
-    function setAutoRefresh(on) {
-      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-      if (on) pollTimer = setInterval(poll, 2000);
-    }
-
-    document.getElementById("autoScrollChk").addEventListener("change", function(e) {
-      stickToBottom = e.target.checked;
-    });
-    document.getElementById("autoRefreshChk").addEventListener("change", function(e) {
-      setAutoRefresh(e.target.checked);
-    });
-    document.getElementById("searchInput").addEventListener("input", function(e) {
-      searchTerm = e.target.value.trim().toLowerCase();
-      render();
-    });
-    document.getElementById("logView").addEventListener("scroll", onLogViewScroll);
-
-    ingest(initialContent);
-    render();
-    updateStatusBadge();
-    updateEta();
-    setAutoRefresh(document.getElementById("autoRefreshChk").checked);
-
     var scheduleShutdownActive = false;
     var scheduleWaitInfo = null;   // 예약 종료가 무엇을 기다리는지 (다운로드 개수·파일명, 인코딩 여부)
 
@@ -444,10 +197,10 @@
         btn.innerHTML = '⏳ 예약 취소' + (waits.length ? ' (' + waits.join('·') + ' 대기)' : '(대기 중)');
         btn.title = (scheduleWaitInfo && scheduleWaitInfo.download_files && scheduleWaitInfo.download_files.length)
           ? '받는 중: ' + scheduleWaitInfo.download_files.join(', ')
-          : '다운로드(브라우저·JDownloader)와 인코딩이 모두 끝나면 PC를 자동으로 종료합니다';
+          : '다운로드(브라우저·JDownloader)와 재인코딩이 모두 끝나면 PC를 자동으로 종료합니다';
       } else {
         btn.innerHTML = '⏳ PC 예약 종료';
-        btn.title = '다운로드(브라우저·JDownloader)와 인코딩이 모두 끝나면 PC를 자동으로 종료합니다';
+        btn.title = '다운로드(브라우저·JDownloader)와 재인코딩이 모두 끝나면 PC를 자동으로 종료합니다';
       }
     }
 
@@ -478,7 +231,7 @@
           .catch(function(e) { showToast('요청 중 오류가 발생했습니다: ' + e, 'error'); })
           .finally(function() { btn.disabled = false; });
       } else {
-        if (!confirm('다운로드(.crdownload)와 인코딩이 모두 끝나면 KCK-GAMING을 자동으로 종료할까요?\n(5분 유예 후 종료, 그 안에 \'PC 종료 취소\'로 막을 수 있어요)')) return;
+        if (!confirm('다운로드(.crdownload)와 재인코딩이 모두 끝나면 KCK-GAMING을 자동으로 종료할까요?\n(5분 유예 후 종료, 그 안에 \'PC 종료 취소\'로 막을 수 있어요)')) return;
         btn.disabled = true;
         fetch('/schedule_pc_shutdown', { method: 'POST' })
           .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
@@ -494,85 +247,12 @@
     pollScheduleShutdownStatus();
     setInterval(pollScheduleShutdownStatus, 15000);
 
-    function formatGB(bytes) { return (bytes / 1e9).toFixed(2) + ' GB'; }
-    // 코덱/비트레이트는 서버가 시간 예산 안에서만 새로 읽어서, 아직 못 읽은 건 null → '…'
-    function formatMbps(bps) { return bps ? (bps / 1e6).toFixed(1) : '…'; }
-    function codecPair(c) { return (c.before_codec || '…') + ' → ' + (c.after_codec || '…'); }
-    function bitratePair(c) {
-      if (!c.before_bitrate && !c.after_bitrate) return '…';
-      return formatMbps(c.before_bitrate) + ' → ' + formatMbps(c.after_bitrate) + ' Mbps';
-    }
-
-    var holdRetry = 0;
-    function loadHoldStats() {
-      fetch('/encode_hold_stats', { method: 'GET' })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (!data.success) return;
-
-          var pendingBadge = document.getElementById('holdPendingBadge');
-          pendingBadge.textContent = '대기중: ' + data.pending_count + '개 (' + formatGB(data.pending_bytes) + ')';
-          pendingBadge.className = 'status-badge ' + (data.pending_count > 0 ? 'running' : 'idle');
-
-          var doneBadge = document.getElementById('holdDoneBadge');
-          doneBadge.textContent = '완료표시 미삭제: ' + data.done_count + '개 (' + formatGB(data.done_bytes) + ')';
-          doneBadge.className = 'status-badge ' + (data.done_count > 0 ? 'unknown' : 'idle');
-
-          var table = document.getElementById('holdCompareTable');
-          var body = document.getElementById('holdCompareBody');
-          var empty = document.getElementById('holdCompareEmpty');
-          var totalLine = document.getElementById('holdTotalLine');
-          body.innerHTML = '';
-
-          var comparisons = data.comparisons || [];
-          if (comparisons.length > 0) {
-            comparisons.forEach(function(c) {
-              var pct = c.before > 0 ? Math.round((1 - c.after / c.before) * 100) : 0;
-              var tr = document.createElement('tr');
-              [c.name, formatGB(c.before), formatGB(c.after), pct + '%', codecPair(c), bitratePair(c)].forEach(function(text) {
-                var td = document.createElement('td');
-                td.textContent = text;
-                tr.appendChild(td);
-              });
-              body.appendChild(tr);
-            });
-            table.style.display = '';
-            empty.style.display = 'none';
-            // 서버가 이번 요청 시간 안에 다 못 읽은 항목이 있으면 잠시 뒤 다시 불러와 채운다(최대 12번).
-            // 파일당 0.2~3.5초(NAS 실측)라 60쌍 첫 로딩이면 1~2분 걸림. 이후엔 캐시라 즉시.
-            var missing = comparisons.some(function(c) { return !c.before_codec || !c.after_codec; });
-            if (missing && holdRetry < 12) { holdRetry++; setTimeout(loadHoldStats, 3000); }
-            var totalPct = data.total_before > 0 ? Math.round((1 - data.total_after / data.total_before) * 100) : 0;
-            totalLine.textContent = '합계: ' + formatGB(data.total_before) + ' → ' + formatGB(data.total_after) + ' (절감 ' + totalPct + '%)';
-          } else {
-            table.style.display = 'none';
-            empty.style.display = '';
-            totalLine.textContent = '';
-          }
-        })
-        .catch(function() {});
-    }
-
-    loadHoldStats();
-
     function cancelShutdown() {
-      if (!confirm('KCK-GAMING의 예약된 PC 종료를 취소할까요?\n(인코딩이 끝나고 5분 후 자동 종료되는 것을 막습니다)')) return;
+      if (!confirm('KCK-GAMING의 예약된 PC 종료를 취소할까요?\n(재인코딩이 끝나고 5분 후 자동 종료되는 것을 막습니다)')) return;
       var btn = document.getElementById('cancelShutdownBtn');
       var originalHTML = btn.innerHTML;
       btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 요청 중...';
       fetch('/cancel_shutdown', { method: 'POST' })
-        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
-        .then(function(res) { showToast(res.data.message || (res.ok ? '요청 완료' : '요청 실패'), res.ok ? 'success' : 'error'); })
-        .catch(function(e) { showToast('요청 중 오류가 발생했습니다: ' + e, 'error'); })
-        .finally(function() { setTimeout(function() { btn.disabled = false; btn.innerHTML = originalHTML; }, 3000); });
-    }
-
-    function runEncode() {
-      if (!confirm('KCK-GAMING PC에서 인코딩 스크립트를 시작할까요?\nPC가 꺼져있으면 자동으로 켜고 시작해요(최대 2분 정도 더 걸릴 수 있음). 완료까지는 몇 시간 걸릴 수 있습니다.')) return;
-      var btn = document.getElementById('runEncodeBtn');
-      var originalHTML = btn.innerHTML;
-      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 요청 중...';
-      fetch('/run_encode', { method: 'POST' })
         .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
         .then(function(res) { showToast(res.data.message || (res.ok ? '요청 완료' : '요청 실패'), res.ok ? 'success' : 'error'); })
         .catch(function(e) { showToast('요청 중 오류가 발생했습니다: ' + e, 'error'); })

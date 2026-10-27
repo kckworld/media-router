@@ -70,7 +70,7 @@ WOL_MAC = os.getenv("WOL_MAC", "74:56:3C:69:5F:19")
 WOL_BROADCAST = os.getenv("WOL_BROADCAST", "192.168.50.255")
 _wol_state = {"lock": threading.Lock(), "last_triggered": 0}
 
-# 인코딩용 PC(KCK-GAMING)에 SSH로 encode_all.ps1을 원격 실행 + 켜져있는지 확인
+# 인코딩용 PC(KCK-GAMING)에 SSH로 재인코딩 워커(작업 스케줄러)를 실행 + 켜져있는지 확인
 GAMING_PC_HOST = os.getenv("GAMING_PC_HOST", "192.168.50.102")
 GAMING_PC_USER = os.getenv("GAMING_PC_USER", "")
 GAMING_PC_SSH_KEY = os.getenv("GAMING_PC_SSH_KEY", "/app/secrets/kck_gaming_key")
@@ -88,8 +88,6 @@ def _pc_text(raw) -> str:
         except UnicodeDecodeError:
             pass
     return raw.decode("utf-8", errors="replace")
-GAMING_PC_SCRIPT_PATH = os.getenv("GAMING_PC_SCRIPT_PATH", r"D:\SynologyDrive\encode_all.ps1")
-_run_encode_state = {"lock": threading.Lock(), "last_triggered": 0}
 _cancel_shutdown_state = {"lock": threading.Lock(), "last_triggered": 0}
 _shutdown_pc_state = {"lock": threading.Lock(), "last_triggered": 0}
 
@@ -117,170 +115,18 @@ RUN_ALL_LOGS_DIR = Path(os.getenv("RUN_ALL_LOGS_DIR", "/app/logs"))
 RUN_ALL_LOG_NAME_RE = re.compile(r"^run_all\.(\d{4}-\d{2}-\d{2})\.log$")
 LOG_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 LOG_INITIAL_MAX_BYTES = 2 * 1024 * 1024  # 최초 로딩 시 파일 끝에서 최대 이만큼만
-ENCODE_LOG_PATH = Path(os.getenv("ENCODE_LOG_PATH", "/app/encode_logs/_encode_log.txt"))
-
-# "PC예약종료": 다운로드 중(.crdownload 등)인 파일이 없어지고, 인코딩 중인
-# 파일(.encoding.mp4)도 없을 때까지 기다렸다가 KCK-GAMING을 종료한다.
+# "PC예약종료": PC·Drive에서 받는 중인 파일이 없어지고 재인코딩 워커도 쉬고 있으면 KCK-GAMING을 종료한다.
 DRIVE_ROOT_PATH = Path(os.getenv("DRIVE_ROOT_PATH", "/app/drive_root"))
-ENCODING_HOLD_PATH = DRIVE_ROOT_PATH / "인코딩"
-# [완료] 표시된 원본의 재인코딩 결과물을 찾을 때 뒤질 범위 - ENCODING_HOLD_PATH가
-# 예능 전용 보류함이라 예능 라이브러리만 보면 된다(전체 라이브러리를 훑으면
-# 느려짐). /volume1/video는 docker-compose에서 이미 ro로 마운트돼 있음.
-VARIETY_LIBRARY_ROOT = Path("/volume1/video/03.예능")
 
 
-_VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".ts", ".m4v", ".mov", ".wmv", ".webm"}
-
-
-def _library_index() -> dict[str, Path]:
-    """예능 라이브러리를 한 번만 훑어 stem(확장자 제외 파일명) → 경로 사전을 만든다.
-    예전엔 "[완료]" 원본마다 rglob으로 라이브러리 전체를 다시 훑어서, [완료]가 58개
-    쌓이자 화면 한 번 여는 데 20~30초 걸렸다(2026-10-14)."""
-    index: dict[str, Path] = {}
-    try:
-        for dirpath, dirnames, filenames in os.walk(VARIETY_LIBRARY_ROOT):
-            dirnames[:] = [d for d in dirnames if d != "@eaDir"]
-            for fn in filenames:
-                base, ext = os.path.splitext(fn)
-                if ext.lower() in _VIDEO_EXTS:  # 같은 이름의 자막(.srt)이 짝으로 잡히지 않게
-                    index.setdefault(base, Path(dirpath) / fn)
-    except Exception:
-        app.logger.exception("라이브러리 결과물 탐색 실패")
-    return index
-
-
-# 인코딩 전/후 코덱·비트레이트(pymediainfo). NAS 디스크가 바빠 파일마다 헤더를
-# 읽는 비용이 커서, (크기, 수정시각)이 같으면 다시 읽지 않도록 data/에 캐시한다.
-MEDIA_PROBE_CACHE_PATH = DATA_DIR / "media_probe_cache.json"
-MEDIA_PROBE_BUDGET_SEC = 15  # 한 번의 요청에서 새로 읽는 데 쓸 최대 시간 (gunicorn timeout 60s)
-_CODEC_NAMES = {"AVC": "H.264", "HEVC": "H.265", "AV1": "AV1", "VP9": "VP9", "MPEG-4 Visual": "MPEG-4"}
-_probe_state = {"lock": threading.Lock(), "cache": None, "dirty": False}
-
-
-def _probe_cache() -> dict:
-    if _probe_state["cache"] is None:
-        try:
-            _probe_state["cache"] = json.loads(MEDIA_PROBE_CACHE_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            _probe_state["cache"] = {}
-    return _probe_state["cache"]
-
-
-def _media_brief(p: Path, deadline: float) -> dict | None:
-    """{"codec": "H.264", "bitrate": bps} 반환. 캐시에 없고 deadline이 지났으면 None
-    (화면에는 '…'로 보이고 다음 새로고침 때 채워짐)."""
-    try:
-        st = p.stat()
-    except OSError:
-        return None
-    sig = f"{st.st_size}:{int(st.st_mtime)}"
-    with _probe_state["lock"]:
-        hit = _probe_cache().get(str(p))
-        if hit and hit.get("sig") == sig:
-            return hit["info"]
-    if time.time() > deadline:
-        return None
-    info = {"codec": None, "bitrate": None}
-    try:
-        from pymediainfo import MediaInfo
-        mi = MediaInfo.parse(str(p))
-        general = next((t for t in mi.tracks if t.track_type == "General"), None)
-        video = next((t for t in mi.tracks if t.track_type == "Video"), None)
-        if video is not None and video.format:
-            info["codec"] = _CODEC_NAMES.get(video.format, video.format)
-        br = getattr(general, "overall_bit_rate", None) if general is not None else None
-        dur_ms = getattr(general, "duration", None) if general is not None else None
-        if not br and dur_ms:
-            br = st.st_size * 8 / (float(dur_ms) / 1000)
-        info["bitrate"] = int(float(br)) if br else None
-    except Exception:
-        app.logger.exception("미디어 정보 읽기 실패: %s", p)
-    with _probe_state["lock"]:
-        _probe_cache()[str(p)] = {"sig": sig, "info": info}
-        _probe_state["dirty"] = True
-    return info
-
-
-def _save_probe_cache() -> None:
-    with _probe_state["lock"]:
-        if not _probe_state["dirty"]:
-            return
-        try:
-            tmp = MEDIA_PROBE_CACHE_PATH.with_suffix(".tmp")
-            tmp.write_text(json.dumps(_probe_state["cache"], ensure_ascii=False), encoding="utf-8")
-            tmp.replace(MEDIA_PROBE_CACHE_PATH)
-            _probe_state["dirty"] = False
-        except Exception:
-            app.logger.exception("미디어 정보 캐시 저장 실패")
-
-
-def _encoding_hold_stats() -> dict:
-    """Drive/인코딩 폴더 현황: 대기중/완료표시 개수·용량 + 완료표시 원본과
-    실제 재인코딩 결과물의 전/후 용량 비교. 인코딩 로그 페이지의 가시성
-    배지용(2026-10-11 추가 - 불꽃야구 무한루프를 몇 시간 동안 못 알아챈
-    사고 이후, 큐가 쌓이는 걸 한눈에 보려는 목적)."""
-    pending_count = pending_bytes = done_count = done_bytes = 0
-    comparisons = []
-    probe_deadline = time.time() + MEDIA_PROBE_BUDGET_SEC
-    library = None  # [완료] 원본이 있을 때만 한 번 만든다
-    try:
-        for p in ENCODING_HOLD_PATH.iterdir():
-            if not p.is_file():
-                continue
-            size = p.stat().st_size
-            if p.name.startswith("[완료] "):
-                done_count += 1
-                done_bytes += size
-                stem = Path(p.name[len("[완료] "):]).stem
-                if library is None:
-                    library = _library_index()
-                out = library.get(stem)
-                if out is not None:
-                    try:
-                        before_info = _media_brief(p, probe_deadline) or {}
-                        after_info = _media_brief(out, probe_deadline) or {}
-                        comparisons.append({
-                            "name": stem,
-                            "before": size,
-                            "after": out.stat().st_size,
-                            "before_codec": before_info.get("codec"),
-                            "before_bitrate": before_info.get("bitrate"),
-                            "after_codec": after_info.get("codec"),
-                            "after_bitrate": after_info.get("bitrate"),
-                        })
-                    except Exception:
-                        pass
-            else:
-                pending_count += 1
-                pending_bytes += size
-    except Exception:
-        app.logger.exception("인코딩 보류 폴더 통계 수집 실패")
-    _save_probe_cache()
-
-    total_before = sum(c["before"] for c in comparisons)
-    total_after = sum(c["after"] for c in comparisons)
-    return {
-        "pending_count": pending_count, "pending_bytes": pending_bytes,
-        "done_count": done_count, "done_bytes": done_bytes,
-        "comparisons": comparisons,
-        "total_before": total_before, "total_after": total_after,
-    }
-
-
-@app.route("/encode_hold_stats", methods=["GET"])
-def encode_hold_stats():
-    auth = authed(request)
-    if auth is not True:
-        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
-    return jsonify({"success": True, **_encoding_hold_stats()})
 # 받는 중인 파일 확장자: 크롬/엣지 .crdownload, JDownloader·파이어폭스 .part
 _PARTIAL_DOWNLOAD_EXTS = (".crdownload", ".part", ".tmp", ".!qb")
 # 하위 폴더와 PC 쪽에서는 .tmp를 빼고 본다 (문서 폴더의 오피스 임시파일 같은 게 남아 있으면
 # 예약 종료가 영영 안 될 수 있어서). .tmp는 예전처럼 Drive 맨 위에서만 센다.
 _PARTIAL_DEEP_EXTS = (".crdownload", ".part", ".!qb")
 _schedule_shutdown_state = {"lock": threading.Lock(), "active": False, "stop_event": None, "started_at": 0}
-# Drive 안에서 다운로드가 아닌 폴더 (인코딩 작업 폴더·보관·시놀로지 내부)
-_PARTIAL_SKIP_DIRS = {"인코딩", "인코딩 완료", "보관", "@eaDir", "#recycle", ".SynologyWorkingDirectory"}
+# Drive 안에서 다운로드가 아닌 폴더 (보관·시놀로지 내부)
+_PARTIAL_SKIP_DIRS = {"보관", "@eaDir", "#recycle", ".SynologyWorkingDirectory"}
 # PC(KCK-GAMING)에서 직접 확인할 다운로드 폴더 (Synology Drive로 NAS와 동기화되는 곳)
 PC_DOWNLOAD_DIR = os.getenv("PC_DOWNLOAD_DIR", r"D:\SynologyDrive")
 
@@ -362,16 +208,16 @@ def _has_partial_downloads() -> bool:
 
 
 def _is_encoding_in_progress() -> bool:
-    # encode_all.ps1이 ".encoding.mp4" 임시파일을 "인코딩 완료" 폴더에 쓴다.
-    # 로그 파일은 2026-10-11에 Program/Log로 옮겨서 ENCODE_LOG_PATH.parent와
-    # 더 이상 같은 폴더가 아니므로, Drive 루트 마운트를 통해 직접 가리킨다.
+    """재인코딩 워커가 복사·인코딩·업로드 중이면 True (PC 예약 종료·PC 끄기 경고에 씀).
+    하트비트가 10분 넘게 끊겼으면 PC가 꺼졌거나 워커가 죽은 것으로 본다."""
+    w = reencode_ctl.worker()
+    if w.get("state") not in ("copying", "encoding", "uploading"):
+        return False
     try:
-        for p in (DRIVE_ROOT_PATH / "인코딩 완료").iterdir():
-            if p.is_file() and p.name.lower().endswith(".encoding.mp4"):
-                return True
-    except Exception:
-        app.logger.exception("인코딩 진행 여부 확인 실패")
-    return False
+        updated = datetime.strptime(str(w.get("updated"))[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=APP_TZ)
+    except ValueError:
+        return False
+    return datetime.now(APP_TZ) - updated < timedelta(minutes=10)
 
 
 def _tg_cfg() -> dict:
@@ -405,7 +251,7 @@ def _tg_notify(text: str, reply_markup: dict | None = None, token: str | None = 
 # 텔레그램 대화창 하단 고정 메뉴. 버튼을 누르면 그 글자가 메시지로 오므로
 # 아래 리스너가 글자로 구분해서 처리한다. 인바운드 웹훅 없이 getUpdates
 # 롱폴링만 쓰므로 포트포워딩/공인 도메인/SSL 없이도 동작한다.
-TG_BTN_ENCODE = "🎬 인코딩 시작"
+TG_BTN_REENCODE = "♻️ 재인코딩"
 TG_BTN_BATCH = "▶ 배치 실행"
 TG_BTN_WAKE = "⚡ PC 켜기"
 TG_BTN_STATUS = "❔ PC 상태"
@@ -415,15 +261,15 @@ TG_BTN_MOVIES = "🎞 영화 베스트"
 _TG_BTN_OFF_LEGACY = "⏻ PC 끄기"
 TG_MENU = {
     "keyboard": [
-        [{"text": TG_BTN_ENCODE}, {"text": TG_BTN_BATCH}],
+        [{"text": TG_BTN_REENCODE}, {"text": TG_BTN_BATCH}],
         [{"text": TG_BTN_WAKE}, {"text": TG_BTN_STATUS}, {"text": TG_BTN_OFF}],
         [{"text": TG_BTN_MOVIES}],
     ],
     "resize_keyboard": True,
     "is_persistent": True,
 }
-# 메뉴 도입 전처럼 "인코딩"이 들어간 아무 메시지로도 인코딩을 시작할 수 있게 유지
-_TG_ENCODE_TRIGGER_WORDS = ("인코딩",)
+# 예전 메뉴(🎬 인코딩 시작)가 대화창에 남아 있거나 "인코딩"이라고 보내면 재인코딩 상태를 보여 준다
+_TG_REENCODE_WORDS = ("인코딩",)
 # 확인 버튼(인라인)은 오래된 걸 실수로 누르지 않게 5분 지나면 무시
 TG_CONFIRM_TTL_SEC = 300
 # 영화 베스트 목록 버튼은 천천히 골라도 되게 하루 동안 유효
@@ -431,7 +277,7 @@ TG_MOVIE_TTL_SEC = 24 * 3600
 # 단톡방 요청 알림의 [완료]/[보류] 버튼
 TG_REQUEST_TTL_SEC = 30 * 24 * 3600
 # 메뉴 버튼을 바꾸면 올린다 → 이미 메뉴를 받은 대화창에도 새 메뉴를 한 번 띄움
-TG_MENU_VERSION = 2
+TG_MENU_VERSION = 3
 # 메뉴 안내는 봇마다 한 번 - 토큰을 바꾸면(새 봇) 그 봇에도 한 번 띄운다
 def _tg_bot_key(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
@@ -452,100 +298,8 @@ def _tg_confirm(*buttons: tuple[str, str]) -> dict:
     return {"inline_keyboard": [[{"text": label, "callback_data": f"{action}:{now}"} for label, action in buttons]]}
 
 
-# ── 인코딩 전 Drive 동기화 대기 (2026-10-19) ──
-# PC를 켜자마자 인코딩을 시작하면 Synology Drive가 아직 NAS의 Drive/인코딩 파일을 PC로
-# 내려받기 전이라 encode_all.ps1이 "대상 0개"로 보고 PC를 바로 꺼버렸다. 그래서 NAS에 있는
-# 인코딩 대상이 PC의 같은 폴더에 같은 크기로 다 나타날 때까지 기다린 뒤 시작한다.
-ENCODE_SYNC_TIMEOUT_SEC = 30 * 60
-ENCODE_SYNC_POLL_SEC = 15
-# encode_all.ps1의 $exts / $inDir 와 같아야 한다
-_ENCODE_EXTS = {".mp4", ".mkv", ".ts", ".avi", ".mov", ".m4v", ".wmv", ".flv", ".webm"}
-PC_ENCODE_DIR = os.getenv("PC_ENCODE_DIR", r"D:\SynologyDrive\인코딩")
-
-
-def _is_encode_target(name: str) -> bool:
-    # [완료]·[손상]으로 시작하는 건 스크립트가 건너뛰는 파일
-    return Path(name).suffix.lower() in _ENCODE_EXTS and not name.startswith(("[완료]", "[손상]"))
-
-
-def _nas_encode_targets() -> dict[str, int]:
-    """NAS Drive/인코딩 맨 위의 인코딩 대상 {파일명: 크기}."""
-    out = {}
-    try:
-        for p in ENCODING_HOLD_PATH.iterdir():
-            if p.is_file() and _is_encode_target(p.name):
-                out[p.name] = p.stat().st_size
-    except OSError:
-        app.logger.exception("Drive/인코딩 목록 확인 실패")
-    return out
-
-
-def _parse_pc_listing(text: str) -> dict[str, int]:
-    out = {}
-    for line in text.splitlines():
-        name, sep, size = line.rstrip("\r").rpartition("\t")
-        if sep and size.strip().isdigit():
-            out[name] = int(size.strip())
-    return out
-
-
-def _pc_encode_files() -> dict[str, int] | None:
-    """PC의 인코딩 폴더 {파일명: 크기}. PC가 꺼져 있거나 확인 실패면 None."""
-    if not (GAMING_PC_USER and Path(GAMING_PC_SSH_KEY).exists()) or not _is_pc_online(GAMING_PC_HOST):
-        return None
-    import base64
-    ps = ("$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; "
-          f"Get-ChildItem -LiteralPath '{PC_ENCODE_DIR}' -File -Force -ErrorAction SilentlyContinue "
-          "| ForEach-Object { $_.Name + \"`t\" + $_.Length }")
-    enc = base64.b64encode(ps.encode("utf-16-le")).decode()
-    try:
-        r = _pc_ssh(f"powershell -NoProfile -NonInteractive -EncodedCommand {enc}")
-    except Exception:
-        app.logger.exception("PC 인코딩 폴더 확인 실패")
-        return None
-    if r.returncode != 0:
-        return None
-    return _parse_pc_listing(_pc_text(r.stdout))
-
-
-def _missing_on_pc(nas: dict[str, int], pc: dict[str, int]) -> list[str]:
-    """NAS에는 있는데 PC에는 아직 없거나 크기가 다른(받는 중인) 파일."""
-    return sorted(name for name, size in nas.items() if pc.get(name) != size)
-
-
-def _wait_encode_files_synced(progress=None) -> tuple[bool, str]:
-    """NAS의 인코딩 대상이 PC에 다 내려올 때까지 기다린다. (성공 여부, 안내 메시지)
-    NAS에 대상이 없으면 바로 통과 - 그때는 스크립트가 "대상 0개 → 즉시 종료"로
-    동작하는데, 그게 원격 종료 스위치로 쓰는 원래 의도다."""
-    def _note(msg: str) -> None:
-        if progress:
-            progress(msg)
-
-    deadline = time.time() + ENCODE_SYNC_TIMEOUT_SEC
-    noted = False
-    missing: list[str] = []
-    while True:
-        nas = _nas_encode_targets()
-        if not nas:
-            return True, ""
-        pc = _pc_encode_files()
-        if pc is not None:
-            missing = _missing_on_pc(nas, pc)
-            if not missing:
-                return True, f"PC로 동기화 완료 ({len(nas)}개)"
-        if time.time() >= deadline:
-            names = "\n- ".join(missing[:5]) if missing else "(PC 폴더를 확인하지 못함)"
-            return False, (f"{ENCODE_SYNC_TIMEOUT_SEC // 60}분 기다렸는데 PC로 동기화가 안 끝났어요. 인코딩은 시작하지 않았고 PC는 켜 둔 채예요.\n"
-                           f"Synology Drive 상태를 확인해 주세요.\n- {names}")
-        if not noted:
-            noted = True
-            done = len(nas) - len(missing) if pc is not None else 0
-            _note(f"Synology Drive가 인코딩할 파일을 PC로 옮기는 중이에요 ({done}/{len(nas)}). 다 올라오면 시작할게요 (최대 {ENCODE_SYNC_TIMEOUT_SEC // 60}분).")
-        time.sleep(ENCODE_SYNC_POLL_SEC)
-
-
-def _wake_pc(progress=None, then: str = "부팅되면 인코딩을 시작할게요") -> tuple[bool, str]:
-    """PC가 꺼져있으면 WOL로 켜고 최대 2분 기다린다 (인코딩·재인코딩 시작이 공유)."""
+def _wake_pc(progress=None, then: str = "부팅되면 재인코딩을 시작할게요") -> tuple[bool, str]:
+    """PC가 꺼져있으면 WOL로 켜고 최대 2분 기다린다 (재인코딩 시작)."""
     if _is_pc_online(GAMING_PC_HOST):
         return True, ""
     if progress:
@@ -564,42 +318,6 @@ def _wake_pc(progress=None, then: str = "부팅되면 인코딩을 시작할게�
     return True, "PC를 켰어요."
 
 
-def _ensure_pc_on_and_trigger_encode(progress=None) -> tuple[bool, str]:
-    """PC가 꺼져있으면 WOL로 켜고 최대 2분 기다렸다가, 켜지면(또는 이미
-    켜져있으면) 인코딩을 원격 시작한다. 웹 버튼과 텔레그램 트리거가 공유.
-    progress(선택): 중간 진행 상황을 알리고 싶을 때 쓰는 콜백(예: 텔레그램
-    알림). 웹 버튼처럼 최종 결과만 필요하면 생략."""
-    was_off = not _is_pc_online(GAMING_PC_HOST)
-    ok, msg = _wake_pc(progress)
-    if not ok:
-        return False, msg
-    if was_off and progress:
-        progress("PC 켜졌어요. 인코딩할 파일이 PC로 다 올라왔는지 확인할게요.")
-
-    synced, sync_msg = _wait_encode_files_synced(progress)
-    if not synced:
-        return False, sync_msg
-    ok, message = _trigger_remote_encode()
-    return ok, (f"{sync_msg}. {message}" if ok and sync_msg else message)
-
-
-def _handle_telegram_encode_request() -> None:
-    with _run_encode_state["lock"]:
-        elapsed = time.time() - _run_encode_state["last_triggered"]
-        if elapsed < 30:
-            _tg_notify(f"방금 요청했어요. {int(30 - elapsed)}초 후 다시 보내주세요.")
-            return
-        _run_encode_state["last_triggered"] = time.time()
-
-    _run_encode_with_notify()
-
-
-def _run_encode_with_notify() -> None:
-    ok, message = _ensure_pc_on_and_trigger_encode(progress=_tg_notify)
-    suffix = "\n끝나면 알아서 PC가 꺼질 거예요." if ok else ""
-    _tg_notify(("✅ " if ok else "❌ ") + message + suffix)
-
-
 def _tg_result(ok: bool, message: str, reply_markup: dict | None = None) -> None:
     _tg_notify(("✅ " if ok else "❌ ") + message, reply_markup)
 
@@ -608,7 +326,7 @@ def _tg_pc_status_text() -> str:
     online = _is_pc_online(GAMING_PC_HOST)
     lines = ["🟢 KCK-GAMING 켜져 있어요" if online else "🔴 KCK-GAMING 꺼져 있어요"]
     if _is_encoding_in_progress():
-        lines.append("🎬 인코딩 진행 중")
+        lines.append("♻️ 재인코딩 진행 중")
     if _has_partial_downloads():
         lines.append("⬇ Drive로 다운로드 중인 파일 있음")
     with _schedule_shutdown_state["lock"]:
@@ -646,8 +364,8 @@ def _handle_telegram_text(text: str) -> None:
         _tg_movie_best()
     elif text in (TG_BTN_OFF, _TG_BTN_OFF_LEGACY):
         _tg_shutdown(force=False)
-    elif text == TG_BTN_ENCODE or any(w in text for w in _TG_ENCODE_TRIGGER_WORDS):
-        _handle_telegram_encode_request()
+    elif text == TG_BTN_REENCODE or any(w in text for w in _TG_REENCODE_WORDS):
+        _tg_notify(_reencode_status_text(), _reencode_buttons())
     else:
         # /start, /menu, 그 밖의 아무 메시지 → 메뉴를 다시 띄워준다 (키보드를 닫았을 때 대비)
         _tg_notify("아래 버튼으로 조작할 수 있어요.", TG_MENU)
@@ -720,7 +438,7 @@ def _tg_show_menu_once(token: str) -> None:
     _tg_handled["menu_tried"][key] = time.time()
     # getUpdates가 성공한 바로 그 토큰으로 보낸다 (그 사이 설정이 바뀌어도 엉뚱한 봇에 안 가게)
     _tg_call("setMyCommands", {"commands": [{"command": "menu", "description": "버튼 메뉴 열기"}]}, token)
-    if not _tg_notify("이제 아래 버튼으로 인코딩·배치·PC 켜기/끄기와 영화 베스트 받기를 할 수 있어요.\n메뉴가 안 보이면 /menu 를 보내세요.", TG_MENU, token):
+    if not _tg_notify("이제 아래 버튼으로 재인코딩·배치·PC 켜기/끄기와 영화 베스트 받기를 할 수 있어요.\n메뉴가 안 보이면 /menu 를 보내세요.", TG_MENU, token):
         return  # 5분 뒤 다시 시도 (그 전에도 봇에 아무 메시지나 보내면 메뉴가 뜸)
     try:
         marker.touch()
@@ -1626,13 +1344,15 @@ def _reencode_host(cmd: str, by: str = "", wait: bool = True) -> bool:
         return False
 
 
-def reencode_start(by: str, progress=None) -> tuple[bool, str]:
+def reencode_start(by: str, progress=None, resume: bool = True) -> tuple[bool, str]:
     """[▶ 시작]: control.json run=true → todo 채우기 → PC 켜기 → ReencodeWorker 실행.
-    워커는 시작할 때 run이 false면 바로 PC를 끄므로, 켜기가 끝난 다음에 워커를 띄운다."""
+    워커는 시작할 때 run이 false면 바로 PC를 끄므로, 켜기가 끝난 다음에 워커를 띄운다.
+    resume=False(새 예능만, re_newstart): 멈춤(STOP)은 그대로 두고 워커를 띄운다 — 워커는 STOP이어도
+    새 예능(N*) 작업은 처리하고 끝나면 PC를 끈다."""
     if not _reencode_lock.acquire(blocking=False):
         return False, "이미 시작하는 중이에요."
     try:
-        if not _reencode_host("resume", by):
+        if resume and not _reencode_host("resume", by):
             return False, "호스트에 시작(control.json)을 기록하지 못했어요."
         _reencode_host("run")                    # todo를 미리 채움 (워커가 바로 집게)
         ok, msg = _wake_pc(progress, "부팅되면 재인코딩을 시작할게요")
@@ -1657,9 +1377,17 @@ def _reencode_trash_emptied() -> tuple[bool, str]:
 
 def _tg_reencode_action(action: str) -> None:
     act = action.split(":", 1)[0]
-    if act in ("re_resume", "re_start"):
+    if act == "re_resume":
         _tg_notify("▶ 재인코딩 시작 중… (PC가 꺼져 있으면 켜요)")
-        ok, msg = reencode_start("telegram" if act == "re_resume" else "auto", _tg_notify)
+        ok, msg = reencode_start("telegram", _tg_notify)
+        _tg_result(ok, msg, _reencode_buttons())
+    elif act == "re_start":       # 새벽에 PC가 켜져 있어 물어본 것
+        _tg_notify("▶ 재인코딩 시작 중…")
+        ok, msg = reencode_start("auto", _tg_notify, resume=reencode_ctl.batch_has_work())
+        _tg_result(ok, msg, _reencode_buttons())
+    elif act == "re_newstart":    # reencode.py가 보낸 '새 예능 n개가 기다려요' 알림의 [▶ 지금 인코딩]
+        _tg_notify("▶ 새 예능 인코딩 시작 중… (PC가 꺼져 있으면 켜요)")
+        ok, msg = reencode_start("telegram", _tg_notify, resume=False)
         _tg_result(ok, msg, _reencode_buttons())
     elif act == "re_stop":
         ok, msg = reencode_stop("telegram")
@@ -1672,7 +1400,8 @@ def _tg_reencode_action(action: str) -> None:
 
 
 def _run_reencode_night() -> None:
-    """새벽 자동 시작. 큐에 할 일이 있으면 시작, PC가 이미 켜져 있으면(쓰는 중일 수 있음) 묻는다."""
+    """새벽 자동 시작. 일괄 재인코딩이나 새 예능에 할 일이 있으면 시작, PC가 이미 켜져 있으면(쓰는 중일 수 있음)
+    묻는다. 새 예능만 남았으면 일괄 쪽 멈춤(STOP)은 그대로 둔다."""
     if not reencode_ctl.has_work():
         return
     if _is_pc_online(GAMING_PC_HOST):
@@ -1682,7 +1411,7 @@ def _run_reencode_night() -> None:
                                          {"text": "건너뛰기", "callback_data": f"dismiss:{now}"}]]})
         return
     _tg_notify("🌙 재인코딩 새벽 자동 시작 — PC를 켤게요.")
-    ok, msg = reencode_start("auto", _tg_notify)
+    ok, msg = reencode_start("auto", _tg_notify, resume=reencode_ctl.batch_has_work())
     _tg_result(ok, msg)
 
 
@@ -2956,7 +2685,7 @@ def settings_status():
         "telegram": tg_status,
         "pc": {
             "host": GAMING_PC_HOST, "user": GAMING_PC_USER, "mac": WOL_MAC, "wol_broadcast": WOL_BROADCAST,
-            "script_path": GAMING_PC_SCRIPT_PATH,
+            "script_path": f"작업 스케줄러 {REENCODE_TASK}",
             "ssh_key": Path(GAMING_PC_SSH_KEY).exists(),
             "online": _is_pc_online(GAMING_PC_HOST),
         },
@@ -3419,21 +3148,14 @@ def pc_status():
     return jsonify({"success": True, "online": online})
 
 
-def _trigger_remote_encode() -> tuple[bool, str]:
-    """KCK-GAMING에서 인코딩 스크립트를 원격으로 시작시킨다 (/run_encode 라우트와
-    텔레그램 리스너가 공유). PC가 켜져있어야 하고, SSH 키가 있어야 한다.
+def _trigger_remote_task(task: str, done_msg: str) -> tuple[bool, str]:
+    """PC 작업 스케줄러 작업을 SSH로 실행 (ReencodeWorker).
 
     SSH 세션 안에서 Start-Process로 직접 띄우면, Windows에서 SSH 세션이
     끊기는 순간 자식 프로세스까지 같이 종료/행(hang)되는 문제가 있어서
     (실제로 재현됨: 프로세스는 떠있는데 CPU 0%, 로그도 전혀 안 남음) 대신
     미리 등록해둔 작업 스케줄러 작업을 트리거만 한다. 작업 스케줄러로 뜬
-    프로세스는 SSH 세션과 완전히 독립적이라 이 문제가 없다.
-    (PC에서 한 번만 Register-ScheduledTask로 "EncodeAll" 작업을 만들어둬야 함)"""
-    return _trigger_remote_task("EncodeAll", "KCK-GAMING에서 인코딩 스크립트를 시작했습니다.")
-
-
-def _trigger_remote_task(task: str, done_msg: str) -> tuple[bool, str]:
-    """PC 작업 스케줄러 작업을 SSH로 실행 (EncodeAll, ReencodeWorker)"""
+    프로세스는 SSH 세션과 완전히 독립적이라 이 문제가 없다."""
     if not Path(GAMING_PC_SSH_KEY).exists():
         return False, "SSH 키가 설정되지 않았습니다 (secrets/kck_gaming_key 없음)."
 
@@ -3462,27 +3184,6 @@ def _trigger_remote_task(task: str, done_msg: str) -> tuple[bool, str]:
         return False, f"SSH 실행 실패(종료코드 {result.returncode}): {detail}"
 
     return True, done_msg
-
-
-@app.route("/run_encode", methods=["POST"])
-def run_encode():
-    auth = authed(request)
-    if auth is not True:
-        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
-
-    with _run_encode_state["lock"]:
-        elapsed = time.time() - _run_encode_state["last_triggered"]
-        if elapsed < 30:
-            return jsonify({"success": False, "message": f"방금 요청했습니다. {int(30 - elapsed)}초 후 다시 시도하세요."}), 429
-        _run_encode_state["last_triggered"] = time.time()
-
-    # PC 부팅 + Drive 동기화 대기로 최대 30분 넘게 걸릴 수 있어 요청을 붙잡지 않고 뒤에서 돌린다.
-    # 진행·결과는 텔레그램 인코딩 요청과 같은 문구로 알린다
-    if not _is_pc_online(GAMING_PC_HOST) or _nas_encode_targets():
-        threading.Thread(target=_tg_safe, args=(_run_encode_with_notify,), daemon=True).start()
-        return jsonify({"success": True, "message": "PC를 켜고, 인코딩할 파일이 PC로 다 올라오면 시작할게요. 진행 상황은 텔레그램으로 알려 드려요."})
-    ok, message = _ensure_pc_on_and_trigger_encode()
-    return jsonify({"success": ok, "message": message}), (200 if ok else 500)
 
 
 def _pc_ssh(command: str):
@@ -3533,7 +3234,7 @@ def _request_cancel_shutdown() -> tuple[bool, str, int]:
 
 @app.route("/cancel_shutdown", methods=["POST"])
 def cancel_shutdown():
-    """encode_all.ps1이 끝나면 5분 후 자동으로 PC를 끄는데(shutdownAfter),
+    """재인코딩 워커가 끝나면 5분 후 자동으로 PC를 끄는데(shutdown /s /t 300),
     인코딩이 끝났어도 PC를 계속 쓰고 싶을 때 그 예약 종료를 취소한다.
     자주 쓰는 기능이 아니라 헤더 버튼이 아니라 인코딩 관리 페이지 본문에만
     둔다."""
@@ -3808,80 +3509,11 @@ def downloads_data():
 
 @app.route("/encode_log", methods=["GET"])
 def encode_log_page():
-    """PC(KCK-GAMING)에서 encode_all.ps1이 Synology Drive로 동기화해주는
-    _encode_log.txt를 그대로 보여준다. run_all 로그와 달리 날짜별 파일이
-    아니라 계속 이어지는 단일 파일이라 날짜 선택 없이 전체를 tail한다."""
+    """작업 > 인코딩: 재인코딩 워커(예능 일괄·새로 받은 예능) 화면. 예전 PC encode_all 로그는 없앴다(10-27)."""
     auth = authed(request)
     if auth is not True:
         return auth
-
-    dir_mounted = ENCODE_LOG_PATH.parent.is_dir()
-    content = ""
-    file_size = 0
-    log_exists = ENCODE_LOG_PATH.exists()
-    if log_exists:
-        file_size = ENCODE_LOG_PATH.stat().st_size
-        try:
-            with ENCODE_LOG_PATH.open("rb") as f:
-                if file_size > LOG_INITIAL_MAX_BYTES:
-                    f.seek(file_size - LOG_INITIAL_MAX_BYTES)
-                raw = f.read()
-            content = raw.decode("utf-8", errors="replace")
-        except Exception as e:
-            content = f"[로그 파일을 읽는 중 오류: {e}]"
-
-    return render_template(
-        "encode_log.html",
-        authed=True,
-        content=content,
-        initial_offset=file_size,
-        log_exists=log_exists,
-        dir_mounted=dir_mounted,
-        log_path=str(ENCODE_LOG_PATH),
-    )
-
-
-@app.route("/encode_log/tail", methods=["GET"])
-def encode_log_tail():
-    auth = authed(request)
-    if auth is not True:
-        return jsonify({"error": "로그인이 필요합니다."}), 401
-
-    try:
-        offset = int(request.args.get("offset", "0"))
-    except ValueError:
-        offset = 0
-
-    if not ENCODE_LOG_PATH.exists():
-        return jsonify({"exists": False, "content": "", "offset": 0})
-
-    size = ENCODE_LOG_PATH.stat().st_size
-    if offset < 0 or offset > size:
-        offset = 0  # 파일이 교체되었거나 최초 조회
-
-    new_text = ""
-    if offset < size:
-        try:
-            with ENCODE_LOG_PATH.open("rb") as f:
-                f.seek(offset)
-                raw = f.read()
-            new_text = raw.decode("utf-8", errors="replace")
-        except Exception as e:
-            return jsonify({"error": f"로그 파일을 읽는 중 오류: {e}"}), 500
-
-    return jsonify({"exists": True, "content": new_text, "offset": size})
-
-
-@app.route("/encode_log/download", methods=["GET"])
-def encode_log_download():
-    auth = authed(request)
-    if auth is not True:
-        return auth
-
-    if not ENCODE_LOG_PATH.exists():
-        return abort(404)
-
-    return send_file(ENCODE_LOG_PATH, mimetype="text/plain", as_attachment=True, download_name=ENCODE_LOG_PATH.name)
+    return render_template("encode_log.html", authed=True)
 
 
 @app.route("/search_tmdb", methods=["POST"])

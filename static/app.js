@@ -1,5 +1,5 @@
 // Media Router 공통 스크립트 (2026-10-16 레이아웃 개편)
-// 모든 페이지에서 쓰는 알림(showToast)과 PC 제어 시트(켜기/상태/끄기/인코딩 시작).
+// 모든 페이지에서 쓰는 알림(showToast)과 PC 제어 시트(켜기/상태/끄기).
 // 예전에는 템플릿마다 같은 함수가 복사돼 있었다.
 
 function showToast(message, type) {

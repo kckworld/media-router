@@ -95,7 +95,7 @@ if [ "$PROCESSING_PAUSED" -eq 0 ]; then
     /volume1/web/video_auto/drama_name.sh || echo "$(ra_ts) drama_name.sh 실행 중 오류 발생 (계속 진행)"
 fi
 
-# 1.5 예능 일괄 재인코딩 (2026-10-27): 인코딩 끝난 것 회수·교체 + Drive/인코딩에 다음 묶음 넣기
+# 1.5 재인코딩 (2026-10-27): PC 워커가 끝낸 것 회수·교체 + todo 채우기 (Media Router가 1분마다도 부름)
 #     (/volume1/docker/reencode/reencode.py, 미디어 정리 세션). drama_name은 [재인코딩] 파일을 건너뜀
 /volume1/docker/run-logged.sh reencode python3 /volume1/docker/reencode/reencode.py run || true
 
