@@ -151,7 +151,9 @@
     function reEsc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
     function reGb(n) { return n == null ? "-" : (n / 1073741824).toFixed(1) + "GB"; }
     var RE = null, reTab = "done";
-    var RE_WORKER = { encoding: ["인코딩 중", "running"], waiting: ["대기", "idle"], shutting_down: ["끝 · PC 꺼지는 중", "unknown"] };
+    // PC 워커는 원본을 SSD로 복사(copying) → 인코딩 → 결과를 NAS로 올림(uploading)
+    var RE_WORKER = { copying: ["원본 복사 중", "running"], encoding: ["인코딩 중", "running"], uploading: ["결과 올리는 중", "running"],
+                      waiting: ["대기", "idle"], shutting_down: ["끝 · PC 꺼지는 중", "unknown"] };
     function setReTab(t) {
       reTab = t;
       document.querySelectorAll("[data-re]").forEach(function(b) { b.classList.toggle("on", b.getAttribute("data-re") === t); });

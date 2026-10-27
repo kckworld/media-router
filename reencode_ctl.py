@@ -35,7 +35,10 @@ def available() -> bool:
 
 
 def running() -> bool:
-    return bool((_read(WORK / "control.json", {}) or {}).get("run")) and not STOP.exists()
+    """reencode.py running()과 같게 세 가지를 다 본다. PC 워커는 Windows SMB 캐시 때문에 control.json을
+    몇 분씩 옛 값으로 읽어서(10-27) 작업 폴더의 STOP 파일만 본다 — 그래서 시작·종료는 꼭 reencode.py로."""
+    return (bool((_read(WORK / "control.json", {}) or {}).get("run"))
+            and not STOP.exists() and not (WORK / "STOP").exists())
 
 
 def worker() -> dict:

@@ -132,6 +132,13 @@ def test_shutting_down_notified_once(re_env):
     assert not web_admin._reencode_watch_worker(state)              # 같은 하트비트는 한 번만
 
 
+def test_running_also_checks_work_stop(re_env):
+    (re_env["work"] / "control.json").write_text(json.dumps({"run": True}), encoding="utf-8")
+    assert reencode_ctl.running()
+    (re_env["work"] / "STOP").write_text("", encoding="utf-8")       # PC 워커가 보는 멈춤 신호
+    assert not reencode_ctl.running()
+
+
 def test_needs_collect(re_env):
     assert not reencode_ctl.needs_collect()
     (re_env["work"] / "done" / "0004.json").write_text("{}", encoding="utf-8")
