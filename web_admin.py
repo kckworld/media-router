@@ -1302,6 +1302,37 @@ REENCODE_NIGHT_AT = os.getenv("REENCODE_NIGHT_AT", "03:00")
 REENCODE_MORNING_AT = os.getenv("REENCODE_MORNING_AT", "08:00")
 REENCODE_TASK = "ReencodeWorker"
 REENCODE_SCHED_PATH = DATA_DIR / "reencode_sched.json"
+# 설정 > 재인코딩 카드에서 바꾸는 새벽 자동 시작·아침 요약 (10-27). 없으면 위 기본값으로 둘 다 켬
+REENCODE_SETTINGS_PATH = DATA_DIR / "reencode_settings.json"
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_reencode_sched_lock = threading.Lock()   # 1분 루프와 [지금 파일만 끝나면 PC 종료]가 같은 파일을 고친다
+REENCODE_OFF_AFTER_TTL = 6 * 3600          # 그 안에 끝나지 않으면 PC 종료 예약을 버린다
+
+
+def reencode_settings() -> dict:
+    s = {"night_on": True, "night_at": REENCODE_NIGHT_AT, "morning_on": True, "morning_at": REENCODE_MORNING_AT}
+    try:
+        saved = json.loads(REENCODE_SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    for k in ("night_on", "morning_on"):
+        if isinstance(saved.get(k), bool):
+            s[k] = saved[k]
+    for k in ("night_at", "morning_at"):
+        if _TIME_RE.match(str(saved.get(k) or "")):
+            s[k] = saved[k]
+    return s
+
+
+def _reencode_sched_load() -> dict:
+    try:
+        return json.loads(REENCODE_SCHED_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _reencode_sched_save(state: dict) -> None:
+    REENCODE_SCHED_PATH.write_text(json.dumps(state), encoding="utf-8")
 _reencode_lock = threading.Lock()   # 시작 버튼 연타 방지
 
 
@@ -1370,6 +1401,59 @@ def reencode_stop(by: str) -> tuple[bool, str]:
     return True, "종료를 요청했어요. 지금 인코딩 중인 파일까지 하고 멈춘 뒤 5분 뒤 PC가 꺼져요."
 
 
+def _reencode_item(job_id: str) -> dict:
+    q = reencode_ctl._read(reencode_ctl.QUEUE, {}) or {}
+    return next((it for it in (q.get("items") or []) + (q.get("new_items") or []) if it.get("id") == job_id), {})
+
+
+def reencode_off_after_current(by: str) -> tuple[bool, str]:
+    """[⏹ 지금 파일만 끝나면 PC 종료]: 일괄 재인코딩을 멈추고, 지금 파일이 NAS 검사를 통과해
+    원본 자리로 들어간 것(queue.json status done)을 확인한 뒤 PC를 끈다 - 루프의 _reencode_off_after"""
+    w = reencode_ctl.worker()
+    job_id = str(w.get("current") or "")
+    if not job_id or not _is_encoding_in_progress():
+        return False, "지금 인코딩 중인 파일이 없어요."
+    ok, msg = reencode_stop(by)
+    if not ok:
+        return False, msg
+    it = _reencode_item(job_id)
+    with _reencode_sched_lock:
+        state = _reencode_sched_load()
+        state["off_after"] = {"id": job_id, "since": int(time.time()), "attempts": it.get("attempts", 0)}
+        _reencode_sched_save(state)
+    name = Path(it.get("src") or "").name or f"#{job_id}"
+    return True, f"'{name}' 인코딩이 끝나고 NAS에서 검사·교체까지 확인되면 PC를 1분 뒤 꺼요. 검사에서 실패하면 끄지 않고 알려 드려요."
+
+
+def _reencode_off_after(state: dict) -> bool:
+    """기다리던 파일이 done이면 PC 종료, 실패(재시도로 돌아간 것 포함)면 알리고 PC는 켜 둔다. 바뀌었으면 True"""
+    oa = state.get("off_after")
+    if not oa:
+        return False
+    it = _reencode_item(oa.get("id", ""))
+    name = Path(it.get("src") or "").name or f"#{oa.get('id')}"
+    if it.get("status") == "done":
+        state.pop("off_after")
+        ok, msg, _, _ = _request_pc_shutdown(force=True)
+        if ok:
+            _tg_notify(f"✅ '{name}' NAS 검사·교체까지 끝났어요 — PC를 1분 뒤 꺼요.", _tg_confirm(("⏸ PC 종료 취소", "cancel_off")))
+        else:
+            _tg_notify(f"✅ '{name}' NAS 검사·교체까지 끝났는데 PC를 끄지 못했어요: {msg}")
+        return True
+    if it.get("status") == "failed" or it.get("attempts", 0) > oa.get("attempts", 0):
+        state.pop("off_after")
+        # 워커가 멈추면서 걸어 둔 5분 뒤 종료도 취소한다 - 실패 원인을 PC에서 볼 수 있게
+        cancelled, _, _ = _request_cancel_shutdown()
+        _tg_notify(f"⚠️ '{name}' NAS 검사에서 실패해서 PC를 끄지 않았어요.\n{it.get('msg') or ''}".rstrip()
+                   + ("" if cancelled else "\n(워커의 5분 뒤 자동 종료는 취소하지 못했어요)"))
+        return True
+    if time.time() - oa.get("since", 0) > REENCODE_OFF_AFTER_TTL:
+        state.pop("off_after")
+        _tg_notify(f"⌛ '{name}'이(가) {REENCODE_OFF_AFTER_TTL // 3600}시간 안에 끝나지 않아 'PC 종료' 예약을 버렸어요.")
+        return True
+    return False
+
+
 def _reencode_trash_emptied() -> tuple[bool, str]:
     if not _reencode_host("trash-emptied"):
         return False, "호스트에 기록하지 못했어요."
@@ -1416,11 +1500,11 @@ def _run_reencode_night() -> None:
     _tg_result(ok, msg)
 
 
-def _reencode_due(slot: str, now: datetime, state: dict) -> bool:
+def _reencode_due(slot: str, now: datetime, state: dict, key: str = "") -> bool:
     """오늘 그 시각이 지났고(1시간 안), 오늘 아직 안 했으면 True - 컨테이너 재시작으로 두 번 돌지 않게 기록"""
     hh, mm = (int(x) for x in slot.split(":"))
     at = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    return at <= now < at + timedelta(hours=1) and state.get(slot) != now.strftime("%Y-%m-%d")
+    return at <= now < at + timedelta(hours=1) and state.get(key or slot) != now.strftime("%Y-%m-%d")
 
 
 def _reencode_watch_worker(state: dict) -> bool:
@@ -1430,13 +1514,15 @@ def _reencode_watch_worker(state: dict) -> bool:
     if w.get("state") != "shutting_down" or state.get("worker_notified") == key:
         return False
     state["worker_notified"] = key
+    if state.get("off_after"):   # [지금 파일만 끝나면 PC 종료]가 결과를 따로 알린다
+        return True
     _tg_notify("♻️ 재인코딩 끝 — 5분 후 PC가 꺼져요.\n" + reencode_ctl.state().get("summary", ""),
                _tg_confirm(("⏸ PC 종료 취소", "cancel_off")))
     return True
 
 
 def _reencode_scheduler_loop() -> None:
-    """1분마다: 결과가 있으면 collect, PC 종료 예고 알림, 03:00 자동 시작, 08:00 요약"""
+    """1분마다: 결과가 있으면 collect, PC 종료 예고 알림, 지금 파일 끝나면 종료, 새벽 자동 시작, 아침 요약"""
     while True:
         time.sleep(60)
         try:
@@ -1445,20 +1531,20 @@ def _reencode_scheduler_loop() -> None:
             if reencode_ctl.needs_collect():
                 _reencode_host("run", wait=False)
             now = datetime.now(APP_TZ)
-            try:
-                state = json.loads(REENCODE_SCHED_PATH.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                state = {}
-            changed = _reencode_watch_worker(state)
-            for slot, job in ((REENCODE_NIGHT_AT, _run_reencode_night),
-                              (REENCODE_MORNING_AT, lambda: _tg_notify(_reencode_status_text("☀️ 예능 재인코딩 아침 요약"),
-                                                                       _reencode_buttons()))):
-                if _reencode_due(slot, now, state):
-                    state[slot] = now.strftime("%Y-%m-%d")
-                    changed = True
-                    threading.Thread(target=_tg_safe, args=(job,), daemon=True).start()
-            if changed:
-                REENCODE_SCHED_PATH.write_text(json.dumps(state), encoding="utf-8")
+            cfg = reencode_settings()
+            with _reencode_sched_lock:
+                state = _reencode_sched_load()
+                changed = _reencode_watch_worker(state)
+                changed = _reencode_off_after(state) or changed
+                for key, job in (("night", _run_reencode_night),
+                                 ("morning", lambda: _tg_notify(_reencode_status_text("☀️ 예능 재인코딩 아침 요약"),
+                                                                _reencode_buttons()))):
+                    if cfg[f"{key}_on"] and _reencode_due(cfg[f"{key}_at"], now, state, key):
+                        state[key] = now.strftime("%Y-%m-%d")
+                        changed = True
+                        threading.Thread(target=_tg_safe, args=(job,), daemon=True).start()
+                if changed:
+                    _reencode_sched_save(state)
         except Exception:
             app.logger.warning("재인코딩 예약 작업 오류")
 
@@ -1474,7 +1560,7 @@ def api_reencode():
     st = reencode_ctl.state()
     st.update(ok=True, log=reencode_ctl.log_tail(reencode_ctl.LOG),
               worker_log=reencode_ctl.log_tail(reencode_ctl.WORK / "worker.log"),
-              night_at=REENCODE_NIGHT_AT, morning_at=REENCODE_MORNING_AT)
+              off_after=_reencode_sched_load().get("off_after"), **reencode_settings())
     return jsonify(st)
 
 
@@ -1494,6 +1580,15 @@ def api_reencode_stop():
         return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
     ok, msg = reencode_stop("web")
     return jsonify({"ok": ok, "message": msg, "error": None if ok else msg}), (200 if ok else 500)
+
+
+@app.route("/api/reencode/off-after-current", methods=["POST"])
+def api_reencode_off_after_current():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    ok, msg = reencode_off_after_current("web")
+    return jsonify({"ok": ok, "message": msg, "error": None if ok else msg}), (200 if ok else 409)
 
 
 @app.route("/api/reencode/trash-emptied", methods=["POST"])
@@ -2495,7 +2590,18 @@ def settings():
                 "setgid_dirs": request.form.get("own_setgid") == "1",
                 "enforce_inherit": request.form.get("own_enforce") == "1",
             }
+            re_cfg = {"night_on": request.form.get("re_night_on") == "1",
+                      "night_at": request.form.get("re_night_at", "").strip(),
+                      "morning_on": request.form.get("re_morning_on") == "1",
+                      "morning_at": request.form.get("re_morning_at", "").strip()}
+            if not (_TIME_RE.match(re_cfg["night_at"]) and _TIME_RE.match(re_cfg["morning_at"])):
+                raise ValueError("재인코딩 시각은 03:00처럼 입력하세요.")
+            req_code = request.form.get("request_code", "").strip()
+            if len(req_code) > 20:
+                raise ValueError("요청 페이지 코드는 20자까지예요.")
             save_cfg(cfg)
+            REENCODE_SETTINGS_PATH.write_text(json.dumps(re_cfg), encoding="utf-8")
+            MEDIA_REQUEST_SETTINGS.write_text(json.dumps({"code": req_code}, ensure_ascii=False), encoding="utf-8")
             saved = True
         except Exception as e:
             if isinstance(e, ValueError):
@@ -2509,6 +2615,7 @@ def settings():
         own_file_mode=mode_display(own.get("file_mode"), "664"),
         own_dir_mode=mode_display(own.get("dir_mode"), "775"),
         tmdb_env_override=bool(os.getenv("TMDB_API_KEY", "").strip()),
+        reencode=reencode_settings(), request_code=_request_code(), bt4g_on=BT4G_ENABLED_PATH.exists(),
         cfg=cfg, categories=CATEGORIES, saved=saved, error=error)
 
 @app.route("/settings/check_paths", methods=["POST"])
@@ -2652,6 +2759,20 @@ def settings_claude_sessions():
     return jsonify(result), (200 if result.get("ok") else 502)
 
 
+def _deepl_last() -> dict:
+    """DeepL 키는 호스트의 auto_subtitles.py가 쓴다(컨테이너엔 없음). 자동 자막 기록에서 마지막 번역만 보여준다"""
+    try:
+        subs = json.loads((DATA_DIR / "auto_subs.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    done = [v for v in subs.values() if isinstance(v, dict) and v.get("chars")]
+    if not done:
+        return {"count": 0}
+    last = max(done, key=lambda v: v.get("at", 0))
+    return {"count": len(done), "at": datetime.fromtimestamp(last["at"], APP_TZ).strftime("%Y-%m-%d %H:%M"),
+            "chars": last["chars"], "name": Path(last.get("path") or "").name}
+
+
 @app.route("/settings/status", methods=["GET"])
 def settings_status():
     """.env/docker-compose.yml로만 바꿀 수 있는 연동 설정을 읽기 전용으로 보여준다.
@@ -2692,6 +2813,9 @@ def settings_status():
         },
         "batch": {"ssh_key": Path(RUN_BATCH_SSH_KEY).exists(), "host": f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}:{RUN_BATCH_SSH_PORT}"},
         "qbit": qbit,
+        "worker": reencode_ctl.worker(),
+        "kobis": bool(KOBIS_API_KEY),
+        "deepl": _deepl_last(),
         "tmdb_source": "env" if os.getenv("TMDB_API_KEY", "").strip() else ("settings" if (load_cfg().get("tmdb_api_key") or "").strip() else "none"),
     })
 

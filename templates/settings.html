@@ -61,16 +61,15 @@
     .status-box dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
     .status-box dt { color: var(--muted); }
     .status-box dd { margin: 0; word-break: break-all; }
+    .set-fold > summary { cursor: pointer; list-style: none; margin-bottom: 0; }
+    .set-fold > summary::-webkit-details-marker { display: none; }
+    .set-fold[open] > summary { margin-bottom: 6px; }
+    .set-fold-mark { font-size: 12px; font-weight: 600; color: var(--accent); margin-left: 6px; }
+    .set-fold-mark::before { content: '▸ '; }
+    .set-fold[open] .set-fold-mark::before { content: '▾ '; }
     .set-savebar { position: sticky; bottom: 12px; z-index: 50; display: flex; justify-content: flex-end; align-items: center; gap: 14px; background: var(--bg-card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px; box-shadow: var(--shadow-lg); }
     .set-dirty { font-size: 13px; font-weight: 600; color: var(--warn); visibility: hidden; }
     .set-dirty.show { visibility: visible; }
-    .sess-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-    .sess-item { display: flex; align-items: center; gap: 12px; background: var(--bg-solid); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
-    .sess-main { flex: 1; min-width: 0; }
-    .sess-name { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
-    .sess-meta { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
-    .sess-live { font-size: 12px; font-weight: 600; color: var(--success-hover); white-space: nowrap; }
-    .sess-item .btn { white-space: nowrap; }
     @media (max-width: 640px) {
       .set-card { padding: 18px 16px; }
       .set-actions { width: 100%; margin-top: 0; }
@@ -169,14 +168,68 @@
       <section class="card set-card">
         <div class="set-head">
           <div>
-            <div class="set-title">🔐 소유권 / 권한</div>
-            <div class="set-desc">옮긴 파일·폴더의 주인과 권한을 맞춰서 Plex/Jellyfin이 읽을 수 있게 해요.</div>
+            <div class="set-title">♻️ 재인코딩</div>
+            <div class="set-desc">예능 일괄 재인코딩과 새로 받은 예능 인코딩을 PC(KCK-GAMING)가 언제 하는지 정해요. 시작·멈춤은 <a href="/encode_log">작업 &gt; 인코딩</a>에서 해요.</div>
           </div>
-          <label class="set-switch">
-            <input type="checkbox" name="own_apply" value="1" {{ 'checked' if cfg.ownership and cfg.ownership.apply else '' }}>
-            <span>적용</span>
+        </div>
+        <div class="set-row">
+          <label class="set-check" style="min-width:220px;">
+            <input type="checkbox" name="re_night_on" value="1" {{ 'checked' if reencode.night_on else '' }}>
+            <span><strong>새벽 자동 시작</strong><small>할 일이 남았으면 PC를 켜서 시작해요. PC가 켜져 있으면 텔레그램으로 물어봐요.</small></span>
+          </label>
+          <div class="field" style="width:130px;">
+            <label class="muted" for="reNightAt">시각</label>
+            <input type="time" id="reNightAt" name="re_night_at" value="{{ reencode.night_at }}" required>
+          </div>
+        </div>
+        <div class="set-row">
+          <label class="set-check" style="min-width:220px;">
+            <input type="checkbox" name="re_morning_on" value="1" {{ 'checked' if reencode.morning_on else '' }}>
+            <span><strong>아침 진행 요약</strong><small>텔레그램으로 완료·남은 개수와 줄인 용량을 보내요.</small></span>
+          </label>
+          <div class="field" style="width:130px;">
+            <label class="muted" for="reMorningAt">시각</label>
+            <input type="time" id="reMorningAt" name="re_morning_at" value="{{ reencode.morning_at }}" required>
+          </div>
+        </div>
+        <div class="set-hint">새벽 시작은 그 시각부터 1시간 안에 한 번만 해요(NAS 재시작으로 두 번 돌지 않아요).</div>
+      </section>
+
+      <section class="card set-card">
+        <div class="set-head">
+          <div>
+            <div class="set-title">📥 자동 다운로드 · 요청 페이지</div>
+            <div class="set-desc">원래 화면(<a href="/bt4g_keywords">분류 규칙 &gt; 예능 키워드</a>, <a href="/requests">작업 &gt; 요청</a>)에서도 똑같이 바꿀 수 있어요.</div>
+          </div>
+        </div>
+        <div class="set-row">
+          <label class="set-check" style="flex:1; min-width:240px;">
+            <input type="checkbox" id="bt4gToggle" {{ 'checked' if bt4g_on else '' }} onchange="setBt4g(this.checked)" data-write>
+            <span><strong>BT4G 검색도 같이 쓰기</strong><small id="bt4gState">{{ '켜짐 — 티프리카와 BT4G 둘 다 받아요' if bt4g_on else '꺼짐 — 티프리카만 받아요' }} (누르면 바로 바뀌어요)</small></span>
           </label>
         </div>
+        <div class="set-row">
+          <div class="field" style="flex:1; min-width:200px; max-width:320px;">
+            <label class="muted" for="requestCodeInput">단톡방 요청 페이지 코드</label>
+            <input type="text" id="requestCodeInput" name="request_code" value="{{ request_code }}" maxlength="20" autocomplete="off" placeholder="비우면 코드 없이 요청 가능">
+          </div>
+        </div>
+        <div class="set-hint">요청 페이지(<a href="https://request.kckworld.com/" target="_blank" rel="noopener">request.kckworld.com ↗</a>)에서 요청할 때 넣는 코드예요. 단톡방 공지에 적어 두세요.</div>
+      </section>
+
+      {# 거의 안 바꾸는 값이라 접어 둔다 (10-27) #}
+      <details class="card set-card set-fold">
+        <summary class="set-head">
+          <div>
+            <div class="set-title">🔐 소유권 / 권한 <span class="set-fold-mark">펼치기</span></div>
+            <div class="set-desc">옮긴 파일·폴더의 주인과 권한을 맞춰서 Plex/Jellyfin이 읽을 수 있게 해요.</div>
+          </div>
+          <span class="set-pill">{{ ('적용 중 · ' ~ (cfg.ownership.user or 'plex') ~ ':' ~ (cfg.ownership.group or 'users') ~ ' ' ~ own_file_mode ~ '/' ~ own_dir_mode) if cfg.ownership and cfg.ownership.apply else '적용 안 함' }}</span>
+        </summary>
+        <label class="set-switch" style="margin-top:8px;">
+          <input type="checkbox" name="own_apply" value="1" {{ 'checked' if cfg.ownership and cfg.ownership.apply else '' }}>
+          <span>적용</span>
+        </label>
         <div class="set-grid">
           <div class="field">
             <label class="muted" for="ownUser">사용자</label>
@@ -207,13 +260,13 @@
             <span><strong>ACL 상속 강제</strong><small>Synology 공유폴더 권한(ACL)을 하위 항목에 다시 적용해요</small></span>
           </label>
         </div>
-      </section>
+      </details>
 
       <section class="card set-card">
         <div class="set-head">
           <div>
             <div class="set-title">🖥️ 연결 상태 <span class="set-ro">읽기 전용</span></div>
-            <div class="set-desc">인코딩 PC·qBittorrent 설정은 <code>docker-compose.yml</code>/<code>.env</code>에서 바꿔요. 여기서는 제대로 연결되는지만 확인해요.</div>
+            <div class="set-desc">인코딩 PC·qBittorrent·API 키는 <code>docker-compose.yml</code>/<code>.env</code>에서 바꿔요. 여기서는 제대로 연결되는지만 확인해요.</div>
           </div>
           <button type="button" class="btn small" id="statusRefreshBtn" onclick="loadSettingsStatus()">↻ 새로고침</button>
         </div>
@@ -222,6 +275,8 @@
           <div class="status-box"><div class="status-name">인코딩 PC (KCK-GAMING)</div><dl id="statusPc"><dt>상태</dt><dd>확인 중...</dd></dl></div>
           <div class="status-box"><div class="status-name">qBittorrent</div><dl id="statusQbit"><dt>상태</dt><dd>확인 중...</dd></dl></div>
           <div class="status-box"><div class="status-name">배치 실행 (호스트 SSH)</div><dl id="statusBatch"><dt>상태</dt><dd>확인 중...</dd></dl></div>
+          <div class="status-box"><div class="status-name">재인코딩 워커 (PC)</div><dl id="statusWorker"><dt>상태</dt><dd>확인 중...</dd></dl></div>
+          <div class="status-box"><div class="status-name">API 키 (KOBIS · DeepL)</div><dl id="statusKeys"><dt>상태</dt><dd>확인 중...</dd></dl></div>
         </div>
       </section>
 
@@ -231,62 +286,6 @@
       </div>
     </form>
 
-    {# 저장 폼과 따로 둔다: 코드 입력칸에서 Enter를 눌러도 설정 저장이 되지 않게 #}
-    <div class="settings-wrap" style="margin-top:16px;">
-      <section class="card set-card">
-        <div class="set-head">
-          <div>
-            <div class="set-title">🤖 Claude 로그인 (NAS)</div>
-            <div class="set-desc">NAS 백그라운드 Claude 세션의 로그인이 만료됐을 때 여기서 다시 로그인해요. 휴대폰 브라우저만 있으면 돼요.</div>
-          </div>
-          <span class="set-pill" id="claudePill">확인 중...</span>
-        </div>
-        <div class="set-actions">
-          <button type="button" class="btn small" id="claudeStartBtn" onclick="claudeLoginStart()">🔑 로그인 시작</button>
-          <button type="button" class="btn small" onclick="loadClaudeLogin()">↻ 상태 확인</button>
-        </div>
-        <div id="claudeStep" style="display:none;">
-          <div class="set-note">① 아래 버튼으로 로그인 페이지를 열어 로그인하세요. ② 마지막 화면에 나온 코드를 복사해 아래에 붙여 넣으세요. (15분 안에)</div>
-          <div class="set-actions"><a class="btn small primary" id="claudeUrlLink" href="#" target="_blank" rel="noopener">로그인 페이지 열기 ↗</a></div>
-          <div class="set-row">
-            <div class="field" style="flex:1; min-width:240px;">
-              <label class="muted" for="claudeCodeInput">코드</label>
-              <input type="text" id="claudeCodeInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="브라우저에 나온 코드 붙여 넣기"
-                     onkeydown="if (event.key === 'Enter') claudeLoginCode()">
-            </div>
-            <div class="set-actions">
-              <button type="button" class="btn small primary" id="claudeCodeBtn" onclick="claudeLoginCode()">확인</button>
-            </div>
-          </div>
-        </div>
-        <div class="set-result" id="claudeResult"></div>
-        <div class="set-hint">만료되면 텔레그램으로 "claude-bg-watchdog 실패 … AUTH FAIL" 알림이 와요. 로그인되면 꺼진 백그라운드 세션도 바로 다시 띄워요.</div>
-      </section>
-
-      <section class="card set-card">
-        <div class="set-head">
-          <div>
-            <div class="set-title">🗂️ Claude 세션 (NAS)</div>
-            <div class="set-desc">8시간 동안 안 쓴 세션은 자동으로 꺼지지만 대화는 남아 있어요. 여기서 다시 열면 앱에서 이어서 대화할 수 있어요.</div>
-          </div>
-          <span class="set-pill" id="sessPill">확인 중...</span>
-        </div>
-        <div class="set-row">
-          <div class="field" style="flex:1; min-width:200px;">
-            <label class="muted" for="sessNameInput">새 세션 이름</label>
-            <input type="text" id="sessNameInput" maxlength="40" autocomplete="off" placeholder="예: media-router 작업 (비우면 날짜로)"
-                   onkeydown="if (event.key === 'Enter') claudeSessionNew()">
-          </div>
-          <div class="set-actions">
-            <button type="button" class="btn small primary" id="sessNewBtn" onclick="claudeSessionNew()" data-write>＋ 새 세션</button>
-            <button type="button" class="btn small" onclick="loadClaudeSessions()">↻ 새로 고침</button>
-          </div>
-        </div>
-        <div class="set-result" id="sessResult"></div>
-        <ul class="sess-list" id="sessList"></ul>
-        <div class="set-hint">다시 연 세션도 8시간 쉬면 또 꺼져요. 같은 대상(컨테이너, media-router 등)을 두 세션이 동시에 건드리지 않게 해 주세요.</div>
-      </section>
-    </div>
 {% endblock %}
 
 {% block scripts %}
@@ -415,119 +414,36 @@
             ['SSH 키', okText(d.batch.ssh_key, '있음', '없음 (secrets/run_batch_key)')],
             ['대상', escapeHtml(d.batch.host)]
           ]);
+          var w = d.worker || {};
+          var WORKER_STATE = { copying: '원본 받는 중', encoding: '인코딩 중', uploading: '결과 올리는 중', waiting: '대기', shutting_down: '끝남 (PC 종료 예약)' };
+          statusRows(document.getElementById('statusWorker'), !w.updated ? [['하트비트', '<span class="muted">기록 없음</span>']] : [
+            ['상태', escapeHtml(WORKER_STATE[w.state] || w.state || '?') + (w.current ? ' · #' + escapeHtml(w.current) : '')],
+            ['마지막 신호', escapeHtml(w.updated) + ' <span class="muted">(PC가 켜져 있을 때만 갱신)</span>']
+          ]);
+          var dl = d.deepl || {};
+          statusRows(document.getElementById('statusKeys'), [
+            ['KOBIS', okText(d.kobis, '설정됨 (영화 관객수)', '없음 (.env의 KOBIS_API_KEY)')],
+            ['DeepL', dl.at ? '<span class="ps-ok">✓ 마지막 번역 ' + escapeHtml(dl.at) + '</span> <span class="muted">(' + dl.chars + '자, 지금까지 ' + dl.count + '편)</span>'
+                            : '<span class="muted">아직 번역 기록 없음</span>'],
+          ]);
         })
         .catch(function(e) { showToast('연결 상태 확인 실패: ' + e.message, 'error'); })
         .finally(function() { btn.disabled = false; });
     }
 
-    // ===== Claude 로그인 (NAS 백그라운드 세션 재로그인) =====
-    function showClaudeStep(url) {
-      document.getElementById('claudeStep').style.display = url ? '' : 'none';
-      if (url) document.getElementById('claudeUrlLink').href = url;
-    }
-
-    function loadClaudeLogin() {
-      var pill = document.getElementById('claudePill');
-      fetch('/settings/claude_login')
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          if (!d.ok) { pill.textContent = '확인 실패'; setResult('claudeResult', false, d.message || '응답이 없어요'); return; }
-          var a = d.auth || {};
-          pill.textContent = (a.loggedIn && a.authMethod === 'claude.ai') ? '로그인됨' + (a.subscriptionType ? ' (' + a.subscriptionType + ')' : '') : '로그인 필요';
-          showClaudeStep(d.pending ? d.url : '');
-        })
-        .catch(function(e) { pill.textContent = '확인 실패'; setResult('claudeResult', false, '요청 중 오류: ' + e); });
-    }
-
-    function claudeLoginStart() {
-      var btn = document.getElementById('claudeStartBtn');
-      btn.disabled = true;
-      postJson('/settings/claude_login', { action: 'start' })
+    function setBt4g(enabled) {
+      var toggle = document.getElementById('bt4gToggle');
+      toggle.disabled = true;
+      postJson('/api/bt4g_enabled', { enabled: enabled })
         .then(function(res) {
-          if (res.data.ok) {
-            showClaudeStep(res.data.url);
-            document.getElementById('claudeCodeInput').value = '';
-            setResult('claudeResult', true, '로그인 페이지를 열어 주세요.');
-          } else {
-            setResult('claudeResult', false, res.data.message || '시작하지 못했어요');
-          }
+          if (!res.ok) { toggle.checked = !enabled; showToast(res.data.error || '바꾸지 못했어요', 'error'); return; }
+          var on = !!res.data.enabled;
+          toggle.checked = on;
+          document.getElementById('bt4gState').textContent = (on ? '켜짐 — 티프리카와 BT4G 둘 다 받아요' : '꺼짐 — 티프리카만 받아요') + ' (누르면 바로 바뀌어요)';
+          showToast(on ? 'BT4G를 켰어요. 다음 배치(20분 이내)부터 검색해요.' : 'BT4G를 껐어요. 티프리카만 받아요.', 'success');
         })
-        .catch(function(e) { setResult('claudeResult', false, '요청 중 오류: ' + e); })
-        .finally(function() { btn.disabled = false; });
-    }
-
-    function claudeLoginCode() {
-      var btn = document.getElementById('claudeCodeBtn');
-      var code = document.getElementById('claudeCodeInput').value.trim();
-      if (!code) { setResult('claudeResult', false, '코드를 붙여 넣어 주세요.'); return; }
-      btn.disabled = true; btn.textContent = '확인 중...';
-      postJson('/settings/claude_login', { action: 'code', code: code })
-        .then(function(res) {
-          setResult('claudeResult', res.data.ok, res.data.message || '응답이 없어요');
-          if (res.data.ok) showClaudeStep('');
-          loadClaudeLogin();
-        })
-        .catch(function(e) { setResult('claudeResult', false, '요청 중 오류: ' + e); })
-        .finally(function() { btn.disabled = false; btn.textContent = '확인'; });
-    }
-
-    // ===== Claude 세션 목록 / 다시 열기 / 새 세션 =====
-    function sessAgo(ms) {
-      var min = Math.max(0, Math.round((Date.now() - ms) / 60000));
-      if (min < 1) return '방금';
-      if (min < 60) return min + '분 전';
-      if (min < 60 * 24) return Math.floor(min / 60) + '시간 전';
-      return Math.floor(min / 60 / 24) + '일 전';
-    }
-
-    function sessPlace(cwd) {
-      if (!cwd || cwd === '/volume1/docker') return '';
-      var m = cwd.match(/\/\.claude\/worktrees\/([^/]+)/);
-      return m ? ' · 작업 공간 ' + m[1] : ' · ' + cwd.replace('/volume1/docker/', '');
-    }
-
-    function loadClaudeSessions() {
-      var pill = document.getElementById('sessPill');
-      var list = document.getElementById('sessList');
-      fetch('/settings/claude_sessions')
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          if (!d.ok) { pill.textContent = '확인 실패'; setResult('sessResult', false, d.message || '응답이 없어요'); return; }
-          var sessions = d.sessions || [];
-          var live = sessions.filter(function(s) { return s.running; }).length;
-          pill.textContent = '실행 중 ' + live + '개';
-          list.innerHTML = sessions.length ? sessions.map(function(s) {
-            var action = s.running
-              ? '<span class="sess-live">● 실행 중</span>'
-              : '<button type="button" class="btn small" data-write data-sid="' + escapeHtml(s.sessionId) + '" onclick="claudeSessionResume(this)">다시 열기</button>';
-            return '<li class="sess-item"><div class="sess-main">'
-              + '<div class="sess-name">' + escapeHtml(s.name || '(이름 없음)') + '</div>'
-              + '<div class="sess-meta">마지막 대화 ' + sessAgo(s.lastActive) + escapeHtml(sessPlace(s.cwd)) + '</div>'
-              + '</div>' + action + '</li>';
-          }).join('') : '<li class="muted">세션이 없어요.</li>';
-        })
-        .catch(function(e) { pill.textContent = '확인 실패'; setResult('sessResult', false, '요청 중 오류: ' + e); });
-    }
-
-    function claudeSessionResume(btn) {
-      btn.disabled = true; btn.textContent = '여는 중...';
-      postJson('/settings/claude_sessions', { action: 'resume', session_id: btn.getAttribute('data-sid') })
-        .then(function(res) { setResult('sessResult', res.data.ok, res.data.message || '응답이 없어요'); })
-        .catch(function(e) { setResult('sessResult', false, '요청 중 오류: ' + e); })
-        .finally(loadClaudeSessions);
-    }
-
-    function claudeSessionNew() {
-      var btn = document.getElementById('sessNewBtn');
-      var input = document.getElementById('sessNameInput');
-      btn.disabled = true;
-      postJson('/settings/claude_sessions', { action: 'new', name: input.value })
-        .then(function(res) {
-          setResult('sessResult', res.data.ok, res.data.message || '응답이 없어요');
-          if (res.data.ok) input.value = '';
-        })
-        .catch(function(e) { setResult('sessResult', false, '요청 중 오류: ' + e); })
-        .finally(function() { btn.disabled = false; loadClaudeSessions(); });
+        .catch(function(e) { toggle.checked = !enabled; showToast('오류: ' + e, 'error'); })
+        .finally(function() { toggle.disabled = false; });
     }
 
     (function initSettings() {
@@ -535,6 +451,7 @@
       var dirty = document.getElementById('dirtyNote');
       var pathTimer = null;
       form.addEventListener('input', function(e) {
+        if (e.target.id === 'bt4gToggle') return;   // 바로 적용되는 스위치라 저장할 게 아님
         dirty.classList.add('show');
         if (e.target.classList.contains('mode-input')) checkMode(e.target);
         if (e.target.id === 'sourcesInput' || e.target.classList.contains('path-input')) {
@@ -542,13 +459,15 @@
           pathTimer = setTimeout(checkPaths, 600);
         }
       });
-      form.addEventListener('change', function() { dirty.classList.add('show'); });
+      form.addEventListener('change', function(e) { if (e.target.id !== 'bt4gToggle') dirty.classList.add('show'); });
       form.addEventListener('submit', function(e) {
         var modesOk = Array.prototype.every.call(document.querySelectorAll('.mode-input'), checkMode);
         if (!modesOk) {
           e.preventDefault();
           showToast('권한 값을 확인해주세요 (예: 664, 775)', 'error');
-          document.querySelector('.mode-input.is-invalid').focus();
+          var bad = document.querySelector('.mode-input.is-invalid');
+          bad.closest('details').open = true;   // 소유권 카드는 접혀 있다
+          bad.focus();
           return;
         }
         dirty.classList.remove('show');
@@ -559,8 +478,6 @@
       document.querySelectorAll('.mode-input').forEach(checkMode);
       checkPaths();
       loadSettingsStatus();
-      loadClaudeLogin();
-      loadClaudeSessions();
       {% if saved %}showToast('저장했어요', 'success');{% endif %}
     })();
   </script>

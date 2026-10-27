@@ -236,3 +236,129 @@ def test_encode_page_and_removed_routes(re_env):
     assert "재인코딩 (예능 일괄 · 새로 받은 예능)" in html and "PC 예약 종료" in html and "runEncode" not in html
     assert c.post("/run_encode").status_code == 404
     assert c.get("/encode_hold_stats").status_code == 404 and c.get("/encode_log/tail").status_code == 404
+
+
+def test_settings_change_schedule(re_env, monkeypatch, tmp_path):
+    monkeypatch.setattr(web_admin, "REENCODE_SETTINGS_PATH", tmp_path / "re_settings.json")
+    assert web_admin.reencode_settings() == {"night_on": True, "night_at": "03:00", "morning_on": True, "morning_at": "08:00"}
+    monkeypatch.setattr(web_admin, "MEDIA_REQUEST_SETTINGS", tmp_path / "req.json")
+    monkeypatch.setattr(web_admin, "save_cfg", lambda cfg: None)
+    form = {"own_file_mode": "664", "own_dir_mode": "775", "re_night_at": "04:30", "re_morning_on": "1",
+            "re_morning_at": "07:00", "request_code": "손흥민"}
+    html = re_env["client"].post("/settings", data=form).get_data(as_text=True)
+    assert "저장하지 못했어요" not in html and 'value="04:30"' in html and 'value="손흥민"' in html
+    assert web_admin.reencode_settings() == {"night_on": False, "night_at": "04:30", "morning_on": True, "morning_at": "07:00"}
+    assert web_admin._request_code() == "손흥민"
+    bad = re_env["client"].post("/settings", data=dict(form, re_night_at="25:00")).get_data(as_text=True)
+    assert "03:00처럼" in bad and web_admin.reencode_settings()["night_at"] == "04:30"   # 잘못된 값은 저장 안 함
+
+
+def test_scheduler_skips_turned_off_slot(re_env, monkeypatch, tmp_path):
+    monkeypatch.setattr(web_admin, "REENCODE_SETTINGS_PATH", tmp_path / "re_settings.json")
+    web_admin.REENCODE_SETTINGS_PATH.write_text(json.dumps({"night_on": False, "night_at": "04:30", "morning_on": True, "morning_at": "04:00"}))
+    monkeypatch.setattr(reencode_ctl, "available", lambda: True)
+    monkeypatch.setattr(reencode_ctl, "needs_collect", lambda: False)
+    ran = []
+    monkeypatch.setattr(web_admin, "_run_reencode_night", lambda: ran.append("night"))
+    monkeypatch.setattr(web_admin, "_reencode_status_text", lambda head="": ran.append("morning") or "요약")
+    fixed = datetime(2026, 10, 28, 4, 40, tzinfo=web_admin.APP_TZ)
+
+    class FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+    monkeypatch.setattr(web_admin, "datetime", FakeDT)
+    calls = {"n": 0}
+
+    def fake_sleep(sec):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise SystemExit
+    monkeypatch.setattr(web_admin.time, "sleep", fake_sleep)
+
+    class NowThread:
+        def __init__(self, target, args=(), daemon=None):
+            self.target, self.args = target, args
+
+        def start(self):
+            self.target(*self.args)
+    monkeypatch.setattr(web_admin.threading, "Thread", NowThread)
+    try:
+        web_admin._reencode_scheduler_loop()
+    except SystemExit:
+        pass
+    state = json.loads(web_admin.REENCODE_SCHED_PATH.read_text())
+    assert ran == ["morning"] and state.get("morning") == "2026-10-28" and "night" not in state
+
+
+def _off_after_env(re_env, monkeypatch):
+    now = datetime.now(web_admin.APP_TZ)
+    write_status(re_env, state="encoding", current="0004", updated=now.strftime("%Y-%m-%d %H:%M:%S"))
+    off, cancel = [], []
+    monkeypatch.setattr(web_admin, "_request_pc_shutdown", lambda force: off.append(force) or (True, "1분 후 종료", 200, False))
+    monkeypatch.setattr(web_admin, "_request_cancel_shutdown", lambda: cancel.append(1) or (True, "취소", 200))
+    return off, cancel
+
+
+def _set_item(job_id, **kw):
+    q = json.loads(reencode_ctl.QUEUE.read_text(encoding="utf-8"))
+    for it in q["items"]:
+        if it["id"] == job_id:
+            it.update(kw)
+    reencode_ctl.QUEUE.write_text(json.dumps(q), encoding="utf-8")
+
+
+def test_off_after_current_waits_for_collect_then_shuts_down(re_env, monkeypatch):
+    off, cancel = _off_after_env(re_env, monkeypatch)
+    r = re_env["client"].post("/api/reencode/off-after-current")
+    assert r.status_code == 200 and "도레미 마켓.E435.mp4" in r.get_json()["message"]
+    assert ("stop", "web") in re_env["host"]
+    state = json.loads(web_admin.REENCODE_SCHED_PATH.read_text())
+    assert state["off_after"]["id"] == "0004"
+    assert re_env["client"].get("/api/reencode").get_json()["off_after"]["id"] == "0004"
+    # 워커가 올리고 멈춰도(shutting_down) NAS 교체 전이면 끄지 않고, 평소 '5분 후 꺼져요' 알림도 안 보낸다
+    write_status(re_env, state="shutting_down", current="", updated="2026-10-27 22:00:00")
+    assert web_admin._reencode_watch_worker(state) and not web_admin._reencode_off_after(state)
+    assert off == [] and not re_env["sent"]
+    _set_item("0004", status="collecting")
+    assert not web_admin._reencode_off_after(state) and off == []
+    _set_item("0004", status="done")
+    assert web_admin._reencode_off_after(state)
+    assert off == [True] and "off_after" not in state and "교체까지 끝났어요" in re_env["sent"][-1][0]
+
+
+def test_off_after_current_failure_keeps_pc_on(re_env, monkeypatch):
+    off, cancel = _off_after_env(re_env, monkeypatch)
+    assert re_env["client"].post("/api/reencode/off-after-current").status_code == 200
+    state = json.loads(web_admin.REENCODE_SCHED_PATH.read_text())
+    _set_item("0004", status="pending", attempts=1, msg="1번째 실패, 다시 시도 예정: 길이가 다름")   # 검사 실패 → 재시도 대기
+    assert web_admin._reencode_off_after(state)
+    assert off == [] and cancel == [1] and "off_after" not in state
+    assert "끄지 않았어요" in re_env["sent"][-1][0] and "길이가 다름" in re_env["sent"][-1][0]
+
+
+def test_off_after_current_needs_encoding_and_expires(re_env, monkeypatch):
+    off, cancel = _off_after_env(re_env, monkeypatch)
+    write_status(re_env, state="waiting", updated=datetime.now(web_admin.APP_TZ).strftime("%Y-%m-%d %H:%M:%S"))
+    r = re_env["client"].post("/api/reencode/off-after-current")
+    assert r.status_code == 409 and "인코딩 중인 파일이 없어요" in r.get_json()["error"] and not re_env["host"]
+    state = {"off_after": {"id": "0004", "since": int(time.time()) - web_admin.REENCODE_OFF_AFTER_TTL - 1, "attempts": 0}}
+    assert web_admin._reencode_off_after(state) and "off_after" not in state and off == []
+
+
+def test_settings_status_and_claude_tab(re_env, monkeypatch, tmp_path):
+    monkeypatch.setattr(web_admin, "DATA_DIR", tmp_path)
+    (tmp_path / "auto_subs.json").write_text(json.dumps({
+        "a|1": {"status": "replaced", "chars": 9049, "at": 1792369457.3, "path": "/v/코난.ko.ass"},
+        "b|2": {"status": "no_track", "at": 1793000422.9}}))
+    monkeypatch.setattr(web_admin, "_qbit_get", lambda path: {"connection_status": "connected"})
+    monkeypatch.setattr(web_admin, "_is_pc_online", lambda host: False)
+    write_status(re_env, state="waiting", updated="2026-10-27 22:00:00")
+    d = re_env["client"].get("/settings/status").get_json()
+    assert d["worker"]["state"] == "waiting" and d["deepl"]["count"] == 1 and d["deepl"]["chars"] == 9049
+    assert isinstance(d["kobis"], bool)
+    html = re_env["client"].get("/settings").get_data(as_text=True)
+    assert "♻️ 재인코딩" in html and "bt4gToggle" in html and "set-fold" in html and "claudePill" not in html
+    skills = re_env["client"].get("/skills").get_data(as_text=True)
+    assert "claudePill" in skills and "sessList" in skills and "loadClaudeSessions();" in skills
+    assert ">Claude<" in skills and "Claude 스킬" not in skills

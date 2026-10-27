@@ -25,10 +25,95 @@
     .sk-tools select { flex: 0 1 200px; min-width: 0; }
     details.sk-fold summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     .sk-empty { color: var(--muted); padding: 10px 2px; }
+    /* Claude 로그인·세션 카드 (settings.html에서 옮김) */
+    .settings-wrap { display: flex; flex-direction: column; gap: 16px; margin-bottom: 16px; }
+    .set-card { padding: 22px 24px; }
+    .set-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+    .set-title { font-size: 16px; font-weight: 700; }
+    .set-desc { font-size: 13px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+    .set-pill { font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-light); border-radius: 999px; padding: 4px 10px; white-space: nowrap; }
+    .set-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+    .set-actions { margin: 12px 0; }
+    .set-hint { font-size: 12px; color: var(--muted); line-height: 1.5; margin-top: 6px; }
+    .set-note { font-size: 13px; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+    .set-result { font-size: 13px; font-weight: 600; min-height: 0; }
+    .set-result:not(:empty) { margin: -2px 0 8px; }
+    .set-result.ok { color: var(--success-hover); }
+    .set-result.err { color: var(--danger-hover); }
+    .field { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+    .field label { font-size: 13px; font-weight: 500; color: var(--muted); }
+    .sess-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .sess-item { display: flex; align-items: center; gap: 12px; background: var(--bg-solid); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+    .sess-main { flex: 1; min-width: 0; }
+    .sess-name { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+    .sess-meta { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+    .sess-live { font-size: 12px; font-weight: 600; color: var(--success-hover); white-space: nowrap; }
+    .sess-item .btn { white-space: nowrap; }
+    @media (max-width: 640px) {
+      .set-card { padding: 18px 16px; }
+      .set-actions { width: 100%; margin-top: 0; }
+    }
   </style>
 {% endblock %}
 
 {% block content %}
+    {# Claude 로그인·세션 (10-27 설정 > 연동·경로에서 옮김) #}
+    <div class="settings-wrap">
+      <section class="card set-card">
+        <div class="set-head">
+          <div>
+            <div class="set-title">🤖 Claude 로그인 (NAS)</div>
+            <div class="set-desc">NAS 백그라운드 Claude 세션의 로그인이 만료됐을 때 여기서 다시 로그인해요. 휴대폰 브라우저만 있으면 돼요.</div>
+          </div>
+          <span class="set-pill" id="claudePill">확인 중...</span>
+        </div>
+        <div class="set-actions">
+          <button type="button" class="btn small" id="claudeStartBtn" onclick="claudeLoginStart()">🔑 로그인 시작</button>
+          <button type="button" class="btn small" onclick="loadClaudeLogin()">↻ 상태 확인</button>
+        </div>
+        <div id="claudeStep" style="display:none;">
+          <div class="set-note">① 아래 버튼으로 로그인 페이지를 열어 로그인하세요. ② 마지막 화면에 나온 코드를 복사해 아래에 붙여 넣으세요. (15분 안에)</div>
+          <div class="set-actions"><a class="btn small primary" id="claudeUrlLink" href="#" target="_blank" rel="noopener">로그인 페이지 열기 ↗</a></div>
+          <div class="set-row">
+            <div class="field" style="flex:1; min-width:240px;">
+              <label class="muted" for="claudeCodeInput">코드</label>
+              <input type="text" id="claudeCodeInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="브라우저에 나온 코드 붙여 넣기"
+                     onkeydown="if (event.key === 'Enter') claudeLoginCode()">
+            </div>
+            <div class="set-actions">
+              <button type="button" class="btn small primary" id="claudeCodeBtn" onclick="claudeLoginCode()">확인</button>
+            </div>
+          </div>
+        </div>
+        <div class="set-result" id="claudeResult"></div>
+        <div class="set-hint">만료되면 텔레그램으로 "claude-bg-watchdog 실패 … AUTH FAIL" 알림이 와요. 로그인되면 꺼진 백그라운드 세션도 바로 다시 띄워요.</div>
+      </section>
+
+      <section class="card set-card">
+        <div class="set-head">
+          <div>
+            <div class="set-title">🗂️ Claude 세션 (NAS)</div>
+            <div class="set-desc">8시간 동안 안 쓴 세션은 자동으로 꺼지지만 대화는 남아 있어요. 여기서 다시 열면 앱에서 이어서 대화할 수 있어요.</div>
+          </div>
+          <span class="set-pill" id="sessPill">확인 중...</span>
+        </div>
+        <div class="set-row">
+          <div class="field" style="flex:1; min-width:200px;">
+            <label class="muted" for="sessNameInput">새 세션 이름</label>
+            <input type="text" id="sessNameInput" maxlength="40" autocomplete="off" placeholder="예: media-router 작업 (비우면 날짜로)"
+                   onkeydown="if (event.key === 'Enter') claudeSessionNew()">
+          </div>
+          <div class="set-actions">
+            <button type="button" class="btn small primary" id="sessNewBtn" onclick="claudeSessionNew()" data-write>＋ 새 세션</button>
+            <button type="button" class="btn small" onclick="loadClaudeSessions()">↻ 새로 고침</button>
+          </div>
+        </div>
+        <div class="set-result" id="sessResult"></div>
+        <ul class="sess-list" id="sessList"></ul>
+        <div class="set-hint">다시 연 세션도 8시간 쉬면 또 꺼져요. 같은 대상(컨테이너, media-router 등)을 두 세션이 동시에 건드리지 않게 해 주세요.</div>
+      </section>
+    </div>
+
     <div class="card">
       <div class="section-title">설치된 스킬 (NAS Claude)</div>
       <div class="hint">스킬 설명은 대화를 시작할 때마다 컨텍스트에 실려요. 많을수록 모든 세션(자동 작업 포함)이 조금씩 무거워져요.
@@ -277,6 +362,131 @@
       });
     }
 
+    // ===== Claude 로그인·세션 (settings.html에서 옮김) =====
+    function postJson(url, body) {
+      return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); });
+    }
+
+    function setResult(id, ok, message) {
+      var el = document.getElementById(id);
+      el.className = 'set-result ' + (ok ? 'ok' : 'err');
+      el.textContent = (ok ? '✓ ' : '✗ ') + message;
+    }
+
+    var escapeHtml = esc;
+
+    function showClaudeStep(url) {
+      document.getElementById('claudeStep').style.display = url ? '' : 'none';
+      if (url) document.getElementById('claudeUrlLink').href = url;
+    }
+
+    function loadClaudeLogin() {
+      var pill = document.getElementById('claudePill');
+      fetch('/settings/claude_login')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (!d.ok) { pill.textContent = '확인 실패'; setResult('claudeResult', false, d.message || '응답이 없어요'); return; }
+          var a = d.auth || {};
+          pill.textContent = (a.loggedIn && a.authMethod === 'claude.ai') ? '로그인됨' + (a.subscriptionType ? ' (' + a.subscriptionType + ')' : '') : '로그인 필요';
+          showClaudeStep(d.pending ? d.url : '');
+        })
+        .catch(function(e) { pill.textContent = '확인 실패'; setResult('claudeResult', false, '요청 중 오류: ' + e); });
+    }
+
+    function claudeLoginStart() {
+      var btn = document.getElementById('claudeStartBtn');
+      btn.disabled = true;
+      postJson('/settings/claude_login', { action: 'start' })
+        .then(function(res) {
+          if (res.data.ok) {
+            showClaudeStep(res.data.url);
+            document.getElementById('claudeCodeInput').value = '';
+            setResult('claudeResult', true, '로그인 페이지를 열어 주세요.');
+          } else {
+            setResult('claudeResult', false, res.data.message || '시작하지 못했어요');
+          }
+        })
+        .catch(function(e) { setResult('claudeResult', false, '요청 중 오류: ' + e); })
+        .finally(function() { btn.disabled = false; });
+    }
+
+    function claudeLoginCode() {
+      var btn = document.getElementById('claudeCodeBtn');
+      var code = document.getElementById('claudeCodeInput').value.trim();
+      if (!code) { setResult('claudeResult', false, '코드를 붙여 넣어 주세요.'); return; }
+      btn.disabled = true; btn.textContent = '확인 중...';
+      postJson('/settings/claude_login', { action: 'code', code: code })
+        .then(function(res) {
+          setResult('claudeResult', res.data.ok, res.data.message || '응답이 없어요');
+          if (res.data.ok) showClaudeStep('');
+          loadClaudeLogin();
+        })
+        .catch(function(e) { setResult('claudeResult', false, '요청 중 오류: ' + e); })
+        .finally(function() { btn.disabled = false; btn.textContent = '확인'; });
+    }
+
+    // ===== Claude 세션 목록 / 다시 열기 / 새 세션 =====
+    function sessAgo(ms) {
+      var min = Math.max(0, Math.round((Date.now() - ms) / 60000));
+      if (min < 1) return '방금';
+      if (min < 60) return min + '분 전';
+      if (min < 60 * 24) return Math.floor(min / 60) + '시간 전';
+      return Math.floor(min / 60 / 24) + '일 전';
+    }
+
+    function sessPlace(cwd) {
+      if (!cwd || cwd === '/volume1/docker') return '';
+      var m = cwd.match(/\/\.claude\/worktrees\/([^/]+)/);
+      return m ? ' · 작업 공간 ' + m[1] : ' · ' + cwd.replace('/volume1/docker/', '');
+    }
+
+    function loadClaudeSessions() {
+      var pill = document.getElementById('sessPill');
+      var list = document.getElementById('sessList');
+      fetch('/settings/claude_sessions')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (!d.ok) { pill.textContent = '확인 실패'; setResult('sessResult', false, d.message || '응답이 없어요'); return; }
+          var sessions = d.sessions || [];
+          var live = sessions.filter(function(s) { return s.running; }).length;
+          pill.textContent = '실행 중 ' + live + '개';
+          list.innerHTML = sessions.length ? sessions.map(function(s) {
+            var action = s.running
+              ? '<span class="sess-live">● 실행 중</span>'
+              : '<button type="button" class="btn small" data-write data-sid="' + escapeHtml(s.sessionId) + '" onclick="claudeSessionResume(this)">다시 열기</button>';
+            return '<li class="sess-item"><div class="sess-main">'
+              + '<div class="sess-name">' + escapeHtml(s.name || '(이름 없음)') + '</div>'
+              + '<div class="sess-meta">마지막 대화 ' + sessAgo(s.lastActive) + escapeHtml(sessPlace(s.cwd)) + '</div>'
+              + '</div>' + action + '</li>';
+          }).join('') : '<li class="muted">세션이 없어요.</li>';
+        })
+        .catch(function(e) { pill.textContent = '확인 실패'; setResult('sessResult', false, '요청 중 오류: ' + e); });
+    }
+
+    function claudeSessionResume(btn) {
+      btn.disabled = true; btn.textContent = '여는 중...';
+      postJson('/settings/claude_sessions', { action: 'resume', session_id: btn.getAttribute('data-sid') })
+        .then(function(res) { setResult('sessResult', res.data.ok, res.data.message || '응답이 없어요'); })
+        .catch(function(e) { setResult('sessResult', false, '요청 중 오류: ' + e); })
+        .finally(loadClaudeSessions);
+    }
+
+    function claudeSessionNew() {
+      var btn = document.getElementById('sessNewBtn');
+      var input = document.getElementById('sessNameInput');
+      btn.disabled = true;
+      postJson('/settings/claude_sessions', { action: 'new', name: input.value })
+        .then(function(res) {
+          setResult('sessResult', res.data.ok, res.data.message || '응답이 없어요');
+          if (res.data.ok) input.value = '';
+        })
+        .catch(function(e) { setResult('sessResult', false, '요청 중 오류: ' + e); })
+        .finally(function() { btn.disabled = false; loadClaudeSessions(); });
+    }
+
+    loadClaudeLogin();
+    loadClaudeSessions();
     loadInstalled().then(function() { loadGuide(); loadCatalog(false); });
   </script>
 {% endblock %}
