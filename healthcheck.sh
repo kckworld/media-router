@@ -12,6 +12,22 @@ URL="http://localhost:5080/"
 DOCKER="/usr/local/bin/docker"
 [ "$(id -u)" -eq 0 ] || DOCKER="sudo $DOCKER"
 
+# 배포 중이면 건너뜀 (2026-10-27): deploy.sh가 컨테이너를 바꾸는 사이 응답이 없다고 옛 컨테이너를
+# restart해서, compose가 "cannot remove a running container"로 실패하고 옛 이미지가 다시 뜬 적이
+# 두 번 있었다. deploy.sh가 이 파일에 시작 시각을 적고 끝나면 지운다. 15분 넘게 남아 있으면
+# 배포가 비정상 종료된 것으로 보고 무시한다(헬스체크가 영영 멈추지 않게).
+DEPLOY_FLAG="$(dirname "$0")/data/.deploying"
+DEPLOY_MAX_SEC=900
+if [ -f "$DEPLOY_FLAG" ]; then
+	started="$(cat "$DEPLOY_FLAG" 2>/dev/null)"
+	age=$(( $(date +%s) - ${started:-0} ))
+	if [ "$age" -ge 0 ] && [ "$age" -lt "$DEPLOY_MAX_SEC" ]; then
+		echo "배포 중이라 건너뜀 (${age}초 전 시작)"
+		exit 0
+	fi
+	echo "배포 표시가 ${age}초째 남아 있음 - 비정상 종료로 보고 무시하고 확인"
+fi
+
 is_ok() {
 	# 로그인 전이라 302(로그인 리다이렉트)가 정상 응답.
 	case "$1" in

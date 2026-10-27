@@ -13,3 +13,5 @@ state.yaml
 status.json
 run.lock
 *.bak
+# 작업용 git worktree가 이미지에 들어가지 않게 (COPY . .)
+.claude/
