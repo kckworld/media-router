@@ -417,7 +417,8 @@
           var w = d.worker || {};
           var WORKER_STATE = { copying: '원본 받는 중', encoding: '인코딩 중', uploading: '결과 올리는 중', waiting: '대기', shutting_down: '끝남 (PC 종료 예약)' };
           statusRows(document.getElementById('statusWorker'), !w.updated ? [['하트비트', '<span class="muted">기록 없음</span>']] : [
-            ['상태', escapeHtml(WORKER_STATE[w.state] || w.state || '?') + (w.current ? ' · #' + escapeHtml(w.current) : '')],
+            ['상태', escapeHtml(WORKER_STATE[w.state] || w.state || '?') + (w.current ? ' · #' + escapeHtml(w.current) : '')
+                     + (w.pending_upload ? ' · 올리기 대기 ' + Number(w.pending_upload) + '개' : '')],
             ['마지막 신호', escapeHtml(w.updated) + ' <span class="muted">(PC가 켜져 있을 때만 갱신)</span>']
           ]);
           var dl = d.deepl || {};

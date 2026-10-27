@@ -362,3 +362,10 @@ def test_settings_status_and_claude_tab(re_env, monkeypatch, tmp_path):
     skills = re_env["client"].get("/skills").get_data(as_text=True)
     assert "claudePill" in skills and "sessList" in skills and "loadClaudeSessions();" in skills
     assert ">Claude<" in skills and "Claude 스킬" not in skills
+
+
+def test_pending_upload_in_summary(re_env):
+    write_status(re_env, state="encoding", current="0004", pending_upload=2, updated="2026-10-27 22:50:00")
+    assert "PC: encoding — #0004 · 올리기 대기 2개 (10-27 22:50)" in reencode_ctl.state()["summary"]
+    write_status(re_env, state="encoding", current="0004", pending_upload=0, updated="2026-10-27 22:50:00")
+    assert "올리기 대기" not in reencode_ctl.state()["summary"]

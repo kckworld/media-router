@@ -149,7 +149,8 @@
         var w = d.worker || {}, ws = RE_WORKER[w.state] || [w.state || "기록 없음", "unknown"];
         var wb = document.getElementById("reWorkerBadge");
         wb.className = "status-badge " + ws[1];
-        wb.textContent = "PC: " + ws[0] + (w.updated ? " (" + String(w.updated).slice(5, 16) + ")" : "");
+        wb.textContent = "PC: " + ws[0] + (w.pending_upload ? " · 올리기 대기 " + w.pending_upload + "개" : "") +
+          (w.updated ? " (" + String(w.updated).slice(5, 16) + ")" : "");
         document.getElementById("reCurrent").textContent = d.current ? "지금: #" + d.current.id + " " + d.current.name + " (" + reGb(d.current.size) + ")" : "";
         document.getElementById("reStartBtn").hidden = !!d.running;
         document.getElementById("reStopBtn").hidden = !d.running;

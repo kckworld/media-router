@@ -100,6 +100,7 @@ def state() -> dict:
                                              + ([f"실패 {len(new_failed)}개(new 폴더에 [손상] 표시)"] if new_failed else []))
                   if new_open or new_failed else "")
                + (f"\nPC: {w.get('state', '?')}" + (f" — #{w['current']}" if w.get("current") else "")
+                  + (f" · 올리기 대기 {w['pending_upload']}개" if w.get("pending_upload") else "")
                   + f" ({str(w.get('updated', ''))[5:16]})" if w else "")
                + (f"\n🗑 Drive 휴지통에 예전 방식 재인코딩 파일 약 {gb(trash)} — 비워 주세요" if trash >= TRASH_WARN else ""))
 

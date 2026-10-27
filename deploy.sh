@@ -6,10 +6,10 @@ cd "$SCRIPT_DIR"
 
 ts() { echo "[deploy $(date '+%H:%M:%S')]"; }
 
-# 인터랙티브 쉘의 `alias docker='sudo docker'`는 스크립트 파일 실행 시
-# 적용되지 않으므로, 여기서는 sudo를 명시적으로 붙인다.
-DC="sudo docker compose"
-DOCKER="sudo docker"
+# sudo NOPASSWD는 전체 경로 /usr/local/bin/docker에만 걸려 있다. 10-27 NAS 재부팅 뒤
+# `sudo docker`가 다른 경로로 풀려 비밀번호를 물었다 → 꼭 전체 경로로 부른다.
+DOCKER="sudo /usr/local/bin/docker"
+DC="$DOCKER compose"
 # 10-27 한 번은 빌드 뒤 조용히 멈춰 원인을 못 찾았다 → 실패하면 어디서 멈췄는지 남긴다
 trap 'echo "$(ts) ❌ 실패: ${BASH_SOURCE[0]}:${LINENO} — ${BASH_COMMAND}" >&2' ERR
 CONTAINER="media_router"
