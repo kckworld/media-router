@@ -59,6 +59,10 @@ if [ -f "$PAUSE_FLAG" ] && grep -q '"paused": *true' "$PAUSE_FLAG" 2>/dev/null; 
     echo "$(ra_ts) 자동 정리 일시정지 중 → 이름 변환(drama_name)·이동(media_router)·aniname 건너뜀"
 fi
 
+# 0. qBittorrent DHT 감시 (2026-10-27): VPN 재연결 뒤 UDP가 막혀 DHT 0이면 qbittorrent만 재시작.
+#    평소엔 조용히 끝나고, 재시작하면 run-logged가 텔레그램 알림 + 기록을 남긴다.
+/volume1/docker/run-logged.sh qbit-dht-watchdog sh /volume1/docker/qbit-dht-watchdog.sh || true
+
 # 1. 드라마 이름 변경
 if [ "$PROCESSING_PAUSED" -eq 0 ]; then
     /volume1/web/video_auto/drama_name.sh || echo "$(ra_ts) drama_name.sh 실행 중 오류 발생 (계속 진행)"

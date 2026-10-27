@@ -1158,7 +1158,7 @@ def start_movie_download(post_id: str) -> tuple[bool, str]:
             pct = "" if info is None else " (다 받고 옮기기 기다리는 중)"
         return False, f"'{display}'은(는) 이미 받는 중이에요{pct}."
     _qbit_post("/api/v2/torrents/add", {
-        "urls": f"magnet:?xt=urn:btih:{btih}",
+        "urls": movies.magnet(btih),
         "savepath": f"{movies.QBIT_MOVIE_DIR}/{btih}",
         "autoTMM": "false",
         "tags": "영화",

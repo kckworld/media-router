@@ -301,6 +301,23 @@ def is_complete(job_dir: Path) -> bool:
     return any(p.suffix.lower() in VIDEO_EXTS for p in files)
 
 
+# 티프리카 마그넷은 해시만 있어서 DHT로만 피어를 찾는다. VPN 재연결 뒤 UDP가 막혀 DHT가 0이면
+# (2026-10-27 메이데이) 메타데이터 단계에서 멈추므로 공개 트래커를 같이 붙인다 (http 하나 포함).
+PUBLIC_TRACKERS = [
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://explodie.org:6969/announce",
+    "http://tracker.opentrackr.org:1337/announce",
+]
+
+
+def magnet(btih: str) -> str:
+    from urllib.parse import quote
+    return f"magnet:?xt=urn:btih:{btih}" + "".join(f"&tr={quote(t, safe='')}" for t in PUBLIC_TRACKERS)
+
+
 def post_url(post_id: str) -> str:
     return f"{TFREECA_BASE}/board.php?mode=view&b_id=tmovie&id={post_id}"
 

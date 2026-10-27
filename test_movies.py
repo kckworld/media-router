@@ -295,6 +295,9 @@ def test_movie_button_starts_download_and_keeps_list(wa, monkeypatch):
     path, data = qbit[0]
     assert path == "/api/v2/torrents/add"
     assert data["savepath"] == "/downloads/_movies/" + "deadbeef" * 5 and data["tags"] == "영화"
+    # DHT가 막혀도 피어를 찾게 공개 트래커를 붙인다
+    assert data["urls"].startswith("magnet:?xt=urn:btih:" + "deadbeef" * 5 + "&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce")
+    assert data["urls"].count("&tr=") == len(movies.PUBLIC_TRACKERS)
     jobs = json.loads(web_admin.MOVIE_JOBS_PATH.read_text(encoding="utf-8"))
     assert jobs[0]["prefix"] == "인턴 (2026) {tmdb-607833}" and jobs[0]["display"] == "인턴 (2026)" and jobs[0]["folder"] == "아"
     assert "인턴 (2026)" in sent[-1][0] and "영화/아" in sent[-1][0]
