@@ -18,20 +18,30 @@ chmod 666 "$LOGFILE" 2>/dev/null || true
 exec >>"$LOGFILE" 2>&1
 ra_ts() { echo "[run_all $(date '+%H:%M:%S')]"; }
 
-# 웹·텔레그램의 재인코딩 [비우기] (2026-10-27): Drive 파일을 지우는 일이라 컨테이너가 아니라 여기(호스트)서.
-# 같은 SSH 키로 'reencode-clear'를 보내면 배치는 돌리지 않고 비우기만 한다. 배치 잠금보다 앞이라
-# 배치가 도는 중에도 바로 처리된다 (reencode.py가 자기 잠금으로 run과 겹치지 않게 함).
-# 'reencode-trash-emptied'(Drive 휴지통 비웠음 기록, 볼륨 여유 공간을 재야 해서 호스트)도 같은 방식.
-case "${SSH_ORIGINAL_COMMAND:-}" in reencode-clear|reencode-trash-emptied)
-    re_cmd="${SSH_ORIGINAL_COMMAND#reencode-}"
-    echo "$(ra_ts) 재인코딩 $re_cmd 요청 (웹·텔레그램)"
-    # reencode.py run이 도는 중이면 clear는 바로 끝나 버리므로(잠금) 최대 10분 다시 시도
-    for i in $(seq 1 20); do
-        out="$(python3 /volume1/docker/reencode/reencode.py "$re_cmd" 2>&1)" || echo "$(ra_ts) reencode.py $re_cmd 실패"
-        echo "$out"
-        case "$out" in *"다른 실행이 진행 중"*) sleep 30 ;; *) break ;; esac
-    done
-    exit 0 ;;
+# 예능 재인코딩 v2 (2026-10-27): Media Router(컨테이너)가 같은 SSH 키로 'reencode-<명령> [누가]'를 보내면
+# 배치는 돌리지 않고 /volume1/docker/reencode/reencode.py <명령>만 호스트에서 실행한다.
+#   run           1분마다(결과가 있을 때) collect+feed — 원본 교체·삭제라 /volume1/video 쓰기가 필요
+#   resume/stop   [▶ 시작]/[⏹ 종료] — control.json(/volume1/video 아래, 컨테이너에선 읽기 전용)
+#   trash-emptied v1이 남긴 Drive 휴지통 비움 기록 — 볼륨 여유 공간을 잰다
+# 배치 잠금보다 앞이라 배치가 도는 중에도 바로 처리된다(reencode.py가 자기 잠금으로 run끼리 겹치지 않게 함).
+case "${SSH_ORIGINAL_COMMAND:-}" in reencode-*)
+    set -- ${SSH_ORIGINAL_COMMAND#reencode-}
+    re_cmd="${1:-}"
+    re_by="${2:-web}"
+    case "$re_by" in *[!a-z]*) re_by="web" ;; esac
+    case "$re_cmd" in
+        run)
+            # 1분마다 와서 run_all 로그를 채우지 않게 조용히 (reencode.py는 자기 로그에 남김)
+            python3 /volume1/docker/reencode/reencode.py run >/dev/null 2>&1
+            exit $? ;;
+        resume|stop|trash-emptied)
+            echo "$(ra_ts) 재인코딩 $re_cmd ($re_by)"
+            python3 /volume1/docker/reencode/reencode.py "$re_cmd" "$re_by"
+            exit $? ;;
+        *)
+            echo "$(ra_ts) 알 수 없는 재인코딩 요청 무시: $SSH_ORIGINAL_COMMAND"
+            exit 2 ;;
+    esac ;;
 esac
 
 LOCKFILE="/volume1/docker/media-router/run.lock"

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""예능 일괄 재인코딩 연결: 상태·일시정지·비우기·새벽 자동 인코딩·아침 요약"""
+"""예능 일괄 재인코딩 v2 연결: 상태, 시작(호스트 resume → PC 켜기 → ReencodeWorker), 종료, 새벽·아침, PC 종료 예고"""
 import json
 import time
 from datetime import datetime
@@ -12,138 +12,144 @@ import web_admin
 
 @pytest.fixture
 def re_env(monkeypatch, tmp_path):
-    base = tmp_path / "reencode"
+    base, work = tmp_path / "reencode", tmp_path / "재인코딩"
     base.mkdir()
-    (base / "queue.json").write_text(json.dumps({"items": [
-        {"id": "0001", "src": "/v/유희열의 스케치북.E509.mp4", "status": "done", "saved": 6 * 1024 ** 3, "expect_save": 6 * 1024 ** 3},
-        {"id": "0002", "src": "/v/BTS.mkv", "status": "fed", "expect_save": 4 * 1024 ** 3},
-        {"id": "0003", "src": "/v/무한도전.avi", "status": "failed", "msg": "원본 없음(넣기 전)", "expect_save": 0},
-        {"id": "0004", "src": "/v/런닝맨.mp4", "status": "pending", "expect_save": 1024 ** 3}]}), encoding="utf-8")
-    (base / "reencode.log").write_text("[x] #0001 넣음\n[y] 넣기 끝\n", encoding="utf-8")
+    for d in ("todo", "doing", "out", "done"):
+        (work / d).mkdir(parents=True)
+    (base / "queue.json").write_text(json.dumps({"trash_bytes": 0, "items": [
+        {"id": "0001", "src": "/v/유희열의 스케치북.E509.mp4", "tier": 1, "status": "done", "size": 8 * 2 ** 30,
+         "new_size": 2 * 2 ** 30, "saved": 6 * 2 ** 30, "expect_save": 6 * 2 ** 30, "mbps": 11.8, "dur": 5600, "done_at": "2026-10-27 16:20:25"},
+        {"id": "0004", "src": "/v/도레미 마켓.E435.mp4", "tier": 1, "status": "fed", "size": 5 * 2 ** 30, "expect_save": 4 * 2 ** 30,
+         "mbps": 8.3, "res": "1920x1080"},
+        {"id": "0003", "src": "/v/무한도전.avi", "tier": 2, "status": "failed", "msg": "길이가 다름", "expect_save": 0},
+        {"id": "0007", "src": "/v/런닝맨.mp4", "tier": 3, "status": "pending", "size": 2 ** 30, "expect_save": 2 ** 29}]}),
+        encoding="utf-8")
+    (base / "reencode.log").write_text("[x] collect\n", encoding="utf-8")
+    (work / "worker.log").write_text("[pc] #0004 인코딩 시작\n", encoding="utf-8")
     monkeypatch.setattr(reencode_ctl, "QUEUE", base / "queue.json")
     monkeypatch.setattr(reencode_ctl, "STOP", base / "STOP")
     monkeypatch.setattr(reencode_ctl, "LOG", base / "reencode.log")
-    enc = tmp_path / "인코딩"
-    enc.mkdir()
-    monkeypatch.setattr(web_admin, "ENCODING_HOLD_PATH", enc)
+    monkeypatch.setattr(reencode_ctl, "WORK", work)
+    monkeypatch.setattr(web_admin, "REENCODE_SCHED_PATH", tmp_path / "sched.json")
     monkeypatch.setattr(web_admin, "authed", lambda req: True)
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
-    sent, popen = [], []
+    sent, host, tasks = [], [], []
     monkeypatch.setattr(web_admin, "_tg_notify", lambda text, markup=None, token=None: sent.append((text, markup)) or True)
     monkeypatch.setattr(web_admin, "_tg_call", lambda *a, **k: {"ok": True})
-    monkeypatch.setattr(web_admin.subprocess, "Popen", lambda args, **kw: popen.append(args))
-    key = tmp_path / "run_batch_key"
-    key.write_text("k")
-    monkeypatch.setattr(web_admin, "RUN_BATCH_SSH_KEY", str(key))
+
+    def fake_host(cmd, by="", wait=True):
+        host.append((cmd, by))
+        if cmd in ("resume", "stop"):   # 호스트의 reencode.py가 control.json을 쓰는 것을 흉내
+            (work / "control.json").write_text(json.dumps({"run": cmd == "resume"}), encoding="utf-8")
+        return True
+    monkeypatch.setattr(web_admin, "_reencode_host", fake_host)
+    monkeypatch.setattr(web_admin, "_wake_pc", lambda progress=None, then="": (True, ""))
+    monkeypatch.setattr(web_admin, "_trigger_remote_task", lambda task, msg: tasks.append(task) or (True, msg))
     web_admin.app.config["TESTING"] = True
-    return {"base": base, "enc": enc, "sent": sent, "popen": popen, "client": web_admin.app.test_client()}
+    return {"work": work, "sent": sent, "host": host, "tasks": tasks, "client": web_admin.app.test_client()}
 
 
-def test_state_summary(re_env):
+def write_status(re_env, **w):
+    (re_env["work"] / "status.json").write_text(json.dumps(w), encoding="utf-8")
+
+
+def test_state(re_env):
+    write_status(re_env, state="encoding", current="0004", updated="2026-10-27 17:50:01")
     st = reencode_ctl.state()
-    assert st["summary"] == ("완료 1/4 · 넣어 둠 1 · 대기 1 · 실패 1\n줄인 용량 6.0GB / 예상 11.0GB"
-                             "\nDrive 휴지통에 쌓인 재인코딩 파일 약 0.0GB")
-    assert st["failed"] == [{"id": "0003", "name": "무한도전.avi", "error": "원본 없음(넣기 전)"}]
+    assert st["summary"].startswith("완료 1/4 · 진행 1 · 대기 1 · 실패 1\n줄인 용량 6.0GB / 예상 10.5GB\n⏹ 멈춤\nPC: encoding — #0004")
+    assert st["current"]["name"] == "도레미 마켓.E435.mp4"
+    assert st["tiers"]["1"] == {"done": 1, "todo": 1, "failed": 0, "saved": 6 * 2 ** 30, "expect": 10 * 2 ** 30}
+    assert [r["id"] for r in st["waiting_list"]] == ["0004", "0007"] and st["done_list"][0]["new_size"] == 2 * 2 ** 30
+    assert st["failed"][0]["msg"] == "길이가 다름" and not st["trash_warn"]
 
 
-def _set_trash(re_env, n, since="2026-10-27 16:49"):
-    q = json.loads((re_env["base"] / "queue.json").read_text(encoding="utf-8"))
-    q.update(trash_bytes=n, trash_emptied_at=since)
-    (re_env["base"] / "queue.json").write_text(json.dumps(q), encoding="utf-8")
+def test_start_order_resume_then_pc_then_worker(re_env):
+    r = re_env["client"].post("/api/reencode/start").get_json()
+    assert r["ok"]
+    # 워커는 run=false면 바로 PC를 끄므로: 호스트 resume → todo 채우기 → PC 켜기 → 작업 스케줄러
+    assert re_env["host"][:2] == [("resume", "web"), ("run", "")] and re_env["tasks"] == ["ReencodeWorker"]
+    assert reencode_ctl.running()
 
 
-def test_trash_warning_and_button(re_env):
-    _set_trash(re_env, 50 * 2 ** 30)
-    st = reencode_ctl.state()
-    assert "약 50.0GB (2026-10-27 16:49 비운 뒤)" in st["summary"] and not st["trash_warn"]
-    assert len(web_admin._reencode_buttons()["inline_keyboard"]) == 1          # 100GB 아래면 버튼 없음
-    _set_trash(re_env, 120 * 2 ** 30)
-    assert "휴지통을 비워 주세요" in reencode_ctl.state()["summary"]
-    kb = web_admin._reencode_buttons()["inline_keyboard"]
-    assert kb[1][0]["text"] == "🧹 휴지통 비웠음" and kb[1][0]["callback_data"].startswith("re_trash:")
-    # 누르면 호스트로 (볼륨 여유 공간을 재야 해서)
-    now = int(time.time())
-    web_admin._handle_telegram_callback({"id": "q", "data": f"re_trash:{now}", "message": {"chat": {"id": 1}, "message_id": 7790}})
-    assert re_env["popen"][-1][-1] == "reencode-trash-emptied"
-    assert re_env["client"].post("/api/reencode/trash-emptied").get_json()["ok"]
-    assert re_env["client"].get("/api/reencode").get_json()["trash_bytes"] == 120 * 2 ** 30
+def test_start_fails_if_resume_not_recorded(re_env, monkeypatch):
+    monkeypatch.setattr(web_admin, "_reencode_host", lambda cmd, by="", wait=True: False)
+    r = re_env["client"].post("/api/reencode/start")
+    assert r.status_code == 500 and not re_env["tasks"]
 
 
-def test_api_and_pause(re_env):
-    c = re_env["client"]
-    d = c.get("/api/reencode").get_json()
-    assert d["available"] and "넣기 끝" in d["log"] and d["paused"] is False
-    assert c.post("/api/reencode/pause", json={"paused": True}).get_json()["paused"] is True
-    assert (re_env["base"] / "STOP").exists() and "일시정지 중" in reencode_ctl.state()["summary"]
-    c.post("/api/reencode/pause", json={"paused": False})
-    assert not (re_env["base"] / "STOP").exists()
-
-
-def test_clear_goes_to_host_via_ssh(re_env, monkeypatch):
-    r = re_env["client"].post("/api/reencode/clear").get_json()
-    assert r["ok"] and re_env["popen"][-1][-1] == "reencode-clear"
+def test_stop_and_viewer(re_env, monkeypatch):
+    assert re_env["client"].post("/api/reencode/stop").get_json()["ok"]
+    assert re_env["host"][-1] == ("stop", "web")
     monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
-    assert re_env["client"].post("/api/reencode/clear").status_code == 403
+    assert re_env["client"].post("/api/reencode/start").status_code == 403
+
+
+def test_api_includes_logs(re_env):
+    d = re_env["client"].get("/api/reencode").get_json()
+    assert "collect" in d["log"] and "인코딩 시작" in d["worker_log"]
 
 
 def test_telegram_buttons(re_env):
     now = int(time.time())
-    # 메시지 번호는 다른 테스트와 겹치지 않게 (같은 메시지의 버튼은 한 번만 처리됨)
-    cb = lambda a, mid: {"id": "q", "data": f"{a}:{now - 3600 * 5}", "message": {"chat": {"id": 1}, "message_id": 7700 + mid}}
-    web_admin._handle_telegram_callback(cb("re_stop", 1))
-    assert (re_env["base"] / "STOP").exists()
-    assert re_env["sent"][-1][1]["inline_keyboard"][0][0]["callback_data"].startswith("re_resume:")
-    web_admin._handle_telegram_callback(cb("re_resume", 2))
-    assert not (re_env["base"] / "STOP").exists()
+    cb = lambda a, mid: {"id": "q", "data": f"{a}:{now - 3600 * 5}", "message": {"chat": {"id": 1}, "message_id": 7800 + mid}}
+    web_admin._handle_telegram_callback(cb("re_resume", 1))
+    assert re_env["tasks"] == ["ReencodeWorker"] and ("resume", "telegram") in re_env["host"]
+    assert re_env["sent"][-1][1]["inline_keyboard"][0][0]["callback_data"].startswith("re_stop:")
+    web_admin._handle_telegram_callback(cb("re_stop", 2))
+    assert re_env["host"][-1] == ("stop", "telegram")
     web_admin._handle_telegram_callback(cb("re_status", 3))
     assert re_env["sent"][-1][0].startswith("♻️ 예능 재인코딩\n완료 1/4")
-    web_admin._handle_telegram_callback(cb("re_clear", 4))
-    assert re_env["popen"][-1][-1] == "reencode-clear"
 
 
-def test_night_encode_asks_when_pc_on(re_env, monkeypatch):
-    (re_env["enc"] / "[재인코딩] 0002 BTS.mkv").write_text("v")
-    (re_env["enc"] / "[재인코딩] 0004 런닝맨.mp4.part").write_text("v")
-    started = []
-    monkeypatch.setattr(web_admin, "_ensure_pc_on_and_trigger_encode",
-                        lambda progress=None, sync_timeout=None: started.append(sync_timeout) or (True, "인코딩 시작"))
+def test_night_asks_when_pc_on_and_starts_when_off(re_env, monkeypatch):
     monkeypatch.setattr(web_admin, "_is_pc_online", lambda host: True)
-    web_admin._run_reencode_encode()
+    web_admin._run_reencode_night()
     text, markup = re_env["sent"][-1]
-    assert "1개" in text and "PC가 켜져 있어요" in text and not started
-    assert markup["inline_keyboard"][0][0]["callback_data"].startswith("re_start:")
-    # [지금 시작] → 2시간 동기화 대기로 시작
+    assert "PC가 켜져 있어요" in text and not re_env["tasks"]
     web_admin._handle_telegram_callback({"id": "q", "data": markup["inline_keyboard"][0][0]["callback_data"],
-                                         "message": {"chat": {"id": 1}, "message_id": 7709}})
-    assert started == [2 * 3600]
-
-
-def test_night_encode_turns_pc_on_when_off(re_env, monkeypatch):
-    (re_env["enc"] / "[재인코딩] 0002 BTS.mkv").write_text("v")
-    started = []
-    monkeypatch.setattr(web_admin, "_ensure_pc_on_and_trigger_encode",
-                        lambda progress=None, sync_timeout=None: started.append(sync_timeout) or (True, "인코딩 시작"))
+                                         "message": {"chat": {"id": 1}, "message_id": 7810}})
+    assert re_env["tasks"] == ["ReencodeWorker"] and ("resume", "auto") in re_env["host"]
+    re_env["tasks"].clear()
     monkeypatch.setattr(web_admin, "_is_pc_online", lambda host: False)
-    web_admin._run_reencode_encode()
-    assert started == [2 * 3600] and re_env["sent"][-1][0].startswith("✅ 인코딩 시작")
-    # 일시정지(STOP)는 새로 넣기만 멈춤 → 넣어 둔 파일은 그래도 인코딩
-    started.clear()
-    reencode_ctl.set_paused(True)
-    web_admin._run_reencode_encode()
-    reencode_ctl.set_paused(False)
-    assert started == [2 * 3600]
-    # 기다리는 파일이 없으면 아무것도 안 함
-    started.clear()
-    (re_env["enc"] / "[재인코딩] 0002 BTS.mkv").unlink()
-    web_admin._run_reencode_encode()
-    assert started == []
+    web_admin._run_reencode_night()
+    assert re_env["tasks"] == ["ReencodeWorker"]
+
+
+def test_night_does_nothing_without_work(re_env, monkeypatch):
+    monkeypatch.setattr(reencode_ctl, "has_work", lambda: False)
+    web_admin._run_reencode_night()
+    assert not re_env["tasks"] and not re_env["sent"]
+
+
+def test_shutting_down_notified_once(re_env):
+    state = {}
+    write_status(re_env, state="encoding", updated="2026-10-27 18:00:00")
+    assert not web_admin._reencode_watch_worker(state)
+    write_status(re_env, state="shutting_down", updated="2026-10-27 19:00:00")
+    assert web_admin._reencode_watch_worker(state)
+    text, markup = re_env["sent"][-1]
+    assert text.startswith("♻️ 재인코딩 끝 — 5분 후 PC가 꺼져요.") and markup["inline_keyboard"][0][0]["callback_data"].startswith("cancel_off:")
+    assert not web_admin._reencode_watch_worker(state)              # 같은 하트비트는 한 번만
+
+
+def test_needs_collect(re_env):
+    assert not reencode_ctl.needs_collect()
+    (re_env["work"] / "done" / "0004.json").write_text("{}", encoding="utf-8")
+    assert reencode_ctl.needs_collect()
+
+
+def test_trash_button_only_for_leftover(re_env):
+    q = json.loads(reencode_ctl.QUEUE.read_text(encoding="utf-8"))
+    q["trash_bytes"] = 101 * 2 ** 30
+    reencode_ctl.QUEUE.write_text(json.dumps(q), encoding="utf-8")
+    assert "예전 방식 재인코딩 파일 약 101.0GB" in reencode_ctl.state()["summary"]
+    assert web_admin._reencode_buttons()["inline_keyboard"][1][0]["callback_data"].startswith("re_trash:")
 
 
 def test_schedule_due_once_per_day():
     tz = web_admin.APP_TZ
     at = lambda h, m: datetime(2026, 10, 28, h, m, tzinfo=tz)
     assert web_admin._reencode_due("01:00", at(1, 0), {})
-    assert web_admin._reencode_due("01:00", at(1, 40), {})
-    assert not web_admin._reencode_due("01:00", at(2, 5), {})            # 한 시간 넘게 지났으면 건너뜀(재시작 등)
+    assert not web_admin._reencode_due("01:00", at(2, 5), {})
     assert not web_admin._reencode_due("01:00", at(0, 59), {})
     assert not web_admin._reencode_due("01:00", at(1, 10), {"01:00": "2026-10-28"})
