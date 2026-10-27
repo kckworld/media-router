@@ -153,6 +153,15 @@ def test_trash_button_only_for_leftover(re_env):
     assert web_admin._reencode_buttons()["inline_keyboard"][1][0]["callback_data"].startswith("re_trash:")
 
 
+def test_night_start_is_3am():
+    assert web_admin.REENCODE_NIGHT_AT == "03:00"
+    tz = web_admin.APP_TZ
+    at = lambda h, m: datetime(2026, 10, 28, h, m, tzinfo=tz)
+    assert not web_admin._reencode_due("03:00", at(1, 0), {})
+    assert web_admin._reencode_due("03:00", at(3, 30), {})
+    assert not web_admin._reencode_due("03:00", at(4, 5), {})       # 1시간 넘게 지나면 건너뜀
+
+
 def test_schedule_due_once_per_day():
     tz = web_admin.APP_TZ
     at = lambda h, m: datetime(2026, 10, 28, h, m, tzinfo=tz)

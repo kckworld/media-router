@@ -1297,7 +1297,8 @@ def api_media_request_code():
 # [▶ 시작]/[⏹ 종료] 버튼, 새벽 자동 시작, 아침 요약, PC 종료 예고 알림을 맡는다.
 # /volume1/video가 컨테이너에선 읽기 전용이라 control.json 쓰기·collect는 SSH로 호스트에서(run_all.sh 앞 분기).
 import reencode_ctl
-REENCODE_NIGHT_AT = os.getenv("REENCODE_NIGHT_AT", "01:00")
+# 새벽 자동 시작 (10-27 사용자 요청으로 01:00 → 03:00: 1시엔 PC를 쓰고 있을 수 있어서)
+REENCODE_NIGHT_AT = os.getenv("REENCODE_NIGHT_AT", "03:00")
 REENCODE_MORNING_AT = os.getenv("REENCODE_MORNING_AT", "08:00")
 REENCODE_TASK = "ReencodeWorker"
 REENCODE_SCHED_PATH = DATA_DIR / "reencode_sched.json"
@@ -1435,7 +1436,7 @@ def _reencode_watch_worker(state: dict) -> bool:
 
 
 def _reencode_scheduler_loop() -> None:
-    """1분마다: 결과가 있으면 collect, PC 종료 예고 알림, 01:00 자동 시작, 08:00 요약"""
+    """1분마다: 결과가 있으면 collect, PC 종료 예고 알림, 03:00 자동 시작, 08:00 요약"""
     while True:
         time.sleep(60)
         try:
