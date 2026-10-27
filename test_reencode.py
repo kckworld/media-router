@@ -41,8 +41,32 @@ def re_env(monkeypatch, tmp_path):
 
 def test_state_summary(re_env):
     st = reencode_ctl.state()
-    assert st["summary"] == "완료 1/4 · 넣어 둠 1 · 대기 1 · 실패 1\n줄인 용량 6.0GB / 예상 11.0GB"
+    assert st["summary"] == ("완료 1/4 · 넣어 둠 1 · 대기 1 · 실패 1\n줄인 용량 6.0GB / 예상 11.0GB"
+                             "\nDrive 휴지통에 쌓인 재인코딩 파일 약 0.0GB")
     assert st["failed"] == [{"id": "0003", "name": "무한도전.avi", "error": "원본 없음(넣기 전)"}]
+
+
+def _set_trash(re_env, n, since="2026-10-27 16:49"):
+    q = json.loads((re_env["base"] / "queue.json").read_text(encoding="utf-8"))
+    q.update(trash_bytes=n, trash_emptied_at=since)
+    (re_env["base"] / "queue.json").write_text(json.dumps(q), encoding="utf-8")
+
+
+def test_trash_warning_and_button(re_env):
+    _set_trash(re_env, 50 * 2 ** 30)
+    st = reencode_ctl.state()
+    assert "약 50.0GB (2026-10-27 16:49 비운 뒤)" in st["summary"] and not st["trash_warn"]
+    assert len(web_admin._reencode_buttons()["inline_keyboard"]) == 1          # 100GB 아래면 버튼 없음
+    _set_trash(re_env, 120 * 2 ** 30)
+    assert "휴지통을 비워 주세요" in reencode_ctl.state()["summary"]
+    kb = web_admin._reencode_buttons()["inline_keyboard"]
+    assert kb[1][0]["text"] == "🧹 휴지통 비웠음" and kb[1][0]["callback_data"].startswith("re_trash:")
+    # 누르면 호스트로 (볼륨 여유 공간을 재야 해서)
+    now = int(time.time())
+    web_admin._handle_telegram_callback({"id": "q", "data": f"re_trash:{now}", "message": {"chat": {"id": 1}, "message_id": 7790}})
+    assert re_env["popen"][-1][-1] == "reencode-trash-emptied"
+    assert re_env["client"].post("/api/reencode/trash-emptied").get_json()["ok"]
+    assert re_env["client"].get("/api/reencode").get_json()["trash_bytes"] == 120 * 2 ** 30
 
 
 def test_api_and_pause(re_env):

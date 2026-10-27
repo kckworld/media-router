@@ -10,6 +10,8 @@ ts() { echo "[deploy $(date '+%H:%M:%S')]"; }
 # 적용되지 않으므로, 여기서는 sudo를 명시적으로 붙인다.
 DC="sudo docker compose"
 DOCKER="sudo docker"
+# 10-27 한 번은 빌드 뒤 조용히 멈춰 원인을 못 찾았다 → 실패하면 어디서 멈췄는지 남긴다
+trap 'echo "$(ts) ❌ 실패: ${BASH_SOURCE[0]}:${LINENO} — ${BASH_COMMAND}" >&2' ERR
 CONTAINER="media_router"
 
 # 배포하는 동안 healthcheck.sh(5분마다)가 컨테이너를 restart하지 않게 표시를 남긴다 (2026-10-27).

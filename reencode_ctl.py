@@ -15,6 +15,7 @@ QUEUE = BASE / "queue.json"
 STOP = BASE / "STOP"
 LOG = BASE / "reencode.log"
 PREFIX = "[재인코딩] "
+TRASH_WARN = 100 * 2 ** 30   # reencode.py와 같게: 이만큼 쌓이면 Drive 휴지통을 비우라고 안내
 
 
 def gb(n: int) -> str:
@@ -55,12 +56,19 @@ def state() -> dict:
     failed = [{"id": it.get("id"), "name": Path(it.get("src", "")).name,
                "error": it.get("msg") or ""} for it in items if it.get("status") == "failed"]
     is_paused = paused()
+    # Drive 폴더에서 지운 재인코딩 파일은 Drive 휴지통에 남아 공간을 붙잡는다 (10-27 +79GB 회수)
+    trash = q.get("trash_bytes", 0)
+    since = q.get("trash_emptied_at", "")
     # reencode.py summary()와 같은 모양
     summary = (f"완료 {counts.get('done', 0)}/{len(items)} · 넣어 둠 {counts.get('fed', 0)} · 대기 {counts.get('pending', 0)}"
                f" · 실패 {counts.get('failed', 0)}\n줄인 용량 {gb(saved)} / 예상 {gb(expect)}"
-               + ("\n⏸ 일시정지 중(STOP)" if is_paused else ""))
+               + ("\n⏸ 일시정지 중(STOP)" if is_paused else "")
+               + f"\nDrive 휴지통에 쌓인 재인코딩 파일 약 {gb(trash)}" + (f" ({since} 비운 뒤)" if since else "")
+               + ("\n🗑 Drive 휴지통을 비워 주세요 (Synology Drive 웹 → 휴지통 → 비우기). 비우기 전엔 이만큼 공간이 안 돌아와요."
+                  if trash >= TRASH_WARN else ""))
     return {"available": True, "counts": counts, "total": len(items), "saved": saved, "expect": expect,
-            "paused": is_paused, "failed": failed, "summary": summary}
+            "paused": is_paused, "failed": failed, "summary": summary,
+            "trash_bytes": trash, "trash_emptied_at": since, "trash_warn": trash >= TRASH_WARN}
 
 
 def log_tail(lines: int = 300) -> str:

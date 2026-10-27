@@ -21,16 +21,18 @@ ra_ts() { echo "[run_all $(date '+%H:%M:%S')]"; }
 # 웹·텔레그램의 재인코딩 [비우기] (2026-10-27): Drive 파일을 지우는 일이라 컨테이너가 아니라 여기(호스트)서.
 # 같은 SSH 키로 'reencode-clear'를 보내면 배치는 돌리지 않고 비우기만 한다. 배치 잠금보다 앞이라
 # 배치가 도는 중에도 바로 처리된다 (reencode.py가 자기 잠금으로 run과 겹치지 않게 함).
-if [ "${SSH_ORIGINAL_COMMAND:-}" = "reencode-clear" ]; then
-    echo "$(ra_ts) 재인코딩 비우기 요청 (웹·텔레그램)"
+# 'reencode-trash-emptied'(Drive 휴지통 비웠음 기록, 볼륨 여유 공간을 재야 해서 호스트)도 같은 방식.
+case "${SSH_ORIGINAL_COMMAND:-}" in reencode-clear|reencode-trash-emptied)
+    re_cmd="${SSH_ORIGINAL_COMMAND#reencode-}"
+    echo "$(ra_ts) 재인코딩 $re_cmd 요청 (웹·텔레그램)"
     # reencode.py run이 도는 중이면 clear는 바로 끝나 버리므로(잠금) 최대 10분 다시 시도
     for i in $(seq 1 20); do
-        out="$(python3 /volume1/docker/reencode/reencode.py clear 2>&1)" || echo "$(ra_ts) reencode.py clear 실패"
+        out="$(python3 /volume1/docker/reencode/reencode.py "$re_cmd" 2>&1)" || echo "$(ra_ts) reencode.py $re_cmd 실패"
         echo "$out"
         case "$out" in *"다른 실행이 진행 중"*) sleep 30 ;; *) break ;; esac
     done
-    exit 0
-fi
+    exit 0 ;;
+esac
 
 LOCKFILE="/volume1/docker/media-router/run.lock"
 exec 9>"$LOCKFILE"

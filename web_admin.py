@@ -1579,8 +1579,11 @@ REENCODE_SCHED_PATH = DATA_DIR / "reencode_sched.json"
 def _reencode_buttons() -> dict:
     now = int(time.time())
     pause = ("▶ 재개", "re_resume") if reencode_ctl.paused() else ("⏸ 일시정지", "re_stop")
-    return {"inline_keyboard": [[{"text": t, "callback_data": f"{a}:{now}"}
-                                 for t, a in (pause, ("🗑 비우기", "re_clear"), ("📊 상태", "re_status"))]]}
+    rows = [[{"text": t, "callback_data": f"{a}:{now}"}
+             for t, a in (pause, ("🗑 비우기", "re_clear"), ("📊 상태", "re_status"))]]
+    if reencode_ctl.state().get("trash_warn"):   # Drive 휴지통에 100GB 넘게 쌓였을 때만
+        rows.append([{"text": "🧹 휴지통 비웠음", "callback_data": f"re_trash:{now}"}])
+    return {"inline_keyboard": rows}
 
 
 def _reencode_status_text(head: str = "♻️ 예능 재인코딩") -> str:
@@ -1597,18 +1600,30 @@ def _reencode_status_text(head: str = "♻️ 예능 재인코딩") -> str:
     return "\n".join(lines)
 
 
-def _reencode_clear() -> tuple[bool, str]:
-    """Drive 복사본을 지우는 일이라 호스트에서: run_all.sh가 SSH 요청 이름 'reencode-clear'를 보고 처리"""
+def _reencode_host(cmd: str) -> tuple[bool, str]:
+    """reencode.py <cmd>를 호스트에서: run_all.sh가 SSH 요청 이름 'reencode-<cmd>'를 보고 처리.
+    clear는 Drive 파일을 지우고(컨테이너에서 지우면 PC 동기화가 깨짐), trash-emptied는 볼륨 여유 공간을 재서
+    (컨테이너 안에선 /volume1 크기를 못 잼) 둘 다 호스트에서 돌아야 한다."""
     if not Path(RUN_BATCH_SSH_KEY).exists():
-        return False, "SSH 키가 없어서 호스트에 비우기를 요청하지 못했어요."
+        return False, "SSH 키가 없어서 호스트에 요청하지 못했어요."
     try:
         subprocess.Popen(["ssh", "-i", RUN_BATCH_SSH_KEY, "-p", RUN_BATCH_SSH_PORT, "-o", "StrictHostKeyChecking=no",
                           "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-                          f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", "reencode-clear"],
+                          f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", f"reencode-{cmd}"],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
-        return False, f"비우기 요청 실패: {e}"
-    return True, "비우기를 요청했어요. 아직 인코딩 안 된 복사본을 Drive/인코딩에서 빼고 대기로 돌려요(끝나면 알림)."
+        return False, f"요청 실패: {e}"
+    return True, ""
+
+
+def _reencode_clear() -> tuple[bool, str]:
+    ok, msg = _reencode_host("clear")
+    return ok, msg or "비우기를 요청했어요. 아직 인코딩 안 된 복사본을 Drive/인코딩에서 빼고 대기로 돌려요(끝나면 알림)."
+
+
+def _reencode_trash_emptied() -> tuple[bool, str]:
+    ok, msg = _reencode_host("trash-emptied")
+    return ok, msg or "Drive 휴지통 비움으로 기록했어요 (쌓인 양 0으로, 볼륨 여유 공간도 기록)."
 
 
 def _tg_reencode_action(action: str) -> None:
@@ -1624,6 +1639,9 @@ def _tg_reencode_action(action: str) -> None:
         _tg_result(ok, msg)
     elif act == "re_status":
         _tg_notify(_reencode_status_text(), _reencode_buttons())
+    elif act == "re_trash":
+        ok, msg = _reencode_trash_emptied()
+        _tg_result(ok, msg)
     elif act == "re_start":
         _run_reencode_encode(force=True)
 
@@ -1696,6 +1714,15 @@ def api_reencode_pause():
         return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
     reencode_ctl.set_paused(bool((request.get_json(silent=True) or {}).get("paused")))
     return jsonify({"ok": True, "paused": reencode_ctl.paused()})
+
+
+@app.route("/api/reencode/trash-emptied", methods=["POST"])
+def api_reencode_trash_emptied():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    ok, msg = _reencode_trash_emptied()
+    return jsonify({"ok": ok, "message": msg, "error": None if ok else msg}), (200 if ok else 500)
 
 
 @app.route("/api/reencode/clear", methods=["POST"])
