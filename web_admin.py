@@ -1615,7 +1615,7 @@ def _tg_reencode_action(action: str) -> None:
     act = action.split(":", 1)[0]
     if act == "re_stop":
         reencode_ctl.set_paused(True)
-        _tg_notify("⏸ 재인코딩 일시정지 — 새로 넣지 않아요. 이미 넣어 둔 건 인코딩되면 마무리해요.", _reencode_buttons())
+        _tg_notify("⏸ 재인코딩 일시정지 — 새로 넣지 않아요. 이미 넣어 둔 건 새벽에 인코딩하고 마무리해요.", _reencode_buttons())
     elif act == "re_resume":
         reencode_ctl.set_paused(False)
         _tg_notify("▶ 재인코딩 재개 — 다음 배치(20분 이내)부터 다시 넣어요.", _reencode_buttons())
@@ -1629,9 +1629,8 @@ def _tg_reencode_action(action: str) -> None:
 
 
 def _run_reencode_encode(force: bool = False) -> None:
-    """새벽 자동 인코딩. PC가 이미 켜져 있으면(쓰는 중일 수 있고 끝나면 5분 뒤 꺼짐) 묻는다."""
-    if reencode_ctl.paused() and not force:
-        return
+    """새벽 자동 인코딩. PC가 이미 켜져 있으면(쓰는 중일 수 있고 끝나면 5분 뒤 꺼짐) 묻는다.
+    일시정지(STOP)는 '새로 넣기'만 멈추는 뜻이라, 이미 Drive/인코딩에 넣어 둔 파일은 인코딩한다 (10-27)."""
     waiting = reencode_ctl.waiting_files(ENCODING_HOLD_PATH)
     if not waiting:
         return

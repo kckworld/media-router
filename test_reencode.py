@@ -102,11 +102,14 @@ def test_night_encode_turns_pc_on_when_off(re_env, monkeypatch):
     monkeypatch.setattr(web_admin, "_is_pc_online", lambda host: False)
     web_admin._run_reencode_encode()
     assert started == [2 * 3600] and re_env["sent"][-1][0].startswith("✅ 인코딩 시작")
-    # 일시정지 중이거나 기다리는 파일이 없으면 아무것도 안 함
+    # 일시정지(STOP)는 새로 넣기만 멈춤 → 넣어 둔 파일은 그래도 인코딩
     started.clear()
     reencode_ctl.set_paused(True)
     web_admin._run_reencode_encode()
     reencode_ctl.set_paused(False)
+    assert started == [2 * 3600]
+    # 기다리는 파일이 없으면 아무것도 안 함
+    started.clear()
     (re_env["enc"] / "[재인코딩] 0002 BTS.mkv").unlink()
     web_admin._run_reencode_encode()
     assert started == []
