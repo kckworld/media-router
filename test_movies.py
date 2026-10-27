@@ -260,28 +260,92 @@ def test_enrich_caches_by_post(monkeypatch, tmp_path):
     assert calls == ["텐징"]   # 두 번째는 캐시
 
 
-def test_movie_best_sends_buttons(wa, monkeypatch, tmp_path):
+def test_movie_best_sends_one_collage_message(wa, monkeypatch, tmp_path):
     web_admin, sent, _ = wa
+    import movie_collage
+    web_admin._movie_cache["at"].clear()
     monkeypatch.setattr(web_admin, "MOVIE_TMDB_CACHE", tmp_path / "movie_tmdb_cache.json")
-    monkeypatch.setattr(web_admin.time, "sleep", lambda s: None)
+    monkeypatch.setattr(web_admin, "_tg_cfg", lambda: {"enabled": True, "chat_id": "1", "bot_token": "t"})
+    monkeypatch.setattr(web_admin, "KOBIS_API_KEY", "")
     monkeypatch.setattr(movies, "fetch_best", lambda: {
-        "day": [{"id": "1", "title": "인턴 The.Intern.2026"}], "week": [{"id": "2", "title": "호프 Hope.2026"}]})
-    photos = []
+        "day": [{"id": "1", "title": "인턴 The.Intern.2026"}],
+        "week": [{"id": "2", "title": "호프 Hope.2026"}, {"id": "3", "title": "인턴 The.Intern.2026.2160p"},
+                 {"id": "4", "title": "텐징 Tenzing 2026"}]})
     lookups = {"인턴": {"id": 607833, "title": "인턴", "year": 2026, "poster": "https://image.tmdb.org/t/p/w342/a.jpg",
-                       "rating": 7.1, "overview": "줄거리"}}
+                       "rating": 7.1, "overview": "줄거리"},
+               "텐징": {"id": 1288069, "title": "'텐징' - Tenzing", "year": 2026, "poster": None, "rating": 8.3, "overview": ""}}
     monkeypatch.setattr(movies, "tmdb_lookup", lambda key, ko, en, year: lookups.get(ko))
-    monkeypatch.setattr(web_admin, "_tg_call", lambda method, payload, token=None: photos.append((method, payload)) or {"ok": True})
+    made = []
+    monkeypatch.setattr(movie_collage, "make", lambda items: made.append(items) or b"JPEG")
+    posted = []
+
+    class R:
+        def json(self):
+            return {"ok": True}
+    monkeypatch.setattr(web_admin.requests, "post", lambda url, data=None, files=None, timeout=None: posted.append((url, data, files)) or R())
     web_admin._handle_telegram_text(web_admin.TG_BTN_MOVIES)
-    # 인턴: 포스터 메시지 (제목 (연도) ★평점 + 줄거리 + 글 제목, 버튼 3개)
-    method, p = photos[0]
-    assert method == "sendPhoto" and p["photo"].endswith("/a.jpg")
-    assert p["caption"].startswith("🔥 인턴 (2026)  ★7.1\n줄거리\n인턴 The.Intern.2026")
-    kb = p["reply_markup"]["inline_keyboard"]
-    assert kb[0][0]["callback_data"].startswith("mv_1:")
-    assert kb[1][0]["url"].endswith("b_id=tmovie&id=1") and kb[1][1]["url"].startswith("https://namu.wiki/Search?q=")
-    # 호프: TMDB에서 못 찾음 → 포스터 없이 글로
+    # 같은 영화(인턴 2160p 릴)는 묶여서 3편, 메시지 1개
+    assert [m["id"] for m in made[0]] == ["1", "2", "4"] and [m["kind"] for m in made[0]] == ["day", "week", "week"]
+    url, data, files = posted[0]
+    assert url.endswith("/sendPhoto") and files["photo"][1] == b"JPEG"
+    assert data["caption"].splitlines()[1:] == ["🔥 일간", "1. 인턴 (2026) ★7.1", "📅 주간", "2. 호프 (2026)", "3. 텐징 - Tenzing (2026) ★8.3"]
+    kb = json.loads(data["reply_markup"])["inline_keyboard"]
+    assert [b["text"] for b in kb[0]] == ["⬇1", "⬇2", "⬇3"] and kb[0][2]["callback_data"].startswith("mv_4:")
+    assert not sent
+
+
+def test_movie_best_falls_back_to_text_when_photo_fails(wa, monkeypatch, tmp_path):
+    web_admin, sent, _ = wa
+    import movie_collage
+    web_admin._movie_cache["at"].clear()
+    monkeypatch.setattr(web_admin, "MOVIE_TMDB_CACHE", tmp_path / "movie_tmdb_cache.json")
+    monkeypatch.setattr(web_admin, "KOBIS_API_KEY", "")
+    monkeypatch.setattr(movies, "fetch_best", lambda: {"day": [{"id": "1", "title": "인턴 The.Intern.2026"}], "week": []})
+    monkeypatch.setattr(movies, "tmdb_lookup", lambda key, ko, en, year: None)
+    monkeypatch.setattr(movie_collage, "make", lambda items: (_ for _ in ()).throw(OSError("x")))
+    web_admin._handle_telegram_text(web_admin.TG_BTN_MOVIES)
     text, markup = sent[-1]
-    assert text.startswith("📅 호프 (2026)") and markup["inline_keyboard"][0][0]["callback_data"].startswith("mv_2:")
+    assert "1. 인턴 (2026)" in text and markup["inline_keyboard"][0][0]["text"] == "⬇1"
+
+
+def test_collage_image_size():
+    import movie_collage
+    from PIL import Image
+    import io
+    data = movie_collage.make([{"poster": None, "kind": "day"}] * 7, fetch=lambda u: None)
+    img = Image.open(io.BytesIO(data))
+    assert img.size == (968, 14 * 2 + 2 * 270 + 10)
+
+
+def test_kobis_audience_uses_last_week_in_top10(monkeypatch, tmp_path):
+    import kobis
+    from datetime import date
+    calls = []
+
+    def fake_get(key, path, **p):
+        calls.append(path)
+        if path.startswith("movie/"):
+            return {"movieListResult": {"movieList": [
+                {"movieCd": "X", "movieNm": "인턴", "openDt": "20150924"},
+                {"movieCd": "Y", "movieNm": "인턴", "openDt": "20260916"}]}}
+        week = {"20150924": 500000, "20151001": 2000000, "20151008": 3000000}.get(p["targetDt"])
+        rows = [{"movieCd": "X", "audiAcc": str(week)}] if week else []
+        return {"boxOfficeResult": {"weeklyBoxOfficeList": rows}}
+    monkeypatch.setattr(kobis, "_get", fake_get)
+    now = 1793000000  # 2026-10
+    assert kobis.audience("k", "인턴", 2015, tmp_path / "c.json", now=now) == 3000000
+    n = len(calls)
+    assert kobis.audience("k", "인턴", 2015, tmp_path / "c.json", now=now) == 3000000 and len(calls) == n   # 캐시
+    assert kobis.fmt(3000000) == "300만" and kobis.fmt(8500) == "8,500명" and kobis.fmt(None) == ""
+
+
+def test_dedupe_best_keeps_highest_rank():
+    day = [{"id": "1", "title": "a", "tmdb_id": 5, "display": "인턴 (2026)"}]
+    week = [{"id": "2", "title": "b", "tmdb_id": 5, "display": "인턴 (2026)"},
+            {"id": "3", "title": "c", "tmdb_id": 7, "display": "텐징"}, {"id": "4", "title": "d", "tmdb_id": 7, "display": "텐징"},
+            {"id": "5", "title": "e", "tmdb_id": None, "display": "모름 (2026)"}]
+    d, w = movies.dedupe_best(day, week, 10)
+    assert [m["id"] for m in d] == ["1"] and [m["id"] for m in w] == ["3", "5"]
 
 
 def test_movie_button_starts_download_and_keeps_list(wa, monkeypatch):

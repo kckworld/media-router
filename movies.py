@@ -84,11 +84,30 @@ def fetch_list(page: int = 1) -> list[dict]:
 
 
 def fetch_best() -> dict:
-    """{'day': [...], 'week': [...]} - 주간에서 일간과 겹치는 글은 뺀다"""
+    """{'day': [...], 'week': [...]} - 주간에서 일간과 겹치는 글은 뺀다.
+    주간은 넉넉히(30개) 가져온다 - 같은 영화의 다른 릴을 dedupe_best로 묶고 나서 WEEK_LIMIT개로 자른다"""
     day = parse_daily_best(_fetch(f"{TFREECA_BASE}/board.php?mode=lists&b_id=tmovie"))
-    week = parse_week_best(_fetch(f"{TFREECA_BASE}/top100.php?b_id=tmovie&hit=Week"), WEEK_LIMIT + len(day))
+    week = parse_week_best(_fetch(f"{TFREECA_BASE}/top100.php?b_id=tmovie&hit=Week"), 30)
     ids = {m["id"] for m in day}
-    return {"day": day, "week": [m for m in week if m["id"] not in ids][:WEEK_LIMIT]}
+    return {"day": day, "week": [m for m in week if m["id"] not in ids]}
+
+
+def dedupe_best(day: list[dict], week: list[dict], week_limit: int = WEEK_LIMIT) -> tuple[list[dict], list[dict]]:
+    """같은 영화(TMDB 번호, 없으면 표시 이름)는 순위가 가장 높은 글 하나만 (10-27 주간에 텐징이 3번)
+    enrich를 거친 항목을 받는다. 일간이 주간보다 앞."""
+    seen: set = set()
+
+    def keep(items):
+        out = []
+        for m in items:
+            k = m.get("tmdb_id") or m.get("display") or m["title"]
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(m)
+        return out
+    day = keep(day)
+    return day, keep(week)[:week_limit]
 
 
 def parse_view(view_html: str) -> dict:
@@ -206,6 +225,7 @@ def enrich(items: list[dict], api_key: str, cache_path: Path, workers: int = 6) 
         info = cache.get(m["id"]) or {}
         title = info.get("title") or split_post_title(m["title"])[0] or m["title"]
         out.append(dict(m, display=make_prefix(title, info.get("year")), poster=info.get("poster"),
+                        tmdb_id=info.get("id"), year=info.get("year"), tmdb_title=title,
                         rating=info.get("rating"), overview=info.get("overview") or "",
                         namu=namu_url(safe_name(title))))
     return out

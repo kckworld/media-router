@@ -8,3 +8,5 @@ pymediainfo==6.1.0
 # 유튜브 다운로드. yt-dlp는 실행 중 하루 한 번 스스로 최신으로 올린다(youtube_dl.py). deno는 yt-dlp의 YouTube JS 해석용
 yt-dlp[default]
 deno
+# 영화 베스트 포스터 모음 사진 (텔레그램, 2026-10-27)
+Pillow==10.4.0

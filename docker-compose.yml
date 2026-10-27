@@ -50,6 +50,8 @@ services:
       - QBIT_USERNAME=${QBIT_USERNAME:-}
       - QBIT_PASSWORD=${QBIT_PASSWORD:-}
       - MOVIE_DL_DIR=/app/torrent_dl/_movies
+      # 영화 베스트 국내 관객수 (영화진흥위원회 오픈 API, 2026-10-27). 값은 .env
+      - KOBIS_API_KEY=${KOBIS_API_KEY:-}
       # 사용자 관리 탭(media-stats postgres 연동, 2026-09-18)
       - STATS_DB_HOST=${STATS_DB_HOST:-localhost}
       - STATS_DB_PORT=${STATS_DB_PORT:-15433}
