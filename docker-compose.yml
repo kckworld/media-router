@@ -29,6 +29,8 @@ services:
       # "취소"인지 구분하려고 받은 폴더를 읽기 전용으로 본다. _movies는 비면 지워질 수 있어서
       # (지워지면 컨테이너가 못 뜸) 늘 있는 상위 폴더를 붙인다
       - /volume2/torrent/download:/app/torrent_dl:ro
+      # 예능 일괄 재인코딩(2026-10-27): queue.json·로그 읽기, 일시정지(STOP 파일). Drive 파일은 건드리지 않음
+      - /volume1/docker/reencode:/volume1/docker/reencode
     environment:
       - MEDIA_ADMIN_PASSWORD=${MEDIA_ADMIN_PASSWORD:-}
       # 보기 전용 계정 비밀번호 (비우면 보기 전용 로그인 없음). 값은 .env에

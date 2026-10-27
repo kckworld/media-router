@@ -18,6 +18,20 @@ chmod 666 "$LOGFILE" 2>/dev/null || true
 exec >>"$LOGFILE" 2>&1
 ra_ts() { echo "[run_all $(date '+%H:%M:%S')]"; }
 
+# 웹·텔레그램의 재인코딩 [비우기] (2026-10-27): Drive 파일을 지우는 일이라 컨테이너가 아니라 여기(호스트)서.
+# 같은 SSH 키로 'reencode-clear'를 보내면 배치는 돌리지 않고 비우기만 한다. 배치 잠금보다 앞이라
+# 배치가 도는 중에도 바로 처리된다 (reencode.py가 자기 잠금으로 run과 겹치지 않게 함).
+if [ "${SSH_ORIGINAL_COMMAND:-}" = "reencode-clear" ]; then
+    echo "$(ra_ts) 재인코딩 비우기 요청 (웹·텔레그램)"
+    # reencode.py run이 도는 중이면 clear는 바로 끝나 버리므로(잠금) 최대 10분 다시 시도
+    for i in $(seq 1 20); do
+        out="$(python3 /volume1/docker/reencode/reencode.py clear 2>&1)" || echo "$(ra_ts) reencode.py clear 실패"
+        echo "$out"
+        case "$out" in *"다른 실행이 진행 중"*) sleep 30 ;; *) break ;; esac
+    done
+    exit 0
+fi
+
 LOCKFILE="/volume1/docker/media-router/run.lock"
 exec 9>"$LOCKFILE"
 flock -n 9 || { echo "$(ra_ts) 이미 실행중입니다."; exit 0; }
@@ -33,6 +47,7 @@ find "$LOGDIR" -maxdepth 1 -name "*.log" -mtime +30 -delete 2>/dev/null || true
 # 로그에서 웹 수동 실행과 DSM 예약 실행(cron)을 구분할 수 있다.
 TRIGGER_SOURCE="${SSH_ORIGINAL_COMMAND:-cron}"
 RUN_START_EPOCH=$(date +%s)
+
 
 # 실행 종료 시(정상/오류 모두) 소요 시간과 종료 상태를 반드시 한 줄 남긴다.
 # 이게 없으면 로그만 보고는 "지금 실행 중인지 / 중간에 죽었는지"를 알 수 없었다.
@@ -67,6 +82,10 @@ fi
 if [ "$PROCESSING_PAUSED" -eq 0 ]; then
     /volume1/web/video_auto/drama_name.sh || echo "$(ra_ts) drama_name.sh 실행 중 오류 발생 (계속 진행)"
 fi
+
+# 1.5 예능 일괄 재인코딩 (2026-10-27): 인코딩 끝난 것 회수·교체 + Drive/인코딩에 다음 묶음 넣기
+#     (/volume1/docker/reencode/reencode.py, 미디어 정리 세션). drama_name은 [재인코딩] 파일을 건너뜀
+/volume1/docker/run-logged.sh reencode python3 /volume1/docker/reencode/reencode.py run || true
 
 # 2. happypack
 /volume1/web/Python/happypack/happypack.sh || echo "$(ra_ts) happypack.sh 실행 중 오류 발생 (계속 진행)"

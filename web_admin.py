@@ -2,7 +2,7 @@
 from pathlib import Path
 import os, base64, hashlib, hmac, json, re, secrets, subprocess, time, threading, socket
 from flask import Flask, request, redirect, render_template, abort, make_response, jsonify, send_file
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import requests
@@ -513,7 +513,7 @@ def _missing_on_pc(nas: dict[str, int], pc: dict[str, int]) -> list[str]:
     return sorted(name for name, size in nas.items() if pc.get(name) != size)
 
 
-def _wait_encode_files_synced(progress=None) -> tuple[bool, str]:
+def _wait_encode_files_synced(progress=None, timeout: int | None = None) -> tuple[bool, str]:
     """NAS의 인코딩 대상이 PC에 다 내려올 때까지 기다린다. (성공 여부, 안내 메시지)
     NAS에 대상이 없으면 바로 통과 - 그때는 스크립트가 "대상 0개 → 즉시 종료"로
     동작하는데, 그게 원격 종료 스위치로 쓰는 원래 의도다."""
@@ -521,7 +521,8 @@ def _wait_encode_files_synced(progress=None) -> tuple[bool, str]:
         if progress:
             progress(msg)
 
-    deadline = time.time() + ENCODE_SYNC_TIMEOUT_SEC
+    timeout = timeout or ENCODE_SYNC_TIMEOUT_SEC
+    deadline = time.time() + timeout
     noted = False
     missing: list[str] = []
     while True:
@@ -535,16 +536,16 @@ def _wait_encode_files_synced(progress=None) -> tuple[bool, str]:
                 return True, f"PC로 동기화 완료 ({len(nas)}개)"
         if time.time() >= deadline:
             names = "\n- ".join(missing[:5]) if missing else "(PC 폴더를 확인하지 못함)"
-            return False, (f"{ENCODE_SYNC_TIMEOUT_SEC // 60}분 기다렸는데 PC로 동기화가 안 끝났어요. 인코딩은 시작하지 않았고 PC는 켜 둔 채예요.\n"
+            return False, (f"{timeout // 60}분 기다렸는데 PC로 동기화가 안 끝났어요. 인코딩은 시작하지 않았고 PC는 켜 둔 채예요.\n"
                            f"Synology Drive 상태를 확인해 주세요.\n- {names}")
         if not noted:
             noted = True
             done = len(nas) - len(missing) if pc is not None else 0
-            _note(f"Synology Drive가 인코딩할 파일을 PC로 옮기는 중이에요 ({done}/{len(nas)}). 다 올라오면 시작할게요 (최대 {ENCODE_SYNC_TIMEOUT_SEC // 60}분).")
+            _note(f"Synology Drive가 인코딩할 파일을 PC로 옮기는 중이에요 ({done}/{len(nas)}). 다 올라오면 시작할게요 (최대 {timeout // 60}분).")
         time.sleep(ENCODE_SYNC_POLL_SEC)
 
 
-def _ensure_pc_on_and_trigger_encode(progress=None) -> tuple[bool, str]:
+def _ensure_pc_on_and_trigger_encode(progress=None, sync_timeout: int | None = None) -> tuple[bool, str]:
     """PC가 꺼져있으면 WOL로 켜고 최대 2분 기다렸다가, 켜지면(또는 이미
     켜져있으면) 인코딩을 원격 시작한다. 웹 버튼과 텔레그램 트리거가 공유.
     progress(선택): 중간 진행 상황을 알리고 싶을 때 쓰는 콜백(예: 텔레그램
@@ -568,7 +569,7 @@ def _ensure_pc_on_and_trigger_encode(progress=None) -> tuple[bool, str]:
         _note("PC 켜졌어요. 인코딩할 파일이 PC로 다 올라왔는지 확인할게요.")
         time.sleep(10)  # SSH 서비스가 완전히 올라올 시간 여유
 
-    synced, sync_msg = _wait_encode_files_synced(progress)
+    synced, sync_msg = _wait_encode_files_synced(progress, sync_timeout)
     if not synced:
         return False, sync_msg
     ok, message = _trigger_remote_encode()
@@ -651,7 +652,8 @@ def _handle_telegram_callback(cq: dict) -> None:
     msg = cq.get("message") or {}
     chat_id = (msg.get("chat") or {}).get("id")
     is_movie = action.startswith("mv_")
-    ttl = TG_MOVIE_TTL_SEC if is_movie else TG_REQUEST_TTL_SEC if action.startswith("rq_") else TG_CONFIRM_TTL_SEC
+    ttl = (TG_MOVIE_TTL_SEC if is_movie or action.startswith("re_")
+           else TG_REQUEST_TTL_SEC if action.startswith("rq_") else TG_CONFIRM_TTL_SEC)
     expired = action != "cancel_off" and (not ts.isdigit() or time.time() - int(ts) > ttl)
     key = (chat_id, msg.get("message_id"), action if is_movie else "")
     with _tg_handled["lock"]:
@@ -671,6 +673,9 @@ def _handle_telegram_callback(cq: dict) -> None:
         return
     if is_movie:
         _tg_movie_download(action[3:])
+        return
+    if action.startswith("re_"):
+        _tg_reencode_action(action)
         return
     if action[:8] in ("rq_done_", "rq_hold_"):
         status = "done" if action.startswith("rq_done_") else "hold"
@@ -1559,6 +1564,148 @@ def api_media_request_code():
         return jsonify({"ok": False, "error": "코드는 20자까지예요."}), 400
     MEDIA_REQUEST_SETTINGS.write_text(json.dumps({"code": code}, ensure_ascii=False), encoding="utf-8")
     return jsonify({"ok": True, "code": code})
+
+
+# ── 예능 일괄 재인코딩 (2026-10-27, /volume1/docker/reencode — 미디어 정리 세션의 reencode.py) ──
+# run_all.sh가 20분마다 reencode.py run(완료분 회수 + Drive/인코딩에 넣기). 여기서는 새벽 자동 인코딩,
+# 아침 진행 요약, 텔레그램·웹 버튼(일시정지/재개/비우기/상태)을 맡는다.
+import reencode_ctl
+REENCODE_NIGHT_AT = os.getenv("REENCODE_NIGHT_AT", "01:00")
+REENCODE_MORNING_AT = os.getenv("REENCODE_MORNING_AT", "08:00")
+REENCODE_SYNC_TIMEOUT_SEC = 2 * 3600          # Drive가 PC로 내려받는 걸 새벽엔 넉넉히 기다린다
+REENCODE_SCHED_PATH = DATA_DIR / "reencode_sched.json"
+
+
+def _reencode_buttons() -> dict:
+    now = int(time.time())
+    pause = ("▶ 재개", "re_resume") if reencode_ctl.paused() else ("⏸ 일시정지", "re_stop")
+    return {"inline_keyboard": [[{"text": t, "callback_data": f"{a}:{now}"}
+                                 for t, a in (pause, ("🗑 비우기", "re_clear"), ("📊 상태", "re_status"))]]}
+
+
+def _reencode_status_text(head: str = "♻️ 예능 재인코딩") -> str:
+    st = reencode_ctl.state()
+    if not st.get("available"):
+        return f"{head}\n(queue.json을 못 읽었어요)"
+    lines = [head, st["summary"]]
+    if st["failed"]:
+        lines.append("실패: " + ", ".join(f"#{f['id']} {f['name'][:20]}" for f in st["failed"][:5])
+                     + (f" 외 {len(st['failed']) - 5}개" if len(st["failed"]) > 5 else ""))
+    waiting = reencode_ctl.waiting_files(ENCODING_HOLD_PATH)
+    if waiting:
+        lines.append(f"Drive/인코딩에서 인코딩 기다리는 중: {len(waiting)}개")
+    return "\n".join(lines)
+
+
+def _reencode_clear() -> tuple[bool, str]:
+    """Drive 복사본을 지우는 일이라 호스트에서: run_all.sh가 SSH 요청 이름 'reencode-clear'를 보고 처리"""
+    if not Path(RUN_BATCH_SSH_KEY).exists():
+        return False, "SSH 키가 없어서 호스트에 비우기를 요청하지 못했어요."
+    try:
+        subprocess.Popen(["ssh", "-i", RUN_BATCH_SSH_KEY, "-p", RUN_BATCH_SSH_PORT, "-o", "StrictHostKeyChecking=no",
+                          "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                          f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", "reencode-clear"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        return False, f"비우기 요청 실패: {e}"
+    return True, "비우기를 요청했어요. 아직 인코딩 안 된 복사본을 Drive/인코딩에서 빼고 대기로 돌려요(끝나면 알림)."
+
+
+def _tg_reencode_action(action: str) -> None:
+    act = action.split(":", 1)[0]
+    if act == "re_stop":
+        reencode_ctl.set_paused(True)
+        _tg_notify("⏸ 재인코딩 일시정지 — 새로 넣지 않아요. 이미 넣어 둔 건 인코딩되면 마무리해요.", _reencode_buttons())
+    elif act == "re_resume":
+        reencode_ctl.set_paused(False)
+        _tg_notify("▶ 재인코딩 재개 — 다음 배치(20분 이내)부터 다시 넣어요.", _reencode_buttons())
+    elif act == "re_clear":
+        ok, msg = _reencode_clear()
+        _tg_result(ok, msg)
+    elif act == "re_status":
+        _tg_notify(_reencode_status_text(), _reencode_buttons())
+    elif act == "re_start":
+        _run_reencode_encode(force=True)
+
+
+def _run_reencode_encode(force: bool = False) -> None:
+    """새벽 자동 인코딩. PC가 이미 켜져 있으면(쓰는 중일 수 있고 끝나면 5분 뒤 꺼짐) 묻는다."""
+    if reencode_ctl.paused() and not force:
+        return
+    waiting = reencode_ctl.waiting_files(ENCODING_HOLD_PATH)
+    if not waiting:
+        return
+    if not force and _is_pc_online(GAMING_PC_HOST):
+        now = int(time.time())
+        _tg_notify(f"🌙 재인코딩할 파일 {len(waiting)}개가 기다리는데 PC가 켜져 있어요.\n"
+                   "지금 인코딩을 시작할까요? (끝나면 5분 뒤 PC가 꺼져요)",
+                   {"inline_keyboard": [[{"text": "▶ 지금 시작", "callback_data": f"re_start:{now}"},
+                                         {"text": "건너뛰기", "callback_data": f"dismiss:{now}"}]]})
+        return
+    _tg_notify(f"🌙 재인코딩할 파일 {len(waiting)}개 — PC를 켜서 인코딩할게요.")
+    ok, message = _ensure_pc_on_and_trigger_encode(progress=_tg_notify, sync_timeout=REENCODE_SYNC_TIMEOUT_SEC)
+    _tg_notify(("✅ " if ok else "❌ ") + message + ("\n끝나면 알아서 PC가 꺼질 거예요." if ok else ""))
+
+
+def _reencode_due(slot: str, now: datetime, state: dict) -> bool:
+    """오늘 그 시각이 지났고(1시간 안), 오늘 아직 안 했으면 True - 컨테이너 재시작으로 두 번 돌지 않게 기록"""
+    hh, mm = (int(x) for x in slot.split(":"))
+    at = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    return at <= now < at + timedelta(hours=1) and state.get(slot) != now.strftime("%Y-%m-%d")
+
+
+def _reencode_scheduler_loop() -> None:
+    while True:
+        time.sleep(30)
+        try:
+            if not reencode_ctl.available():
+                continue
+            now = datetime.now(APP_TZ)
+            try:
+                state = json.loads(REENCODE_SCHED_PATH.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                state = {}
+            for slot, job in ((REENCODE_NIGHT_AT, lambda: _run_reencode_encode()),
+                              (REENCODE_MORNING_AT, lambda: _tg_notify(_reencode_status_text("☀️ 예능 재인코딩 아침 요약"),
+                                                                       _reencode_buttons()))):
+                if _reencode_due(slot, now, state):
+                    state[slot] = now.strftime("%Y-%m-%d")
+                    REENCODE_SCHED_PATH.write_text(json.dumps(state), encoding="utf-8")
+                    _tg_safe(job)
+        except Exception:
+            app.logger.warning("재인코딩 예약 작업 오류")
+
+
+threading.Thread(target=_reencode_scheduler_loop, daemon=True).start()
+
+
+@app.route("/api/reencode", methods=["GET"])
+def api_reencode():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    st = reencode_ctl.state()
+    st.update(ok=True, log=reencode_ctl.log_tail(), waiting=len(reencode_ctl.waiting_files(ENCODING_HOLD_PATH)),
+              night_at=REENCODE_NIGHT_AT, morning_at=REENCODE_MORNING_AT)
+    return jsonify(st)
+
+
+@app.route("/api/reencode/pause", methods=["POST"])
+def api_reencode_pause():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    reencode_ctl.set_paused(bool((request.get_json(silent=True) or {}).get("paused")))
+    return jsonify({"ok": True, "paused": reencode_ctl.paused()})
+
+
+@app.route("/api/reencode/clear", methods=["POST"])
+def api_reencode_clear():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    ok, msg = _reencode_clear()
+    return jsonify({"ok": ok, "message": msg, "error": None if ok else msg}), (200 if ok else 500)
 
 
 import youtube_dl as ytdl

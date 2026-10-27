@@ -87,6 +87,31 @@
       </div>
     </div>
 
+    {# 예능 일괄 재인코딩 (2026-10-27, /volume1/docker/reencode) #}
+    <div class="card pause-card" id="reCard" hidden>
+      <div class="pause-row">
+        <div class="pause-text">
+          <div class="section-title" style="margin:0;">예능 일괄 재인코딩</div>
+          <div class="pause-state" id="reSummary" style="white-space:pre-line;">불러오는 중…</div>
+          <div class="hint" id="reHint" style="margin-top:4px;"></div>
+        </div>
+        <label class="switch" data-write title="끄면 새로 넣지 않아요 (넣어 둔 건 마무리)">
+          <input type="checkbox" id="reToggle" onchange="setReencodePaused(!this.checked)">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="sr-only">재인코딩 켜기</span>
+        </label>
+      </div>
+      <div class="toolbar" style="margin-top:10px;">
+        <div class="group" data-write>
+          <button type="button" class="btn small" onclick="clearReencode()" title="아직 인코딩 안 된 복사본을 Drive/인코딩에서 빼고 대기로 돌려요">🗑 비우기</button>
+        </div>
+        <div class="group"><button type="button" class="btn small" onclick="loadReencode()">↻ 새로고침</button></div>
+      </div>
+      <div id="reFailed" class="hint" style="margin-top:8px;"></div>
+      <div class="log-view" id="reLog" style="max-height:260px; margin-top:10px;"><span class="empty">로그 없음</span></div>
+      <div class="hint" style="margin-top:6px;"><span class="path-tag">/volume1/docker/reencode/reencode.log</span></div>
+    </div>
+
     <div class="card">
       <div class="section-title">인코딩 보류 현황 (Drive\인코딩)</div>
       <div class="toolbar">
@@ -110,6 +135,48 @@
 
 {% block scripts %}
   <script>
+    function reEsc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function loadReencode() {
+      fetch("/api/reencode", { cache: "no-store" }).then(mrJson).then(function(res) {
+        var d = res.data || {};
+        if (!res.ok || !d.available) return;   // 재인코딩을 안 쓰면 카드 숨김
+        document.getElementById("reCard").hidden = false;
+        document.getElementById("reSummary").textContent = d.summary;
+        document.getElementById("reToggle").checked = !d.paused;
+        document.getElementById("reCard").classList.toggle("is-paused", !!d.paused);
+        document.getElementById("reHint").textContent =
+          "20분마다 완료분을 원래 폴더로 바꿔 넣고 Drive/인코딩에 100GB까지 채워요. 매일 " + d.night_at +
+          " PC를 켜서 인코딩(켜져 있으면 텔레그램으로 물어봄), " + d.morning_at + " 진행 요약을 보내요." +
+          (d.waiting ? " 지금 Drive/인코딩에서 기다리는 파일 " + d.waiting + "개." : "");
+        document.getElementById("reFailed").innerHTML = d.failed && d.failed.length
+          ? "<b>실패 " + d.failed.length + "개</b><br>" + d.failed.map(function(f) { return "#" + reEsc(f.id) + " " + reEsc(f.name) + (f.error ? " — " + reEsc(f.error) : ""); }).join("<br>")
+          : "";
+        var log = document.getElementById("reLog");
+        log.textContent = d.log || "로그 없음";
+        log.scrollTop = log.scrollHeight;
+      }).catch(function() {});
+    }
+    function setReencodePaused(paused) {
+      var t = document.getElementById("reToggle");
+      t.disabled = true;
+      fetch("/api/reencode/pause", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paused: paused }) })
+        .then(mrJson).then(function(res) {
+          t.disabled = false;
+          if (!res.ok) { t.checked = paused; showToast("바꾸지 못했어요", "error"); return; }
+          showToast(paused ? "재인코딩을 일시정지했어요. 넣어 둔 건 마무리해요." : "재인코딩을 다시 켰어요.", "success");
+          loadReencode();
+        }).catch(function(e) { t.disabled = false; showToast("오류: " + e, "error"); });
+    }
+    function clearReencode() {
+      if (!confirm("아직 인코딩 안 된 재인코딩 복사본을 Drive/인코딩에서 빼고 대기로 돌릴까요?\n(원본은 그대로예요)")) return;
+      fetch("/api/reencode/clear", { method: "POST" }).then(mrJson).then(function(res) {
+        showToast((res.data && (res.data.message || res.data.error)) || "요청했어요", res.ok ? "success" : "error");
+        setTimeout(loadReencode, 5000);
+      });
+    }
+    loadReencode();
+    setInterval(function() { if (!document.hidden) loadReencode(); }, 30000);
+
     var offset = {{ initial_offset }};
     var allLines = [];
     var pendingPartial = "";
