@@ -369,3 +369,17 @@ def test_pending_upload_in_summary(re_env):
     assert "PC: encoding — #0004 · 올리기 대기 2개 (10-27 22:50)" in reencode_ctl.state()["summary"]
     write_status(re_env, state="encoding", current="0004", pending_upload=0, updated="2026-10-27 22:50:00")
     assert "올리기 대기" not in reencode_ctl.state()["summary"]
+
+
+def test_night_skips_when_worker_already_running(re_env, monkeypatch):
+    monkeypatch.setattr(web_admin, "_is_pc_online", lambda host: True)
+    now = datetime.now(web_admin.APP_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    write_status(re_env, state="encoding", current="0004", updated=now)
+    (re_env["work"] / "control.json").write_text(json.dumps({"run": True}), encoding="utf-8")
+    web_admin._run_reencode_night()
+    assert not re_env["sent"] and not re_env["tasks"] and not re_env["host"]      # 이미 돌고 있으면 조용히
+    # 새 예능만 하느라 일괄 쪽이 멈춰 있으면 묻지 않고 이어서 하게만
+    (re_env["work"] / "control.json").write_text(json.dumps({"run": False}), encoding="utf-8")
+    web_admin._run_reencode_night()
+    assert re_env["host"] == [("resume", "auto")] and not re_env["tasks"]
+    assert "이어서 하게 했어요" in re_env["sent"][-1][0]

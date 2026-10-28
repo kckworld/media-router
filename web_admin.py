@@ -207,11 +207,11 @@ def _has_partial_downloads() -> bool:
     return bool(_partial_downloads())
 
 
-def _is_encoding_in_progress() -> bool:
+def _is_encoding_in_progress(states=("copying", "encoding", "uploading")) -> bool:
     """재인코딩 워커가 복사·인코딩·업로드 중이면 True (PC 예약 종료·PC 끄기 경고에 씀).
     하트비트가 10분 넘게 끊겼으면 PC가 꺼졌거나 워커가 죽은 것으로 본다."""
     w = reencode_ctl.worker()
-    if w.get("state") not in ("copying", "encoding", "uploading"):
+    if w.get("state") not in states:
         return False
     try:
         updated = datetime.strptime(str(w.get("updated"))[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=APP_TZ)
@@ -1488,6 +1488,13 @@ def _run_reencode_night() -> None:
     """새벽 자동 시작. 일괄 재인코딩이나 새 예능에 할 일이 있으면 시작, PC가 이미 켜져 있으면(쓰는 중일 수 있음)
     묻는다. 새 예능만 남았으면 일괄 쪽 멈춤(STOP)은 그대로 둔다."""
     if not reencode_ctl.has_work():
+        return
+    # 워커가 이미 돌고 있으면(10-28 새벽: 인코딩 중인데 "지금 시작할까요?"를 물었다) 묻지 않는다.
+    # 새 예능만 하느라 일괄 쪽이 멈춰 있으면 조용히 이어서 하게만 한다.
+    if _is_encoding_in_progress(("copying", "encoding", "uploading", "waiting")):
+        if reencode_ctl.batch_has_work() and not reencode_ctl.running():
+            if _reencode_host("resume", "auto"):
+                _tg_notify("🌙 PC가 이미 인코딩 중이라 일괄 재인코딩도 이어서 하게 했어요.")
         return
     if _is_pc_online(GAMING_PC_HOST):
         now = int(time.time())
