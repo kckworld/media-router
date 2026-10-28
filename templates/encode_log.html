@@ -30,7 +30,8 @@
     .log-view .empty { color: var(--log-muted); }
     .hold-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
     .hold-table th, .hold-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; }
-    .hold-table th:first-child, .hold-table td:first-child { text-align: left; }
+    .hold-table th:first-child, .hold-table td:first-child, .hold-table .name { text-align: left; }
+    .re-fail summary { cursor: pointer; display: inline; }
     .hold-table thead th { color: var(--muted); font-weight: 600; font-size: 12px; }
     @media (max-width: 640px) {
       .log-view { height: 50vh; font-size: 12px; }
@@ -118,21 +119,21 @@
         return;
       }
       if (reTab === "done") {
-        head.innerHTML = "<tr><th>#</th><th>이름</th><th>용량 (전 → 후)</th><th>절감</th><th>비트레이트 (전 → 후)</th><th>완료</th></tr>";
+        head.innerHTML = "<tr><th>#</th><th class=\"name\">이름</th><th>용량 (전 → 후)</th><th>절감</th><th>비트레이트 (전 → 후)</th><th>완료</th></tr>";
         body.innerHTML = RE.done_list.map(function(r) {
           var after = r.new_size && r.dur ? (r.new_size * 8 / r.dur / 1e6).toFixed(1) : "-";
           var pct = r.size ? Math.round((r.saved || 0) / r.size * 100) : 0;
-          return "<tr><td>" + reEsc(r.id) + "</td><td>" + reEsc(r.name) + "</td><td>" + reGb(r.size) + " → " + reGb(r.new_size) +
+          return "<tr><td>" + reEsc(r.id) + "</td><td class=\"name\">" + reEsc(r.name) + "</td><td>" + reGb(r.size) + " → " + reGb(r.new_size) +
             "</td><td>-" + pct + "%</td><td>" + reEsc(r.mbps) + " → " + after + "Mbps</td><td>" + reEsc((r.done_at || "").slice(5, 16)) + "</td></tr>";
         }).join("") || '<tr><td colspan="6" class="hint">아직 완료된 게 없어요.</td></tr>';
         var tot = RE.done_list.reduce(function(a, r) { return [a[0] + r.size, a[1] + (r.new_size || 0)]; }, [0, 0]);
         if (RE.done_list.length) foot.textContent = "최근 " + RE.done_list.length + "개: " + reGb(tot[0]) + " → " + reGb(tot[1]) + " (-" + reGb(tot[0] - tot[1]) + ")";
       } else {
-        head.innerHTML = "<tr><th>#</th><th>이름</th><th>순위</th><th>용량</th><th>비트레이트</th><th>해상도</th><th>예상 절감</th><th>상태</th></tr>";
+        head.innerHTML = "<tr><th>#</th><th class=\"name\">이름</th><th>순위</th><th>용량</th><th>비트레이트</th><th>해상도</th><th>예상 절감</th><th>상태</th></tr>";
         // 드라마 샘플은 이 화면에서 안 보여도 된다(10-28 사용자)
         var waiting = RE.waiting_list.filter(function(r) { return r.tier !== "샘플"; });
         body.innerHTML = waiting.map(function(r) {
-          return "<tr><td>" + reEsc(r.id) + "</td><td>" + reEsc(r.name) + "</td><td>" + reEsc(r.tier) + "</td><td>" + reGb(r.size) +
+          return "<tr><td>" + reEsc(r.id) + "</td><td class=\"name\">" + reEsc(r.name) + "</td><td>" + reEsc(r.tier) + "</td><td>" + reGb(r.size) +
             "</td><td>" + reEsc(r.mbps) + "Mbps</td><td>" + reEsc(r.res) + "</td><td>-" + reGb(r.expect_save) +
             "</td><td>" + (r.status === "fed" ? "준비됨(todo)" : "대기") + "</td></tr>";
         }).join("") || '<tr><td colspan="8" class="hint">대기 중인 게 없어요.</td></tr>';
@@ -173,7 +174,12 @@
             "</td><td>" + reGb(t.saved) + "</td><td>" + reGb(t.expect) + "</td></tr>";
         }).join("");
         // 실패: 확인 완료를 누르면 접힌 '확인한 실패'로 내려간다(10-28)
-        var failLine = function(f) { return "#" + reEsc(f.id) + " " + reEsc(f.name) + (f.msg ? " — " + reEsc(f.msg) : ""); };
+        // ffmpeg 오류 원문은 길어서 짧은 요약 + 펼치면 원문 (10-28 사용자)
+        var failLine = function(f) {
+          var msg = f.msg || "", short = reFailSummary(msg);
+          return "#" + reEsc(f.id) + " " + reEsc(f.name) + (msg ? " — " + (short === msg ? reEsc(msg)
+            : '<details class="re-fail" style="display:inline;"><summary>' + reEsc(short) + '</summary><code>' + reEsc(msg) + '</code></details>') : "");
+        };
         document.getElementById("reFailed").innerHTML = d.failed && d.failed.length
           ? "<b>실패 " + d.failed.length + "개</b> (원본은 그대로)<br>" + d.failed.map(function(f) {
               return failLine(f) + ' <button type="button" class="btn small" data-write onclick="reAck(\'' + reEsc(f.id) + '\', this)">확인 완료</button>';
@@ -208,6 +214,13 @@
         showToast((res.data && (res.data.message || res.data.error)) || "요청했어요", res.ok ? "success" : "error");
         loadReencode();
       }).catch(function(e) { done(); showToast("오류: " + e, "error"); });
+    }
+    function reFailSummary(msg) {
+      if (/INVALIDDATA|Invalid NAL|Terminating thread|Error while decoding|corrupt|-1145393733/i.test(msg)) return "원본 손상(디코딩 오류)";
+      if (/원본 없음/.test(msg)) return "원본 없음";
+      if (/길이가 다름/.test(msg)) return "인코딩 결과 길이가 원본과 다름";
+      if (/작지 않음/.test(msg)) return "결과가 원본보다 작지 않음";
+      return msg.length > 60 ? msg.slice(0, 60) + "…" : msg;
     }
     function reAck(id, btn) {
       var done = mrBusy(btn, "…");
