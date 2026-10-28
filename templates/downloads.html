@@ -39,7 +39,8 @@
     .dl-summary { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .dl-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
     .dl-table th, .dl-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
-    .dl-table th:first-child, .dl-table td:first-child { text-align: left; white-space: normal; word-break: break-all; }
+    .dl-table th:first-child, .dl-table td:first-child { text-align: left; white-space: normal; word-break: keep-all; overflow-wrap: anywhere; min-width: 14em; }
+    .dl-wrap { overflow-x: auto; }
     .dl-table thead th { color: var(--muted); font-weight: 600; font-size: 12px; }
     .dl-name { font-weight: 600; color: var(--fg); }
     .dl-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
@@ -54,8 +55,11 @@
     .state.warn { background: var(--warning-light); color: var(--warn); }
     .state.err { background: var(--danger-light); color: var(--danger-hover); }
     .filter-btns .btn.on { background: var(--accent-light); border-color: var(--accent); color: var(--accent-hover); }
-    @media (max-width: 760px) {
+    /* 사이드바가 보이는 태블릿·폴드 펼침 화면에선 이름 칸이 좁아지므로 덜 중요한 열은 일찍 숨김 */
+    @media (max-width: 1100px) {
       .dl-table .opt { display: none; }
+    }
+    @media (max-width: 760px) {
       .dl-table th, .dl-table td { padding: 8px 6px; }
       .bar { min-width: 60px; }
     }
@@ -81,10 +85,10 @@
         </div>
       </div>
       <div id="errBanner" class="banner err" style="display:none;"></div>
-      <table class="dl-table">
+      <div class="dl-wrap"><table class="dl-table">
         <thead><tr><th>이름</th><th>진행률</th><th>상태</th><th>↓ 속도</th><th class="opt">↑ 속도</th><th>남은 시간</th><th class="opt">시드/피어</th><th class="opt">크기</th><th></th></tr></thead>
         <tbody id="dlBody"><tr><td colspan="9" class="hint">불러오는 중...</td></tr></tbody>
-      </table>
+      </table></div>
       <div class="hint" style="margin-top:10px;"><b>취소</b>하면 qBittorrent에서 지우고 받던 파일도 지워요. 일시정지 같은 다른 조작은 qBittorrent 화면에서 하세요.</div>
     </div>
   
