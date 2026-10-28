@@ -8,6 +8,9 @@ import pytest
 
 import auto_subtitles as a
 
+# 테스트에선 실제 agy를 부르지 않는다
+a.AGY = Path("/nonexistent/agy")
+
 EN_ASS = """[Script Info]
 Title: English (US)
 ScriptType: v4.00+
@@ -40,6 +43,8 @@ def env(tmp_path, monkeypatch):
     folder.mkdir()
     monkeypatch.setattr(a, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(a, "extract_english_sub", lambda v: ("ass", EN_ASS))
+    monkeypatch.setattr(a, "MAX_PER_RUN", 99)
+    monkeypatch.setattr(a, "AGY", Path("/nonexistent/agy"))
     fake_translate.calls = []
     return folder
 
@@ -278,3 +283,78 @@ def test_season_folder_makes_ko_srt_with_show_context(tmp_path, monkeypatch):
     (folder / (v2.stem + ".ko.srt")).write_text("수동", encoding="utf-8")
     a.process_folder(folder, state, key="k")
     assert str(folder) + "|382" not in state
+
+
+class FakeRun:
+    """agy 대신: 입력 파일(번호<TAB>화자<TAB>대사)을 읽어 '번호<TAB>[KO]대사'를 돌려준다. drop이면 마지막 줄을 뺀다."""
+
+    def __init__(self, drop_when_over=None):
+        self.calls, self.drop_when_over = [], drop_when_over
+
+    def __call__(self, cmd, cwd=None, **kw):
+        rows = (Path(cwd) / "sub.tsv").read_text(encoding="utf-8").splitlines()
+        self.calls.append(rows)
+        if self.drop_when_over and len(rows) > self.drop_when_over:
+            rows = rows[:-1]
+        out = "생각 중...\n" + "".join(f"{r.split(chr(9))[0]}\t[KO]{r.split(chr(9))[2]}\n" for r in rows)
+        return type("R", (), {"stdout": out.encode(), "returncode": 0})()
+
+
+def test_agy_chunk_roundtrip_keeps_newlines_and_speakers():
+    run = FakeRun()
+    out = a.agy_translate_chunk(["Hi\nthere", "Bye"], ["RAN", ""], "명탐정 코난 (1996)", "EN", run)
+    assert out == ["[KO]Hi\nthere", "[KO]Bye"]
+    assert run.calls[0] == ["1\tRAN\tHi\\Nthere", "2\t-\tBye"]
+
+
+def test_agy_missing_line_retries_in_halves(monkeypatch):
+    monkeypatch.setattr(a, "AGY_CHUNK", 4)
+    run = FakeRun(drop_when_over=2)           # 4줄 덩어리는 한 줄을 빼먹고, 2줄씩은 제대로
+    out = a.agy_translate([f"line {i}" for i in range(1, 5)], [""] * 4, "코난", "EN", run)
+    assert out == [f"[KO]line {i}" for i in range(1, 5)] and [len(c) for c in run.calls] == [4, 2, 2]
+    run = FakeRun(drop_when_over=1)
+    with pytest.raises(a.AgyError):
+        a.agy_translate(["a", "b", "c", "d"], [""] * 4, "코난", "EN", run)
+
+
+def test_auto_translator_prefers_agy_then_deepl(monkeypatch):
+    monkeypatch.setattr(a, "agy_available", lambda: True)
+    monkeypatch.setattr(a, "agy_translate", lambda texts, speakers, show, source: ["agy:" + t for t in texts])
+    tr = a.AutoTranslator("k:fx", "ctx", "코난", "EN")
+    ko, _ = a.translate_ass(EN_ASS, "k:fx", "ctx", tr)
+    assert tr.engine == "agy" and tr.speakers == ["KOGORO", "SHOTA", "CONAN"] and "agy:Her name is Tojo Mayu." in ko
+
+    def boom(*args):
+        raise a.AgyError("줄 수 안 맞음")
+    monkeypatch.setattr(a, "agy_translate", boom)
+    monkeypatch.setattr(a, "_deepl_http", lambda texts, key, ctx, source="EN": ["dl:" + t for t in texts])
+    tr = a.AutoTranslator("k:fx", "ctx", "코난", "EN")
+    assert tr(["x"]) == ["dl:x"] and tr.engine == "deepl"
+    with pytest.raises(a.AgyError):
+        a.AutoTranslator("", "ctx", "코난", "EN")(["x"])          # DeepL 키도 없으면 실패
+
+
+def test_agy_episode_labels_engine_limits_per_run_and_retries_failures(env, monkeypatch):
+    monkeypatch.setattr(a, "MAX_PER_RUN", 1)
+    monkeypatch.setattr(a, "agy_available", lambda: True)
+    monkeypatch.setattr(a, "agy_translate", lambda texts, speakers, show, source: ["agy:" + t for t in texts])
+    video(env, "Detective Conan.S01.E1218 [t].mkv")
+    video(env, "Detective Conan.S01.E1219 [t].mkv")
+    state = {}
+    s = a.process_folder(env, state, key="")
+    assert s["created"] == 1                                         # 한 번에 한 편
+    rec = state[str(env) + "|1218"]
+    assert rec["engine"] == "agy" and str(env) + "|1219" not in state
+    text = Path(rec["path"]).read_text(encoding="utf-8")
+    assert "Title: 한국어 자동 번역 (Gemini)" in text and "영어 자막 → Gemini)" in text
+
+    def boom(*args):
+        raise a.AgyError("시간 초과")
+    monkeypatch.setattr(a, "agy_translate", boom)
+    for n in (1, 2, 3):
+        a.process_folder(env, state, key="")
+        assert state[str(env) + "|1219"] == {**state[str(env) + "|1219"], "status": "fail", "attempts": n}
+    calls = []
+    monkeypatch.setattr(a, "agy_translate", lambda *x: calls.append(1) or [])
+    a.process_folder(env, state, key="")
+    assert not calls                                                  # 3번 실패하면 더 안 함

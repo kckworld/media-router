@@ -1,7 +1,8 @@
 """애니 자동 한국어 자막 (2026-10-19).
 
 코난·원피스 SubsPlease 릴에는 영어 자막(ASS)이 들어 있다. 새 회차에 한국어 자막이 없으면
-그 영어 자막을 꺼내 DeepL(무료 API)로 번역해 "<영상이름>.ko.ass"로 둔다. 타이밍·스타일은 원본 그대로.
+그 영어 자막을 꺼내 번역해 "<영상이름>.ko.ass"로 둔다. 번역은 agy(Antigravity CLI, Gemini)가 먼저 하고
+(2026-10-28: 회차를 덩어리로 보내 흐름·화자 말투를 살린다), 줄 수가 안 맞거나 실패하면 DeepL(무료 API)로. 타이밍·스타일은 원본 그대로.
 먼작귀(ToonsHub, 10-26)처럼 영어 자막이 SRT면 "<영상이름>.ko.srt"로 둔다. 영어 트랙이 없으면
 중국어 트랙(먼작귀 VIU판 등)을 번역한다. 둘 다 없으면 만들지 않는다.
 나중에 팬 자막(사용자가 PC/폰에서 받아 Synology Drive → media_router → aniname 경로로 들어옴)이
@@ -16,6 +17,8 @@
 실행: run_all.sh에서 aniname 다음 (호스트, root, 표준 라이브러리만 사용 — DSM 기본 python3.8)
   python auto_subtitles.py "<코난 폴더>" "<원피스 시즌 폴더>"
 DeepL 키: 환경변수 DEEPL_API_KEY 또는 이 폴더 .env 의 DEEPL_API_KEY (무료 키는 끝이 ':fx')
+agy: kck9010 홈에 로그인돼 있다. run_all.sh는 root라 agy만 kck9010로 실행한다(토큰을 root로 옮기지 않는다).
+한 편에 몇 분 걸려서 한 번 실행에 AUTO_SUBS_MAX_PER_RUN(기본 1)편까지만 만든다(20분 주기 배치를 오래 막지 않게).
 """
 from __future__ import annotations
 
@@ -23,6 +26,8 @@ import hashlib
 import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -42,6 +47,14 @@ SUB_EXTS = (".ass", ".ssa", ".srt", ".smi", ".vtt", ".sub")
 EP_RE = re.compile(r"(?:\.|S\d{1,2})E(\d{1,5})\b")
 KO_RE = re.compile(r"\.(ko|kor|kr)(_\d+)?\.[^.]+$", re.I)
 MARKER = "; Media Router 자동 번역 자막 (영어 자막 → DeepL). 팬 자막이 들어오면 자동으로 교체됩니다."
+AGY = Path(os.getenv("AGY_BIN", "/var/services/homes/kck9010/.local/bin/agy"))
+AGY_USER = "kck9010"
+AGY_HOME = "/var/services/homes/kck9010"
+AGY_CHUNK = 120              # 한 번에 보내는 대사 줄 수 (40줄에 약 1분)
+AGY_TIMEOUT = 600
+MAX_PER_RUN = int(os.getenv("AUTO_SUBS_MAX_PER_RUN", "1"))
+MAX_ATTEMPTS = 3             # 번역 실패한 회차는 다음 실행에 다시, 이 횟수까지
+ENGINE_LABEL = {"agy": "Gemini", "deepl": "DeepL"}
 
 
 def log(msg: str) -> None:
@@ -87,9 +100,14 @@ class DeepLError(Exception):
 
 
 def deepl_translate(texts: list[str], key: str, context: str, translate=None, source: str = "EN") -> list[str]:
-    """texts → 한국어. 중복 문장은 한 번만 보낸다. 50개씩 나눠 보낸다(DeepL 한 요청 최대 50개)."""
-    if translate is not None:          # 테스트용 주입
+    """texts → 한국어. translate가 있으면 그걸로(agy 우선 번역기 AutoTranslator, 테스트용 가짜)."""
+    if translate is not None:
         return translate(texts)
+    return _deepl_http(texts, key, context, source)
+
+
+def _deepl_http(texts: list[str], key: str, context: str, source: str = "EN") -> list[str]:
+    """DeepL API. 중복 문장은 한 번만 보낸다. 50개씩 나눠 보낸다(DeepL 한 요청 최대 50개)."""
     url = "https://api-free.deepl.com/v2/translate" if key.endswith(":fx") else "https://api.deepl.com/v2/translate"
     uniq = list(dict.fromkeys(texts))
     out: dict[str, str] = {}
@@ -108,6 +126,101 @@ def deepl_translate(texts: list[str], key: str, context: str, translate=None, so
         for src, t in zip(chunk, data.get("translations", [])):
             out[src] = t.get("text", src)
     return [out.get(t, t) for t in texts]
+
+
+class AgyError(Exception):
+    pass
+
+
+AGY_LINE_RE = re.compile(r"^\s*(\d+)\t(.*)$")
+
+
+def _agy_cmd(prompt: str, workdir: str) -> list[str]:
+    args = [str(AGY), "--mode", "plan", "--effort", "medium", "--print-timeout", f"{AGY_TIMEOUT}s", "-p", prompt]
+    if os.geteuid() != 0:
+        return args
+    # root(run_all.sh)면 agy만 kck9010로 - 로그인 정보가 그 홈에 있다
+    inner = f"cd {shlex.quote(workdir)} && HOME={AGY_HOME} exec " + " ".join(shlex.quote(x) for x in args)
+    return ["su", AGY_USER, "-s", "/bin/sh", "-c", inner]
+
+
+def agy_translate_chunk(texts: list[str], speakers: list[str], show: str, source: str, run=None) -> list[str]:
+    """대사 덩어리를 agy에 맡긴다. 입력은 파일(번호<TAB>화자<TAB>대사, 줄바꿈은 \\N)로 주고
+    '번호<TAB>번역'만 받는다. 번호가 하나라도 빠지거나 남으면 AgyError."""
+    lang = "중국어" if source == "ZH" else "영어"
+    with tempfile.TemporaryDirectory(prefix="agy-subs-") as td:
+        os.chmod(td, 0o755)            # kck9010로 도는 agy가 읽을 수 있게
+        src = Path(td) / "sub.tsv"
+        rows = []
+        for i, t in enumerate(texts, 1):
+            name = (speakers[i - 1] or "-").replace("\t", " ")
+            rows.append(f"{i}\t{name}\t" + t.replace("\n", "\\N") + "\n")
+        src.write_text("".join(rows), encoding="utf-8")
+        os.chmod(src, 0o644)
+        prompt = (f"파일 {src} 는 애니 '{show}'의 {lang} 자막 {len(texts)}줄이야(번호<TAB>화자<TAB>대사). "
+                  "한국어 자막으로 번역해. 규칙: 한국 TV 방영판의 이름·호칭과 말투, 자막답게 짧고 자연스럽게, "
+                  "화자 관계에 맞는 존댓말/반말, \\N은 그대로 둘 것. "
+                  f"출력은 '번호<TAB>번역' {len(texts)}줄만, 다른 말 없이.")
+        try:
+            r = (run or subprocess.run)(_agy_cmd(prompt, td), cwd=td, capture_output=True, stdin=subprocess.DEVNULL,
+                                         timeout=AGY_TIMEOUT + 30)
+        except subprocess.TimeoutExpired:
+            raise AgyError("시간 초과")
+    out = r.stdout.decode("utf-8", errors="replace") if isinstance(r.stdout, bytes) else (r.stdout or "")
+    got: dict[int, str] = {}
+    for line in out.splitlines():
+        m = AGY_LINE_RE.match(line)
+        if m and 1 <= int(m.group(1)) <= len(texts):
+            if int(m.group(1)) in got:
+                raise AgyError(f"번호 {m.group(1)} 중복")
+            got[int(m.group(1))] = m.group(2).strip()
+    missing = [i for i in range(1, len(texts) + 1) if not got.get(i)]
+    if missing:
+        raise AgyError(f"줄 수 안 맞음(exit {r.returncode}, {len(texts)}줄 중 {len(missing)}줄 빠짐)")
+    return [got[i].replace("\\N", "\n") for i in range(1, len(texts) + 1)]
+
+
+def agy_translate(texts: list[str], speakers: list[str], show: str, source: str, run=None) -> list[str]:
+    """AGY_CHUNK줄씩. 덩어리가 실패하면 반으로 나눠 한 번 더, 그래도 안 되면 AgyError"""
+    out: list[str] = []
+    for i in range(0, len(texts), AGY_CHUNK):
+        part, names = texts[i:i + AGY_CHUNK], speakers[i:i + AGY_CHUNK]
+        try:
+            out += agy_translate_chunk(part, names, show, source, run)
+        except AgyError as e:
+            log(f"agy {i + 1}~{i + len(part)}줄 실패({e}) — 반으로 나눠 다시")
+            half = (len(part) + 1) // 2
+            for j in range(0, len(part), half):
+                out += agy_translate_chunk(part[j:j + half], names[j:j + half], show, source, run)
+    return out
+
+
+def agy_available() -> bool:
+    return AGY.exists() and shutil.which("su") is not None
+
+
+class AutoTranslator:
+    """agy 우선, 안 되면 DeepL(키가 있으면). translate_ass가 화자(ASS Name)를 speakers에 채워 준다.
+    어떤 번역기를 썼는지 engine에 남는다."""
+
+    def __init__(self, key: str, context: str, show: str, source: str):
+        self.key, self.context, self.show, self.source = key, context, show, source
+        self.speakers: list[str] | None = None
+        self.engine = ""
+
+    def __call__(self, texts: list[str]) -> list[str]:
+        if agy_available():
+            try:
+                out = agy_translate(texts, self.speakers or [""] * len(texts), self.show, self.source)
+                self.engine = "agy"
+                return out
+            except AgyError as e:
+                log(f"agy 번역 실패({e}) — " + ("DeepL로" if self.key else "DeepL 키가 없어 건너뜀"))
+        if not self.key:
+            raise AgyError("agy 실패, DeepL 키 없음")
+        out = _deepl_http(texts, self.key, self.context, self.source)
+        self.engine = "deepl"
+        return out
 
 
 def _has_text(s: str, source: str) -> bool:
@@ -136,6 +249,8 @@ def translate_ass(ass_text: str, key: str, context: str, translate=None, source:
         jobs.append((i, ",".join(parts[:9]) + ",", lead, plain))
     if not jobs:
         return ass_text, 0
+    if isinstance(translate, AutoTranslator):
+        translate.speakers = [lines[j[0]].split(",", 9)[4].strip() for j in jobs]
     translated = deepl_translate([j[3] for j in jobs], key, context, translate, source)
     for (i, head, lead, _), ko in zip(jobs, translated):
         lines[i] = head + lead + ko.replace("\r", "").replace("\n", "\\N")
@@ -295,12 +410,16 @@ def process_folder(folder: Path, state: dict, key: str, translate=None, now: flo
         if age > MAX_AGE_DAYS * 86400 or age < MIN_STABLE_SEC:
             continue
         skey = prefix + ep
-        if skey in state:              # 이미 만들었거나(auto/replaced) 만들 수 없음(no_track)
+        rec = state.get(skey)
+        # 이미 만들었거나(auto/replaced) 만들 수 없음(no_track). 번역만 실패했으면(fail) 몇 번 더
+        if rec and not (rec.get("status") == "fail" and rec.get("attempts", 0) < MAX_ATTEMPTS):
             continue
+        if stats["created"] + stats.get("failed", 0) >= MAX_PER_RUN:
+            continue                   # 한 편에 몇 분 - 나머지는 다음 실행에
         if korean_subs(folder, ep):    # 팬 자막이 먼저 와 있음
             continue
-        if not key and translate is None:
-            log(f"E{ep}: 한국어 자막 없음 — DEEPL_API_KEY가 없어 건너뜀")
+        if not key and translate is None and not agy_available():
+            log(f"E{ep}: 한국어 자막 없음 — agy도 DEEPL_API_KEY도 없어 건너뜀")
             continue
         sub = extract_english_sub(video)
         if sub is None:
@@ -310,20 +429,33 @@ def process_folder(folder: Path, state: dict, key: str, translate=None, now: flo
             continue
         fmt, en, source = sub if len(sub) == 3 else (*sub, "EN")
         context = f"Subtitles of the anime '{show}'. Translate into natural spoken Korean."
-        if fmt == "srt":
-            ko, chars = translate_srt(en, key, context, translate, source)
-        else:
-            ko, chars = translate_ass(en, key, context, translate, source)
+        tr = translate if translate is not None else AutoTranslator(key, context, show, source)
+        try:
+            if fmt == "srt":
+                ko, chars = translate_srt(en, key, context, tr, source)
+            else:
+                ko, chars = translate_ass(en, key, context, tr, source)
+        except AgyError as e:
+            attempts = (rec or {}).get("attempts", 0) + 1
+            state[skey] = {"ep": ep, "status": "fail", "attempts": attempts, "at": now, "msg": str(e)}
+            stats["failed"] = stats.get("failed", 0) + 1
+            log(f"E{ep}: 번역 실패({attempts}/{MAX_ATTEMPTS}) — {e}")
+            continue
+        engine = getattr(tr, "engine", "") or "deepl"
+        if engine != "deepl":
+            ko = ko.replace("→ DeepL)", f"→ {ENGINE_LABEL[engine]})", 1).replace(
+                "자동 번역 (DeepL)", f"자동 번역 ({ENGINE_LABEL[engine]})", 1)
         dst = video.with_name(video.stem + f".ko.{fmt}")
         if dst.exists():               # 혹시 모를 경쟁 상황: 절대 덮어쓰지 않음
             continue
         dst.write_text(ko, encoding="utf-8")
         copy_owner(video, dst)
         state[skey] = {"ep": ep, "status": "auto", "path": str(dst), "sha256": sha256(dst), "at": now, "chars": chars,
-                       "source": source}
+                       "source": source, "engine": engine}
         stats["created"] += 1
         stats["chars"] += chars
-        log(f"E{ep}: 자동 자막 생성 {dst.name} ({chars}자{', 중국어 원문' if source == 'ZH' else ''})")
+        log(f"E{ep}: 자동 자막 생성 {dst.name} ({chars}자, {ENGINE_LABEL.get(engine, engine)}"
+            f"{', 중국어 원문' if source == 'ZH' else ''})")
     return stats
 
 
@@ -333,6 +465,8 @@ def main(folders: list[str]) -> int:
     total = {"created": 0, "chars": 0}
     try:
         for f in folders:
+            if total["created"] >= MAX_PER_RUN:
+                break
             s = process_folder(Path(f), state, key)
             total["created"] += s["created"]
             total["chars"] += s["chars"]
@@ -342,7 +476,7 @@ def main(folders: list[str]) -> int:
         return 2
     save_state(state)
     if total["created"]:
-        log(f"완료: 자동 자막 {total['created']}개, DeepL {total['chars']}자")
+        log(f"완료: 자동 자막 {total['created']}개, {total['chars']}자")
     return 0
 
 
