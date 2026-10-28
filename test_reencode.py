@@ -182,7 +182,7 @@ def test_new_items_in_state_and_has_work(re_env, monkeypatch):
                             {"id": "N0002", "kind": "new", "src": "/v/new/x.mkv", "status": "failed", "msg": "길이가 다름"}])
     st = reencode_ctl.state()
     assert "🆕 새 예능 인코딩 대기 1개 · 실패 1개(new 폴더에 [손상] 표시)" in st["summary"]
-    assert st["waiting_list"][0]["id"] == "N0001" and st["waiting_list"][0]["tier"] == "새"
+    assert st["waiting_list"][0]["id"] == "N0001" and st["waiting_list"][0]["tier"] == "새 예능"
     assert st["failed"][0]["id"] == "N0002" and st["new_waiting"] == 1
     write_status(re_env, state="encoding", current="N0001", updated="2026-10-27 20:00:00")
     assert reencode_ctl.state()["current"]["name"] == "런닝맨.E826.mkv"
@@ -404,3 +404,13 @@ def test_drama_hold_tiers_and_samples(re_env):
     assert st["current"]["tier"] == "샘플" and st["waiting_list"][0]["id"] == "T0002"
     assert not reencode_ctl.batch_has_work() or any(it["status"] in ("pending", "fed") for it in q["items"])
     assert re_env["client"].get("/api/reencode").get_json()["samples"][1]["final"].endswith(".SAMPLE.mp4")
+
+
+def test_new_items_label_drama(re_env):
+    _add_new_items(re_env, [{"id": "N0001", "kind": "new", "src": "/v/new/런닝맨.E826.mkv", "status": "fed"},
+                            {"id": "N0002", "kind": "new", "profile": "drama", "src": "/v/new/drama/굿보이.E03.mkv", "status": "pending"}])
+    st = reencode_ctl.state()
+    assert "🆕 새 영상(예능 1·드라마 1) 인코딩 대기 2개" in st["summary"]
+    assert [r["tier"] for r in st["waiting_list"][:2]] == ["새 예능", "새 드라마"]
+    _add_new_items(re_env, [{"id": "N0002", "kind": "new", "profile": "drama", "src": "/v/new/drama/굿보이.E03.mkv", "status": "pending"}])
+    assert "🆕 새 드라마 인코딩 대기 1개" in reencode_ctl.state()["summary"]

@@ -69,6 +69,14 @@ def needs_collect() -> bool:
         return False
 
 
+def _new_label(new_items: list) -> str:
+    """새로 받은 영상(new_items) 줄 머리 - 드라마도 들어온다(10-28, profile=drama)"""
+    drama = sum(1 for it in new_items if it.get("profile") == "drama")
+    if not drama:
+        return "새 예능"
+    return "새 드라마" if drama == len(new_items) else f"새 영상(예능 {len(new_items) - drama}·드라마 {drama})"
+
+
 def state() -> dict:
     q = _read(QUEUE)
     if not q:
@@ -100,7 +108,7 @@ def state() -> dict:
                f" · 실패 {counts.get('failed', 0)}" + (f" · 보류(드라마) {counts['hold']}" if counts.get("hold") else "")
                + f"\n줄인 용량 {gb(saved)} / 예상 {gb(expect)}"
                + ("\n▶ 실행 중" if is_running else "\n⏹ 멈춤")
-               + ("\n🆕 새 예능 " + " · ".join(([f"인코딩 대기 {len(new_open)}개"] if new_open else [])
+               + (f"\n🆕 {_new_label(new_open + new_failed)} " + " · ".join(([f"인코딩 대기 {len(new_open)}개"] if new_open else [])
                                              + ([f"실패 {len(new_failed)}개(new 폴더에 [손상] 표시)"] if new_failed else []))
                   if new_open or new_failed else "")
                + (f"\nPC: {w.get('state', '?')}" + (f" — #{w['current']}" if w.get("current") else "")
@@ -110,7 +118,7 @@ def state() -> dict:
 
     def row(it):
         return {"id": it.get("id"), "name": Path(it.get("src", "")).name,
-                "tier": "새" if it.get("kind") == "new" else "샘플" if it.get("kind") == "sample" else it.get("tier"),
+                "tier": ("새 드라마" if it.get("profile") == "drama" else "새 예능") if it.get("kind") == "new" else "샘플" if it.get("kind") == "sample" else it.get("tier"),
                 "size": it.get("size", 0), "new_size": it.get("new_size"), "saved": it.get("saved"),
                 "mbps": it.get("mbps"), "res": it.get("res"), "dur": it.get("dur"), "status": it.get("status"),
                 "expect_save": it.get("expect_save", 0), "done_at": it.get("done_at"), "msg": it.get("msg") or "",

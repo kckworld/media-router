@@ -303,6 +303,8 @@ FFMPEG_BIN = "/bin/ffmpeg"  # Synology DSM에 이미 설치돼 있음(별도 설
 _VIDEO_STREAM_RE = re.compile(
     r"Video:\s*(?P<codec>\S+?)(?:\s*\([^)]*\))*\s*,\s*(?P<pixfmt>[\w]+)(?:\([^)]*\))?\s*,\s*(?P<width>\d+)x(?P<height>\d+)"
 )
+_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+_AUDIO_STREAM_RE = re.compile(r"Stream #\d+:\d+\S*: Audio:")
 
 def probe_video_stream(path: Path) -> Optional[Dict]:
     """ffmpeg -i 출력(stderr)에서 비디오 스트림 정보(코덱/해상도) 파싱.
@@ -315,7 +317,10 @@ def probe_video_stream(path: Path) -> Optional[Dict]:
         if not m:
             log(f"ffmpeg probe: no video stream matched for {path}")
             return None
-        return {"codec": m.group("codec"), "width": int(m.group("width")), "height": int(m.group("height"))}
+        d = _DURATION_RE.search(out.stderr or "")
+        return {"codec": m.group("codec"), "width": int(m.group("width")), "height": int(m.group("height")),
+                "duration": int(d.group(1)) * 3600 + int(d.group(2)) * 60 + float(d.group(3)) if d else None,
+                "audio": len(_AUDIO_STREAM_RE.findall(out.stderr or ""))}
     except Exception as e:
         log(f"ffmpeg probe error: {path} - {e}")
         return None
@@ -337,17 +342,33 @@ _held_any = False
 # — 이제는 비교 없이 파일 자신의 해상도 + 규칙의 release 설정으로 판단한다.
 VARIETY_1080_EXEMPT_TOKEN = "1080"
 
-def move_to_encoding_hold(cfg: Dict, f: Path, reason: str) -> Path | None:
-    """f를 ENCODING_HOLD_DIR(재인코딩 new 폴더)로 옮기고 텔레그램으로 알린다.
+# 새 드라마도 5Mbps가 넘으면 재인코딩 new/drama로 (2026-10-28, 사용자 요청 — 미디어 정리 세션 reencode.py가
+# 원본 해상도 그대로 NVENC cq27로 줄여 임시/download로 돌려보낸다). 결과도 장면이 복잡하면 5Mbps를 넘을 수
+# 있어서, reencode.py가 결과 파일 이름을 적어 두는 encoded_names.txt에 있으면 다시 보류하지 않는다(무한 반복 방지).
+ENCODED_NAMES = Path("/volume1/video/임시/재인코딩/encoded_names.txt")
+DRAMA_MAX_MBPS = 5.0
+DRAMA_SKIP_CODECS = ("av1", "vp9")   # 이미 효율 좋은 코덱
+
+
+def _already_encoded(*names: str) -> bool:
+    try:
+        done = set(ENCODED_NAMES.read_text(encoding="utf-8").splitlines())
+    except OSError:
+        return False
+    return any(n in done for n in names if n)
+
+def move_to_encoding_hold(cfg: Dict, f: Path, reason: str, kind: str = "") -> Path | None:
+    """f를 ENCODING_HOLD_DIR(재인코딩 new 폴더, 드라마는 그 아래 drama)로 옮기고 텔레그램으로 알린다.
     성공하면 이동된 경로를, 실패하면 None을 돌려준다."""
     global _held_any
+    hold_dir = ENCODING_HOLD_DIR / "drama" if kind == "드라마" else ENCODING_HOLD_DIR
     try:
-        ENCODING_HOLD_DIR.mkdir(parents=True, exist_ok=True)
-        dst = ENCODING_HOLD_DIR / f.name
+        hold_dir.mkdir(parents=True, exist_ok=True)
+        dst = hold_dir / f.name
         if dst.exists():
             stem, suf, i = dst.stem, dst.suffix, 1
             while True:
-                cand = ENCODING_HOLD_DIR / f"{stem}_{i}{suf}"
+                cand = hold_dir / f"{stem}_{i}{suf}"
                 if not cand.exists():
                     dst = cand
                     break
@@ -359,7 +380,10 @@ def move_to_encoding_hold(cfg: Dict, f: Path, reason: str) -> Path | None:
 
     log(f"ENCODING_HOLD: {f.name} ({reason}) -> {dst}")
     # 워커가 안 돌 땐 reencode.py가 [▶ 지금 인코딩] 버튼 달린 알림을 따로 보낸다
-    tg_send(cfg, f"🆕 인코딩 대기열에 넣었어요: {f.name}\n({reason})")
+    if kind:
+        tg_send(cfg, f"🆕 {kind} 인코딩 대기열에 넣었어요: {f.name} ({reason})")
+    else:
+        tg_send(cfg, f"🆕 인코딩 대기열에 넣었어요: {f.name}\n({reason})")
     _held_any = True
     return dst
 
@@ -374,7 +398,23 @@ def kick_reencode_feed() -> None:
     except Exception as e:
         log(f"reencode.py run 실패: {e}")
 
-def check_variety_encoding(cfg: Dict, f: Path, release: str = "") -> bool:
+def check_drama_encoding(cfg: Dict, f: Path, orig_name: str = "") -> bool:
+    """드라마 영상이 5Mbps(파일 크기×8/길이)를 넘으면 재인코딩 new/drama로 보류한다. True면 옮긴 것.
+    AV1·VP9, 오디오가 2개 이상(인코딩하면 하나가 빠짐), 이미 인코딩한 결과(encoded_names.txt)는 그대로 둔다."""
+    if f.suffix.lower() not in VIDEO_EXTENSIONS or _already_encoded(f.name, orig_name):
+        return False
+    info = probe_video_stream(f)
+    if not info or not info.get("duration"):
+        return False  # 확인 불가 - 보수적으로 그냥 정상 이동시킴
+    if info["codec"].lower() in DRAMA_SKIP_CODECS or info.get("audio") != 1:
+        return False
+    mbps = f.stat().st_size * 8 / info["duration"] / 1e6
+    if mbps <= DRAMA_MAX_MBPS:
+        return False
+    return move_to_encoding_hold(cfg, f, f"{mbps:.1f}Mbps", kind="드라마") is not None
+
+
+def check_variety_encoding(cfg: Dict, f: Path, release: str = "", orig_name: str = "") -> bool:
     """예능 파일 자신의 해상도만으로 판단한다(기존 라이브러리 파일과는
     비교하지 않음 - 2026-10-08 SNL 오탐 사고 이후 정책 변경).
     이미 720p면 통과, 아니면 이 쇼의 규칙에 설정된 release 문자열(Web
@@ -384,6 +424,8 @@ def check_variety_encoding(cfg: Dict, f: Path, release: str = "") -> bool:
     이 파이프라인을 다시 타고 재검사된다.
     반환값이 True면 이미 이 함수 안에서 옮겼다는 뜻이니, 호출자는 추가로
     최종 폴더로 이동시키지 말고 건너뛰어야 한다."""
+    if _already_encoded(f.name, orig_name):
+        return False  # 재인코딩 워커가 만든 결과 - 다시 붙잡지 않는다
     info = probe_video_stream(f)
     if not info:
         return False  # 확인 불가 - 보수적으로 그냥 정상 이동시킴
@@ -595,6 +637,7 @@ def main() -> None:
             target_dir = Path(base_dir) / sub
 
             for f in find_matches(src_root, pattern, pattern_or, pattern2, pattern2_or, exclude_pattern):
+                orig_name = f.name   # 아래에서 이름을 다듬기 전 - encoded_names.txt와 비교용
                 try:
                     try:
                         f.relative_to(target_dir)
@@ -710,7 +753,13 @@ def main() -> None:
                     # 필요 없어져서 제거함.
                     if category == "예능":
                         try:
-                            if check_variety_encoding(cfg, f, r.get("release", "")):
+                            if check_variety_encoding(cfg, f, r.get("release", ""), orig_name):
+                                continue
+                        except Exception as e:
+                            log(f"Encoding check fail: {f} - {e}")
+                    elif category == "드라마":
+                        try:
+                            if check_drama_encoding(cfg, f, orig_name):
                                 continue
                         except Exception as e:
                             log(f"Encoding check fail: {f} - {e}")
