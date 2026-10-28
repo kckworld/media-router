@@ -1565,6 +1565,10 @@ def api_reencode():
     if auth is not True:
         return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
     st = reencode_ctl.state()
+    acked = _reencode_acked()
+    if st.get("failed") is not None:
+        st["failed_acked"] = [f for f in st["failed"] if f.get("id") in acked]
+        st["failed"] = [f for f in st["failed"] if f.get("id") not in acked]
     st.update(ok=True, log=reencode_ctl.log_tail(reencode_ctl.LOG),
               worker_log=reencode_ctl.log_tail(reencode_ctl.WORK / "worker.log"),
               off_after=_reencode_sched_load().get("off_after"), **reencode_settings())
@@ -1587,6 +1591,30 @@ def api_reencode_stop():
         return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
     ok, msg = reencode_stop("web")
     return jsonify({"ok": ok, "message": msg, "error": None if ok else msg}), (200 if ok else 500)
+
+
+# 실패 항목 [확인 완료] (10-28): 사용자가 한 번 본 실패는 접어 둔다. 큐(queue.json)는 그대로
+REENCODE_ACK_PATH = DATA_DIR / "reencode_ack.json"
+
+
+def _reencode_acked() -> set:
+    try:
+        return set(json.loads(REENCODE_ACK_PATH.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return set()
+
+
+@app.route("/api/reencode/ack", methods=["POST"])
+def api_reencode_ack():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    job_id = str((request.get_json(silent=True) or {}).get("id") or "").strip()
+    if not re.fullmatch(r"[A-Z]?\d{1,6}", job_id):
+        return jsonify({"ok": False, "error": "작업 번호가 이상해요."}), 400
+    acked = _reencode_acked() | {job_id}
+    REENCODE_ACK_PATH.write_text(json.dumps(sorted(acked)), encoding="utf-8")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/reencode/off-after-current", methods=["POST"])

@@ -233,7 +233,7 @@ def test_telegram_menu_reencode_button(re_env):
 def test_encode_page_and_removed_routes(re_env):
     c = re_env["client"]
     html = c.get("/encode_log").get_data(as_text=True)
-    assert "재인코딩 (예능 일괄 · 새로 받은 예능 · 드라마)" in html and "PC 예약 종료" in html and "runEncode" not in html
+    assert "재인코딩 (예능 · 드라마 · 새로 받은 영상)" in html and "offAfterBtn" not in html and "reSamples" not in html and "PC 예약 종료" in html and "runEncode" not in html
     assert c.post("/run_encode").status_code == 404
     assert c.get("/encode_hold_stats").status_code == 404 and c.get("/encode_log/tail").status_code == 404
 
@@ -414,3 +414,14 @@ def test_new_items_label_drama(re_env):
     assert [r["tier"] for r in st["waiting_list"][:2]] == ["새 예능", "새 드라마"]
     _add_new_items(re_env, [{"id": "N0002", "kind": "new", "profile": "drama", "src": "/v/new/drama/굿보이.E03.mkv", "status": "pending"}])
     assert "🆕 새 드라마 인코딩 대기 1개" in reencode_ctl.state()["summary"]
+
+
+def test_failed_ack_moves_to_acked(re_env, monkeypatch, tmp_path):
+    monkeypatch.setattr(web_admin, "REENCODE_ACK_PATH", tmp_path / "ack.json")
+    c = re_env["client"]
+    d = c.get("/api/reencode").get_json()
+    assert [f["id"] for f in d["failed"]] == ["0003"] and d["failed_acked"] == []
+    assert c.post("/api/reencode/ack", json={"id": "0003"}).get_json()["ok"]
+    d = c.get("/api/reencode").get_json()
+    assert d["failed"] == [] and [f["id"] for f in d["failed_acked"]] == ["0003"]
+    assert c.post("/api/reencode/ack", json={"id": "../x"}).status_code == 400
