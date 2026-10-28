@@ -79,8 +79,9 @@ def state() -> dict:
     for it in items:
         st = it.get("status", "?")
         counts[st] = counts.get(st, 0) + 1
-        t = tiers.setdefault(it.get("tier") or 0, {"done": 0, "todo": 0, "failed": 0, "saved": 0, "expect": 0})
-        t["done" if st == "done" else "failed" if st == "failed" else "todo"] += 1
+        t = tiers.setdefault(it.get("tier") or 0, {"done": 0, "todo": 0, "failed": 0, "hold": 0, "saved": 0, "expect": 0})
+        # hold = 드라마(tier D1~D3, 10-28) 샘플 확인 전 보류 - feed가 건너뛴다
+        t["done" if st == "done" else "failed" if st == "failed" else "hold" if st == "hold" else "todo"] += 1
         t["saved"] += it.get("saved", 0) if st == "done" else 0
         t["expect"] += it.get("expect_save", 0)
     saved = sum(it.get("saved", 0) for it in items if it.get("status") == "done")
@@ -88,13 +89,16 @@ def state() -> dict:
     new_items = q.get("new_items") or []      # media_router가 보류한 새 예능 (id N0001…)
     new_open = [it for it in new_items if it.get("status") in _OPEN]
     new_failed = [it for it in new_items if it.get("status") == "failed"]
-    by_id = {it.get("id"): it for it in items + new_items}
+    samples = q.get("samples") or []          # 드라마 샘플 (id T0001…, 원본은 그대로 두고 sample/에 결과)
+    samples_open = [it for it in samples if it.get("status") in _OPEN]
+    by_id = {it.get("id"): it for it in items + new_items + samples}
     w = worker()
     cur = by_id.get(w.get("current")) if w.get("current") else None
     is_running = running()
     trash = q.get("trash_bytes", 0)
     summary = (f"완료 {counts.get('done', 0)}/{len(items)} · 진행 {counts.get('fed', 0)} · 대기 {counts.get('pending', 0)}"
-               f" · 실패 {counts.get('failed', 0)}\n줄인 용량 {gb(saved)} / 예상 {gb(expect)}"
+               f" · 실패 {counts.get('failed', 0)}" + (f" · 보류(드라마) {counts['hold']}" if counts.get("hold") else "")
+               + f"\n줄인 용량 {gb(saved)} / 예상 {gb(expect)}"
                + ("\n▶ 실행 중" if is_running else "\n⏹ 멈춤")
                + ("\n🆕 새 예능 " + " · ".join(([f"인코딩 대기 {len(new_open)}개"] if new_open else [])
                                              + ([f"실패 {len(new_failed)}개(new 폴더에 [손상] 표시)"] if new_failed else []))
@@ -106,15 +110,20 @@ def state() -> dict:
 
     def row(it):
         return {"id": it.get("id"), "name": Path(it.get("src", "")).name,
-                "tier": "새" if it.get("kind") == "new" else it.get("tier"),
+                "tier": "새" if it.get("kind") == "new" else "샘플" if it.get("kind") == "sample" else it.get("tier"),
                 "size": it.get("size", 0), "new_size": it.get("new_size"), "saved": it.get("saved"),
                 "mbps": it.get("mbps"), "res": it.get("res"), "dur": it.get("dur"), "status": it.get("status"),
-                "expect_save": it.get("expect_save", 0), "done_at": it.get("done_at"), "msg": it.get("msg") or ""}
+                "expect_save": it.get("expect_save", 0), "done_at": it.get("done_at"), "msg": it.get("msg") or "",
+                "out_mbps": it.get("out_mbps"), "final": it.get("final")}
     done = sorted((it for it in items if it.get("status") == "done"), key=lambda it: it.get("done_at") or "", reverse=True)
     # 새 예능은 일괄 재인코딩보다 먼저 집히므로 대기 목록 맨 앞
-    waiting = new_open + [it for it in items if it.get("status") == "fed"] + [it for it in items if it.get("status") == "pending"]
+    # 워커는 새 예능 → 드라마 샘플 → 일괄 순서로 집는다
+    waiting = new_open + samples_open + [it for it in items if it.get("status") == "fed"] + [it for it in items if it.get("status") == "pending"]
     return {"available": True, "counts": counts, "total": len(items), "saved": saved, "expect": expect,
-            "tiers": {str(k): v for k, v in sorted(tiers.items())}, "running": is_running, "worker": w,
+            # 예능 1~3(숫자) 다음 드라마 D1~D3(글자) - 섞어서 sorted하면 TypeError
+            "tiers": {str(k): v for k, v in sorted(tiers.items(), key=lambda kv: (isinstance(kv[0], str), str(kv[0])))},
+            "running": is_running, "worker": w,
+            "samples": [row(it) for it in reversed(samples)],
             "current": row(cur) if cur else None, "summary": summary,
             "failed": [row(it) for it in new_failed + [it for it in items if it.get("status") == "failed"]],
             "new_waiting": len(new_open),

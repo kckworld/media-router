@@ -58,7 +58,7 @@ def test_state(re_env):
     st = reencode_ctl.state()
     assert st["summary"].startswith("완료 1/4 · 진행 1 · 대기 1 · 실패 1\n줄인 용량 6.0GB / 예상 10.5GB\n⏹ 멈춤\nPC: encoding — #0004")
     assert st["current"]["name"] == "도레미 마켓.E435.mp4"
-    assert st["tiers"]["1"] == {"done": 1, "todo": 1, "failed": 0, "saved": 6 * 2 ** 30, "expect": 10 * 2 ** 30}
+    assert st["tiers"]["1"] == {"done": 1, "todo": 1, "failed": 0, "hold": 0, "saved": 6 * 2 ** 30, "expect": 10 * 2 ** 30}
     assert [r["id"] for r in st["waiting_list"]] == ["0004", "0007"] and st["done_list"][0]["new_size"] == 2 * 2 ** 30
     assert st["failed"][0]["msg"] == "길이가 다름" and not st["trash_warn"]
 
@@ -233,7 +233,7 @@ def test_telegram_menu_reencode_button(re_env):
 def test_encode_page_and_removed_routes(re_env):
     c = re_env["client"]
     html = c.get("/encode_log").get_data(as_text=True)
-    assert "재인코딩 (예능 일괄 · 새로 받은 예능)" in html and "PC 예약 종료" in html and "runEncode" not in html
+    assert "재인코딩 (예능 일괄 · 새로 받은 예능 · 드라마)" in html and "PC 예약 종료" in html and "runEncode" not in html
     assert c.post("/run_encode").status_code == 404
     assert c.get("/encode_hold_stats").status_code == 404 and c.get("/encode_log/tail").status_code == 404
 
@@ -383,3 +383,24 @@ def test_night_skips_when_worker_already_running(re_env, monkeypatch):
     web_admin._run_reencode_night()
     assert re_env["host"] == [("resume", "auto")] and not re_env["tasks"]
     assert "이어서 하게 했어요" in re_env["sent"][-1][0]
+
+
+def test_drama_hold_tiers_and_samples(re_env):
+    q = json.loads(reencode_ctl.QUEUE.read_text(encoding="utf-8"))
+    q["items"] += [{"id": "1539", "src": "/v/01.드라마/닥터 브레인.E04.mkv", "tier": "D1", "profile": "drama", "status": "hold",
+                    "size": 4 * 2 ** 30, "expect_save": 2 * 2 ** 30, "mbps": 10.75, "res": "1920x818"},
+                   {"id": "1540", "src": "/v/01.드라마/x.E01.mkv", "tier": "D3", "profile": "drama", "status": "hold", "expect_save": 2 ** 30}]
+    q["samples"] = [{"id": "T0001", "kind": "sample", "profile": "drama", "src": "/v/01.드라마/굿보이.E02.mkv", "size": 4 * 2 ** 30,
+                     "mbps": 8.97, "status": "done", "new_size": 3 * 2 ** 30, "out_mbps": 6.1,
+                     "final": "/v/임시/재인코딩/sample/굿보이.E02.SAMPLE.mp4"},
+                    {"id": "T0002", "kind": "sample", "profile": "drama", "src": "/v/01.드라마/y.E01.mkv", "size": 2 ** 30, "status": "fed"}]
+    reencode_ctl.QUEUE.write_text(json.dumps(q), encoding="utf-8")
+    write_status(re_env, state="encoding", current="T0002", updated="2026-10-28 14:30:00")
+    st = reencode_ctl.state()          # 숫자 순위와 D1~D3가 섞여도 정렬이 깨지지 않는다
+    assert list(st["tiers"]) == ["1", "2", "3", "D1", "D3"]
+    assert st["tiers"]["D1"]["hold"] == 1 and st["tiers"]["D1"]["todo"] == 0
+    assert "실패 1 · 보류(드라마) 2\n" in st["summary"]
+    assert [s["id"] for s in st["samples"]] == ["T0002", "T0001"] and st["samples"][1]["out_mbps"] == 6.1
+    assert st["current"]["tier"] == "샘플" and st["waiting_list"][0]["id"] == "T0002"
+    assert not reencode_ctl.batch_has_work() or any(it["status"] in ("pending", "fed") for it in q["items"])
+    assert re_env["client"].get("/api/reencode").get_json()["samples"][1]["final"].endswith(".SAMPLE.mp4")

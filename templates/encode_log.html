@@ -42,7 +42,7 @@
     {# 예능 일괄 재인코딩 v2 (2026-10-27): PC 워커가 NAS 영상을 SMB로 직접 읽어 인코딩, NAS가 원본 자리로 교체 #}
     <div class="card" id="reCard" hidden>
       <div class="log-head">
-        <div class="section-title">재인코딩 (예능 일괄 · 새로 받은 예능)</div>
+        <div class="section-title">재인코딩 (예능 일괄 · 새로 받은 예능 · 드라마)</div>
         <div class="badges">
           <span id="reRunBadge" class="status-badge unknown"><span class="dot"></span>-</span>
           <span id="reWorkerBadge" class="status-badge unknown">PC: -</span>
@@ -60,10 +60,18 @@
       </div>
       <div class="hint" id="reHint" style="margin-top:6px;"></div>
       <table class="hold-table" style="margin-top:10px;">
-        <thead><tr><th>순위</th><th>완료</th><th>남음</th><th>실패</th><th>줄인 용량</th><th>예상</th></tr></thead>
+        <thead><tr><th>순위</th><th>완료</th><th>남음</th><th>보류</th><th>실패</th><th>줄인 용량</th><th>예상</th></tr></thead>
         <tbody id="reTierBody"></tbody>
       </table>
       <div id="reFailed" class="hint" style="margin-top:8px;"></div>
+      {# 드라마 샘플(10-28): 원본은 그대로, 결과는 임시/재인코딩/sample/에 비교용으로 #}
+      <div id="reSamples" hidden style="margin-top:10px;">
+        <div class="hint"><b>드라마 샘플</b> — 원본은 그대로 두고 결과만 <code>임시/재인코딩/sample/</code>에 남겨요. 보고 괜찮으면 보류를 풀어요(미디어 정리 세션의 release-drama).</div>
+        <div style="overflow-x:auto;"><table class="hold-table" style="margin-top:6px;">
+          <thead><tr><th>#</th><th>원본</th><th>용량 (전 → 후)</th><th>비트레이트 (전 → 후)</th><th>상태</th></tr></thead>
+          <tbody id="reSampleBody"></tbody>
+        </table></div>
+      </div>
       <div class="filter-btns" style="margin-top:12px;">
         <button type="button" class="btn small on" data-re="done" onclick="setReTab('done')">완료 (전→후)</button>
         <button type="button" class="btn small" data-re="waiting" onclick="setReTab('waiting')">대기</button>
@@ -165,7 +173,18 @@
         if (d.off_after) oa.textContent = "⏹ #" + d.off_after.id + " 파일이 NAS에서 교체되면 PC를 꺼요 (대기 중)";
         document.getElementById("reTierBody").innerHTML = Object.keys(d.tiers).map(function(k) {
           var t = d.tiers[k];
-          return "<tr><td>" + k + "순위</td><td>" + t.done + "</td><td>" + t.todo + "</td><td>" + t.failed + "</td><td>" + reGb(t.saved) + "</td><td>" + reGb(t.expect) + "</td></tr>";
+          var label = k.charAt(0) === "D" ? "드라마 " + k.slice(1) + "순위" : k + "순위";
+          return "<tr><td>" + reEsc(label) + "</td><td>" + t.done + "</td><td>" + t.todo + "</td><td>" + (t.hold || 0) + "</td><td>" + t.failed +
+            "</td><td>" + reGb(t.saved) + "</td><td>" + reGb(t.expect) + "</td></tr>";
+        }).join("");
+        var samples = d.samples || [];
+        document.getElementById("reSamples").hidden = !samples.length;
+        document.getElementById("reSampleBody").innerHTML = samples.map(function(r) {
+          var st = r.status === "done" ? "완료 · " + reEsc((r.final || "").split("/").pop())
+            : r.status === "failed" ? "실패" + (r.msg ? " — " + reEsc(r.msg) : "")
+            : (d.current && d.current.id === r.id) ? "인코딩 중" : "대기";
+          return "<tr><td>" + reEsc(r.id) + "</td><td>" + reEsc(r.name) + "</td><td>" + reGb(r.size) + (r.new_size ? " → " + reGb(r.new_size) : "") +
+            "</td><td>" + reEsc(r.mbps) + (r.out_mbps ? " → " + reEsc(r.out_mbps) : "") + "Mbps</td><td>" + st + "</td></tr>";
         }).join("");
         document.getElementById("reFailed").innerHTML = d.failed && d.failed.length
           ? "<b>실패 " + d.failed.length + "개</b> (원본은 그대로)<br>" + d.failed.map(function(f) { return "#" + reEsc(f.id) + " " + reEsc(f.name) + (f.msg ? " — " + reEsc(f.msg) : ""); }).join("<br>")
