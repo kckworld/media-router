@@ -55,8 +55,9 @@ fi
 
 code2="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$URL" 2>&1)"
 if is_ok "$code2"; then
-	echo "재시작 후 정상 응답 확인 (HTTP $code2) - 헬스체크가 장애를 감지하고 복구함"
-	exit 1
+	# 복구 성공은 실패가 아니다: exit 0 + RECOVERED 표시(로그·DB에만, 알림 없음)
+	echo "RECOVERED: 재시작 후 정상 응답 확인 (HTTP $code2) - 헬스체크가 장애를 감지하고 복구함"
+	exit 0
 fi
 
 echo "재시작했지만 여전히 응답 없음/이상 (HTTP ${code2:-없음}) - 직접 확인 필요"
