@@ -425,3 +425,15 @@ def test_failed_ack_moves_to_acked(re_env, monkeypatch, tmp_path):
     d = c.get("/api/reencode").get_json()
     assert d["failed"] == [] and [f["id"] for f in d["failed_acked"]] == ["0003"]
     assert c.post("/api/reencode/ack", json={"id": "../x"}).status_code == 400
+
+
+@pytest.mark.parametrize("rc, out, code", [
+    (1190, b"", 1190),
+    (1, "시스템 종료가 이미 예약되어 있습니다.(1190)\r\n".encode("cp949"), 1190),
+    (1, "시스템 종료가 진행 중이 아니기 때문에 취소할 수 없습니다.(1116)\r\n".encode("cp949"), 1116),
+    (1, b"", 1),
+])
+def test_shutdown_code_reads_number_from_message(rc, out, code):
+    """SSH로 돌린 shutdown.exe는 종료코드가 1로 오고 번호는 메시지 끝에만 남을 수 있다 (2026-10-29)"""
+    result = web_admin.subprocess.CompletedProcess([], rc, stdout=b"", stderr=out)
+    assert web_admin._shutdown_code(result) == code

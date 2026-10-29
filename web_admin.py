@@ -3361,6 +3361,15 @@ def _pc_ssh(command: str):
     )
 
 
+def _shutdown_code(result) -> int:
+    """shutdown.exe의 오류 번호. SSH로 돌리면 종료코드가 1로 뭉개지고 번호는
+    "...예약되어 있습니다.(1190)"처럼 메시지 끝에만 남는 경우가 있어 거기서 읽는다."""
+    if result.returncode in (0, 1089, 1190):
+        return result.returncode
+    m = re.search(r"\((\d{4})\)\s*$", (_pc_text(result.stderr) or _pc_text(result.stdout)).strip())
+    return int(m.group(1)) if m else result.returncode
+
+
 def _request_cancel_shutdown() -> tuple[bool, str, int]:
     """KCK-GAMING에 예약된 종료(인코딩 후 자동 종료, PC 끄기의 1분 유예)를 취소한다."""
     if not Path(GAMING_PC_SSH_KEY).exists():
@@ -3380,14 +3389,15 @@ def _request_cancel_shutdown() -> tuple[bool, str, int]:
     except Exception as e:
         app.logger.exception("종료 취소 요청 중 오류")
         return False, f"실행 요청 실패: {e}", 500
+    code = _shutdown_code(result)
 
     # shutdown /a는 예약된 종료가 없으면 종료코드 1089로 실패한다 - 이미 취소됐거나
     # 원래 예약이 없었던 정상적인 상황이므로 에러로 취급하지 않는다.
-    if result.returncode not in (0, 1089):
+    if code not in (0, 1089):
         detail = (_pc_text(result.stderr) or _pc_text(result.stdout)).strip()[:300]
         return False, f"SSH 실행 실패(종료코드 {result.returncode}): {detail}", 500
 
-    if result.returncode == 1089:
+    if code == 1089:
         return True, "예약된 종료가 없었어요(이미 취소됐거나 원래 없었음).", 200
     return True, "KCK-GAMING의 예약 종료를 취소했습니다.", 200
 
@@ -3431,8 +3441,8 @@ def _request_pc_shutdown(force: bool) -> tuple[bool, str, int, bool]:
         return False, f"실행 요청 실패: {e}", 500, False
 
     # 1190: 이미 종료가 예약돼 있음(인코딩 후 자동 종료 등) - 어차피 꺼지므로 실패로 보지 않는다
-    if result.returncode == 1190:
-        return True, "이미 종료가 예약돼 있어요. 곧 꺼집니다.", 200, False
+    if _shutdown_code(result) == 1190:
+        return True, "이미 종료가 예약돼 있어요(인코딩 워커가 건 5분 뒤 종료 등). 곧 꺼집니다.", 200, False
     if result.returncode != 0:
         detail = (_pc_text(result.stderr) or _pc_text(result.stdout)).strip()[:300]
         return False, f"SSH 실행 실패(종료코드 {result.returncode}): {detail}", 500, False
