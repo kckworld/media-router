@@ -176,7 +176,14 @@ def tmdb_tv(api_key: str, show: str) -> dict | None:
             "overview": (m.get("overview") or "").strip()}
 
 
-def enrich(items: list[dict], api_key: str, cache_path: Path, workers: int = 6) -> list[dict]:
+def namu_url(show: str, kind: str = "") -> str:
+    """나무위키 /Go: 문서가 있으면 문서로, 없으면 검색으로 간다(10-31 Playwright로 확인).
+    드라마는 '제목(드라마)' 문서가 대부분, 예능은 보통 '제목' 그대로(겹칠 때만 '(예능)')."""
+    q = f"{show}(드라마)" if kind == "drama" else show
+    return "https://namu.wiki/Go?q=" + requests.utils.quote(q)
+
+
+def enrich(items: list[dict], api_key: str, cache_path: Path, workers: int = 6, kind: str = "") -> list[dict]:
     """프로그램 이름별 TMDB 캐시(data/tf_tmdb_cache.json). 못 찾은 것도 캐시해서 다시 묻지 않는다."""
     from concurrent.futures import ThreadPoolExecutor
     with _cache_lock:
@@ -202,5 +209,5 @@ def enrich(items: list[dict], api_key: str, cache_path: Path, workers: int = 6) 
         info = cache.get(norm(p["show"])) or {}
         out.append(dict(m, show=p["show"], ep=p["ep"], air=p["air"], release=p["release"],
                         poster=info.get("poster"), rating=info.get("rating"), overview=info.get("overview") or "",
-                        year=info.get("year"), namu="https://namu.wiki/Search?q=" + requests.utils.quote(p["show"])))
+                        year=info.get("year"), namu=namu_url(p["show"], kind)))
     return out

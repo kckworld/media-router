@@ -99,3 +99,8 @@ def test_subscribe_writes_keyword_with_release(tf_env):
     assert r.status_code == 409 and "이미 계속 받는 중" in r.get_json()["error"]
     r = c.post("/api/tf/variety/subscribe", json={"title": "런닝맨.E826.261026.720p-NEXT"})
     assert r.status_code == 200 and tf_env["kw_v"].read_text(encoding="utf-8").splitlines()[-1] == "런닝맨"
+
+
+def test_namu_go_url():
+    assert tf_shows.namu_url("라이어", "drama") == "https://namu.wiki/Go?q=%EB%9D%BC%EC%9D%B4%EC%96%B4%28%EB%93%9C%EB%9D%BC%EB%A7%88%29"
+    assert tf_shows.namu_url("런닝맨", "variety") == "https://namu.wiki/Go?q=%EB%9F%B0%EB%8B%9D%EB%A7%A8"

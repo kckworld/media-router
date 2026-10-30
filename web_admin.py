@@ -1092,7 +1092,7 @@ def _tf_added() -> dict:
 
 def _tf_decorate(kind: str, items: list[dict]) -> list[dict]:
     info = tf_shows.BOARDS[kind]
-    items = tf_shows.enrich(items, get_tmdb_api_key(), TF_TMDB_CACHE)
+    items = tf_shows.enrich(items, get_tmdb_api_key(), TF_TMDB_CACHE, kind=kind)
     lines = tf_shows.keyword_lines(_keyword_path(info["category"]))
     rules = load_cfg().get("rules") or []
     added = _tf_added()
