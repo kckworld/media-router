@@ -69,6 +69,30 @@ def needs_collect() -> bool:
         return False
 
 
+_VIDEO_EXTS = (".mp4", ".mkv", ".ts", ".avi", ".mov", ".m4v", ".wmv", ".flv", ".webm")   # reencode.py VIDEO_EXTS와 같게
+
+
+def held_new(new_items: list) -> list:
+    """media_router가 new/(새 예능)·new/drama/(새 드라마)에 보류했지만 reencode.py feed_new가 아직 작업(N…)으로
+    만들지 않은 파일(10-31). feed_new는 run(배치 20분 주기, 결과가 있으면 1분마다)에서 돌아서 그 사이엔 큐에 없다."""
+    known = {it.get("src") for it in new_items if it.get("status") in _OPEN}
+    out = []
+    for d, profile in ((WORK / "new", "variety"), (WORK / "new" / "drama", "drama")):
+        try:
+            files = sorted(d.iterdir())
+        except OSError:
+            continue
+        for p in files:
+            if (p.is_file() and not p.name.startswith((".", "[손상]")) and p.suffix.lower() in _VIDEO_EXTS
+                    and str(p) not in known):
+                try:
+                    size = p.stat().st_size
+                except OSError:
+                    continue
+                out.append({"id": "", "kind": "new", "profile": profile, "src": str(p), "size": size, "status": "held"})
+    return out
+
+
 def _new_label(new_items: list) -> str:
     """새로 받은 영상(new_items) 줄 머리 - 드라마도 들어온다(10-28, profile=drama)"""
     drama = sum(1 for it in new_items if it.get("profile") == "drama")
@@ -97,6 +121,7 @@ def state() -> dict:
     new_items = q.get("new_items") or []      # media_router가 보류한 새 예능 (id N0001…)
     new_open = [it for it in new_items if it.get("status") in _OPEN]
     new_failed = [it for it in new_items if it.get("status") == "failed"]
+    held = held_new(new_items)
     samples = q.get("samples") or []          # 드라마 샘플 (id T0001…, 원본은 그대로 두고 sample/에 결과)
     samples_open = [it for it in samples if it.get("status") in _OPEN]
     by_id = {it.get("id"): it for it in items + new_items + samples}
@@ -108,9 +133,10 @@ def state() -> dict:
                f" · 실패 {counts.get('failed', 0)}" + (f" · 보류(드라마) {counts['hold']}" if counts.get("hold") else "")
                + f"\n줄인 용량 {gb(saved)} / 예상 {gb(expect)}"
                + ("\n▶ 실행 중" if is_running else "\n⏹ 멈춤")
-               + (f"\n🆕 {_new_label(new_open + new_failed)} " + " · ".join(([f"인코딩 대기 {len(new_open)}개"] if new_open else [])
+               + (f"\n🆕 {_new_label(new_open + held + new_failed)} " + " · ".join(([f"인코딩 대기 {len(new_open)}개"] if new_open else [])
+                                             + ([f"대기 등록 전 {len(held)}개"] if held else [])
                                              + ([f"실패 {len(new_failed)}개(new 폴더에 [손상] 표시)"] if new_failed else []))
-                  if new_open or new_failed else "")
+                  if new_open or held or new_failed else "")
                + (f"\nPC: {w.get('state', '?')}" + (f" — #{w['current']}" if w.get("current") else "")
                   + (f" · 올리기 대기 {w['pending_upload']}개" if w.get("pending_upload") else "")
                   + f" ({str(w.get('updated', ''))[5:16]})" if w else "")
@@ -126,7 +152,7 @@ def state() -> dict:
     done = sorted((it for it in items if it.get("status") == "done"), key=lambda it: it.get("done_at") or "", reverse=True)
     # 새 예능은 일괄 재인코딩보다 먼저 집히므로 대기 목록 맨 앞
     # 워커는 새 예능 → 드라마 샘플 → 일괄 순서로 집는다
-    waiting = new_open + samples_open + [it for it in items if it.get("status") == "fed"] + [it for it in items if it.get("status") == "pending"]
+    waiting = new_open + held + samples_open + [it for it in items if it.get("status") == "fed"] + [it for it in items if it.get("status") == "pending"]
     return {"available": True, "counts": counts, "total": len(items), "saved": saved, "expect": expect,
             # 예능 1~3(숫자) 다음 드라마 D1~D3(글자) - 섞어서 sorted하면 TypeError
             "tiers": {str(k): v for k, v in sorted(tiers.items(), key=lambda kv: (isinstance(kv[0], str), str(kv[0])))},

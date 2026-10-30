@@ -135,7 +135,7 @@
         body.innerHTML = waiting.map(function(r) {
           return "<tr><td>" + reEsc(r.id) + "</td><td class=\"name\">" + reEsc(r.name) + "</td><td>" + reEsc(r.tier) + "</td><td>" + reGb(r.size) +
             "</td><td>" + reEsc(r.mbps) + "Mbps</td><td>" + reEsc(r.res) + "</td><td>-" + reGb(r.expect_save) +
-            "</td><td>" + (r.status === "fed" ? "준비됨(todo)" : "대기") + "</td></tr>";
+            "</td><td>" + (r.status === "fed" ? "준비됨(todo)" : r.status === "held" ? "대기 등록 전" : "대기") + "</td></tr>";
         }).join("") || '<tr><td colspan="8" class="hint">대기 중인 게 없어요.</td></tr>';
         foot.textContent = "다음 " + waiting.length + "개 (전체 " + RE.waiting_total + "개)";
       }

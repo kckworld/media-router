@@ -1075,6 +1075,134 @@ def api_movies_download():
     return jsonify({"ok": ok, "message": message, "error": None if ok else message}), (200 if ok else 409)
 
 
+# ── 작업 > 드라마·예능 (2026-10-30): 티프리카 게시판을 영화 탭처럼 ──
+# 이 회차만 받기 = qBit에 추가(저장 위치·분류는 qBit RSS 규칙 "드라마"/"예능"과 같게) → 분류 규칙이 정리.
+# 계속 받기 = bt4g/drama_keywords.txt·bt4g_keywords.txt에 키워드 → tfreeca.py RSS가 다음 회차부터.
+import tf_shows
+TF_TMDB_CACHE = DATA_DIR / "tf_tmdb_cache.json"
+TF_ADDED_PATH = DATA_DIR / "tf_added.json"      # 이 화면에서 받기 넣은 글 (글 번호 → 해시·시각)
+
+
+def _tf_added() -> dict:
+    try:
+        return json.loads(TF_ADDED_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _tf_decorate(kind: str, items: list[dict]) -> list[dict]:
+    info = tf_shows.BOARDS[kind]
+    items = tf_shows.enrich(items, get_tmdb_api_key(), TF_TMDB_CACHE)
+    lines = tf_shows.keyword_lines(_keyword_path(info["category"]))
+    rules = load_cfg().get("rules") or []
+    added = _tf_added()
+    for m in items:
+        m["subscribed"] = tf_shows.subscribed(m["title"], lines)
+        r = tf_shows.rule_for(m["title"], rules, info["category"])
+        m["rule"] = r.get("subfolder") if r else None
+        m["added"] = m["id"] in added
+    return items
+
+
+@app.route("/tf/<kind>", methods=["GET"])
+def tf_page(kind):
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    if kind not in tf_shows.BOARDS:
+        return make_response("Not Found", 404)
+    return render_template("tf_shows.html", authed=True, kind=kind, label=tf_shows.BOARDS[kind]["label"])
+
+
+@app.route("/api/tf/<kind>", methods=["GET"])
+def api_tf(kind):
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if kind not in tf_shows.BOARDS:
+        return jsonify({"ok": False, "error": "없는 게시판이에요."}), 404
+    force = request.args.get("refresh") == "1"
+    pg = request.args.get("page", "1")
+    page = min(10, max(1, int(pg))) if pg.isdigit() else 1
+    out = {"ok": True, "errors": [], "page": page, "base": movies.TFREECA_BASE, "b_id": tf_shows.BOARDS[kind]["b_id"]}
+    try:
+        best = _movie_cached(f"tf_{kind}_best", lambda: tf_shows.fetch_best(kind), force)
+        out["day"], out["week"] = _tf_decorate(kind, best["day"]), _tf_decorate(kind, best["week"])
+    except Exception as e:
+        out.update(day=[], week=[])
+        out["errors"].append(f"베스트 목록을 못 가져왔어요 ({type(e).__name__})")
+    try:
+        out["list"] = _tf_decorate(kind, _movie_cached(f"tf_{kind}_list{page}", lambda: tf_shows.fetch_list(kind, page), force))
+    except Exception as e:
+        out["list"] = []
+        out["errors"].append(f"최신 목록을 못 가져왔어요 ({type(e).__name__})")
+    return jsonify(out)
+
+
+@app.route("/api/tf/<kind>/download", methods=["POST"])
+def api_tf_download(kind):
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if kind not in tf_shows.BOARDS:
+        return jsonify({"ok": False, "error": "없는 게시판이에요."}), 404
+    post_id = str((request.get_json(silent=True) or {}).get("post_id") or "")
+    if not post_id.isdigit():
+        return jsonify({"ok": False, "error": "잘못된 글 번호예요."}), 400
+    info = tf_shows.BOARDS[kind]
+    try:
+        btih, title = tf_shows.fetch_magnet(kind, post_id)
+        if not btih:
+            return jsonify({"ok": False, "error": "글에서 토렌트(마그넷)를 찾지 못했어요."}), 409
+        have = _qbit_torrents([btih])
+        if have and have.get(btih):
+            return jsonify({"ok": False, "error": f"이미 qBittorrent에 있어요 ({have[btih].get('progress', 0) * 100:.0f}%)."}), 409
+        # 저장 위치·분류는 RSS 자동 받기 규칙과 같게 - 다 받으면 같은 흐름(분류 규칙)으로 정리된다
+        rule = (_qbit_get("/api/v2/rss/rules") or {}).get(info["rule"]) or {}
+        add = {"urls": movies.magnet(btih), "tags": "MR"}
+        if rule.get("savePath"):
+            add["savepath"], add["autoTMM"] = rule["savePath"], "false"
+        if rule.get("assignedCategory"):
+            add["category"] = rule["assignedCategory"]
+        _qbit_post("/api/v2/torrents/add", add)       # 강제 시작 안 씀(다 받은 뒤 자동 삭제가 되게)
+    except Exception as e:
+        app.logger.exception("드라마·예능 받기 실패")
+        return jsonify({"ok": False, "error": f"받지 못했어요 ({type(e).__name__}: {e})"}), 502
+    added = _tf_added()
+    added[post_id] = {"btih": btih, "kind": kind, "title": title, "at": int(time.time())}
+    if len(added) > 500:
+        added = dict(list(added.items())[-300:])
+    TF_ADDED_PATH.write_text(json.dumps(added, ensure_ascii=False), encoding="utf-8")
+    r = tf_shows.rule_for(title, load_cfg().get("rules") or [], info["category"])
+    msg = f"⬇ '{title}' 받기 시작했어요." + ("" if r else f" ⚠ 맞는 {info['label']} 분류 규칙이 없어서 다 받아도 다운로드 폴더에 남아요 — 분류 규칙을 추가하세요.")
+    return jsonify({"ok": True, "message": msg, "rule": r.get("subfolder") if r else None})
+
+
+@app.route("/api/tf/<kind>/subscribe", methods=["POST"])
+def api_tf_subscribe(kind):
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if kind not in tf_shows.BOARDS:
+        return jsonify({"ok": False, "error": "없는 게시판이에요."}), 404
+    title = str((request.get_json(silent=True) or {}).get("title") or "").strip()[:300]
+    p = tf_shows.parse_title(title)
+    if not p["show"]:
+        return jsonify({"ok": False, "error": "글 제목에서 프로그램 이름을 못 찾았어요."}), 400
+    info = tf_shows.BOARDS[kind]
+    path = _keyword_path(info["category"])
+    have = tf_shows.subscribed(title, tf_shows.keyword_lines(path))
+    if have:
+        return jsonify({"ok": False, "error": f"이미 계속 받는 중이에요 (키워드 '{have}')."}), 409
+    if not add_rule_keyword(info["category"], p["show"], p["release"] if kind == "drama" else ""):
+        return jsonify({"ok": False, "error": "키워드를 넣지 못했어요(이미 비슷한 키워드가 있을 수 있어요)."}), 409
+    r = tf_shows.rule_for(title, load_cfg().get("rules") or [], info["category"])
+    msg = f"🔁 '{p['show']}'을(를) 다음 회차부터 자동으로 받아요" + (f" (릴 {p['release']})" if kind == "drama" and p["release"] else "") + "."
+    if not r:
+        msg += f" ⚠ {info['label']} 분류 규칙이 없어요 — 분류 규칙 화면에서 추가해야 라이브러리로 옮겨져요."
+    return jsonify({"ok": True, "message": msg, "rule": r.get("subfolder") if r else None})
+
+
 # ── 단톡방 영상 요청 (2026-10-26) ──
 # /request 는 로그인 없이 연다. REQUEST_PUBLIC_HOSTS(별도 주소, 예: request.kckworld.com)로
 # 들어오면 요청 페이지만 열리고 관리 화면은 404 - 공개 주소에서 로그인 화면조차 안 보이게.

@@ -1,0 +1,138 @@
+{# 작업 > 드라마·예능 (2026-10-30): 티프리카 게시판을 영화 탭처럼. 이 회차만 받기 / 계속 받기 #}
+{% set active_page = 'tf' ~ kind %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .mv-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .mv-tabs button { border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 999px; padding: 6px 14px; font-weight: 600; font-size: 13px; cursor: pointer; }
+    .mv-tabs button.active { background: var(--accent-light); color: var(--accent-hover); border-color: var(--accent); }
+    .mv-list { list-style: none; margin: 0; padding: 0; }
+    .mv-item { display: flex; gap: 10px; align-items: center; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+    .mv-item:last-child { border-bottom: 0; }
+    .mv-main { flex: 1; min-width: 0; }
+    .mv-poster { flex: none; width: 54px; height: 80px; border-radius: 6px; object-fit: cover; background: var(--bg-solid); }
+    .mv-poster.none { display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--muted); }
+    .mv-display { font-weight: 700; color: var(--fg); }
+    .mv-rating { font-size: 12px; color: var(--warn); font-weight: 700; margin-left: 4px; }
+    .mv-overview { font-size: 12px; color: var(--muted); margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .mv-sub { font-size: 12px; color: var(--muted); margin-top: 3px; word-break: break-all; }
+    .mv-actions { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+    .mv-empty { color: var(--muted); padding: 12px 2px; }
+    .state { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--bg-solid); color: var(--muted); margin-right: 4px; }
+    .state.dl { background: var(--accent-light); color: var(--accent-hover); }
+    .state.done { background: var(--success-light); color: var(--success-hover); }
+    .state.sub { background: var(--warn-soft); color: var(--warn); }
+    .mv-pager { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
+    @media (max-width: 640px) {
+      .mv-item { flex-wrap: wrap; }
+      .mv-actions { width: 100%; }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>티프리카 {{ label }}</span>
+        <button type="button" class="btn small" id="mvRefresh" onclick="load(true)">↻ 새로고침</button>
+      </div>
+      <div class="mv-tabs" id="mvTabs">
+        <button type="button" data-tab="day" class="active" onclick="setTab('day')">🔥 일간 베스트</button>
+        <button type="button" data-tab="week" onclick="setTab('week')">📅 주간 베스트</button>
+        <button type="button" data-tab="list" onclick="setTab('list')">🆕 최신 목록</button>
+      </div>
+      <ul class="mv-list" id="mvList"><li class="mv-empty">불러오는 중…</li></ul>
+      <div class="mv-pager" id="mvPager" hidden>
+        <button type="button" class="btn small" onclick="movePage(-1)">← 이전</button>
+        <span class="mv-sub" id="mvPage" style="align-self:center;">1쪽</span>
+        <button type="button" class="btn small" onclick="movePage(1)">다음 →</button>
+      </div>
+      <div class="hint" style="margin-top:10px;">
+        <b>이 회차만 받기</b>: 그 글을 qBittorrent로 받아요. 다 받으면 <a href="/?mode=">분류 규칙</a>대로 라이브러리로 옮겨요(배치 20분 주기).
+        <b>계속 받기</b>: <a href="{{ '/drama_keywords' if kind == 'drama' else '/bt4g_keywords' }}">{{ label }} 키워드</a>에 넣어서 다음 회차부터 자동으로 받아요{% if kind == 'drama' %}(이 글의 릴로){% endif %}.
+        <span class="state sub">분류 규칙 없음</span>이 붙은 건 받아도 옮길 곳이 없어 다운로드 폴더에 남아요 — 분류 규칙을 먼저 추가하세요.
+      </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var KIND = {{ kind | tojson }};
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    var tab = "day", page = 1, data = null;
+
+    function postUrl(id) { return data.base + "/board.php?mode=view&b_id=" + data.b_id + "&id=" + encodeURIComponent(id); }
+    function setTab(t) {
+      tab = t;
+      document.querySelectorAll("#mvTabs button").forEach(function(b) { b.classList.toggle("active", b.dataset.tab === t); });
+      renderList();
+    }
+    function movePage(d) { page = Math.max(1, Math.min(10, page + d)); load(false); }
+
+    function renderList() {
+      if (!data) return;
+      var items = data[tab] || [];
+      document.getElementById("mvPager").hidden = tab !== "list";
+      document.getElementById("mvPage").textContent = page + "쪽";
+      var list = document.getElementById("mvList");
+      if (!items.length) {
+        list.innerHTML = '<li class="mv-empty">' + esc((data.errors || []).join(" · ") || "목록이 비어 있어요.") + '</li>';
+        return;
+      }
+      list.innerHTML = items.map(function(m) {
+        var badges = (m.added ? '<span class="state dl">받기 넣음</span>' : "") +
+          (m.subscribed ? '<span class="state done" title="' + esc(m.subscribed) + '">계속 받는 중</span>' : "") +
+          (m.rule ? "" : '<span class="state sub">분류 규칙 없음</span>');
+        var poster = m.poster
+          ? '<img class="mv-poster" loading="lazy" src="' + esc(m.poster.replace("/w342/", "/w154/")) + '" alt="">'
+          : '<div class="mv-poster none">' + (KIND === "drama" ? "🎭" : "📺") + '</div>';
+        var head = '<div class="mv-display">' + esc(m.show) + (m.ep ? " " + esc(m.ep) + "회" : "") +
+          (m.rating ? '<span class="mv-rating">★' + esc(m.rating) + '</span>' : '') + '</div>';
+        var ov = m.overview ? '<div class="mv-overview">' + esc(m.overview) + '</div>' : "";
+        var sub = '<div class="mv-sub">' + badges + esc(m.title) + (m.when ? " · " + esc(m.when) : "") +
+          (m.rule ? " · → " + esc(m.rule) : "") + '</div>';
+        return '<li class="mv-item">' + poster + '<div class="mv-main">' + head + ov + sub + '</div>' +
+          '<div class="mv-actions">' +
+          '<a class="btn small" href="' + esc(m.namu) + '" target="_blank" rel="noopener">나무위키 ↗</a>' +
+          '<a class="btn small" href="' + esc(postUrl(m.id)) + '" target="_blank" rel="noopener">티프리카 ↗</a>' +
+          '<button type="button" class="btn small primary" data-write onclick="act(\'download\', \'' + esc(m.id) + '\', this)">⬇ 이 회차만 받기</button>' +
+          '<button type="button" class="btn small" data-write onclick="act(\'subscribe\', \'' + esc(m.id) + '\', this)"' + (m.subscribed ? " disabled" : "") + '>🔁 계속 받기</button>' +
+          '</div></li>';
+      }).join("");
+    }
+
+    function load(force) {
+      var btn = document.getElementById("mvRefresh");
+      btn.disabled = true;
+      fetch("/api/tf/" + KIND + "?page=" + page + (force ? "&refresh=1" : ""), { cache: "no-store" }).then(mrJson).then(function(res) {
+        btn.disabled = false;
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "목록을 못 가져왔어요", "error"); return; }
+        data = res.data;
+        renderList();
+      }).catch(function(e) { btn.disabled = false; showToast("오류: " + e, "error"); });
+    }
+
+    function findItem(id) {
+      return (data.day || []).concat(data.week || [], data.list || []).filter(function(m) { return m.id === id; })[0] || {};
+    }
+
+    function act(what, id, btn) {
+      var m = findItem(id);
+      if (what === "subscribe" && !confirm("'" + m.show + "'을(를) 다음 회차부터 자동으로 받을까요?" +
+          (KIND === "drama" && m.release ? "\n(릴: " + m.release + ")" : ""))) return;
+      var done = mrBusy(btn, "요청 중");
+      fetch("/api/tf/" + KIND + "/" + what, { method: "POST", headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ post_id: id, title: m.title || "" }) })
+        .then(mrJson)
+        .then(function(res) {
+          done();
+          showToast((res.data && (res.data.message || res.data.error)) || "요청했어요", res.ok && res.data.ok ? "success" : "error");
+          load(false);
+        })
+        .catch(function(e) { done(); showToast("오류: " + e, "error"); });
+    }
+
+    load(false);
+  </script>
+{% endblock %}

@@ -437,3 +437,17 @@ def test_shutdown_code_reads_number_from_message(rc, out, code):
     """SSH로 돌린 shutdown.exe는 종료코드가 1로 오고 번호는 메시지 끝에만 남을 수 있다 (2026-10-29)"""
     result = web_admin.subprocess.CompletedProcess([], rc, stdout=b"", stderr=out)
     assert web_admin._shutdown_code(result) == code
+
+
+def test_held_new_files_listed_first(re_env):
+    (re_env["work"] / "new" / "drama").mkdir(parents=True)
+    (re_env["work"] / "new" / "직장인들.S03E10.mkv").write_bytes(b"x" * 10)
+    (re_env["work"] / "new" / "drama" / "꿀알바.E01.mkv").write_bytes(b"x")
+    (re_env["work"] / "new" / "[손상] 깨진.mkv").write_bytes(b"x")
+    st = reencode_ctl.state()
+    assert [(w["tier"], w["status"]) for w in st["waiting_list"][:2]] == [("새 예능", "held"), ("새 드라마", "held")]
+    assert "🆕 새 영상(예능 1·드라마 1) 대기 등록 전 2개" in st["summary"]
+    # 작업(N…)이 된 파일은 보류 목록에서 빠진다
+    _add_new_items(re_env, [{"id": "N0001", "kind": "new", "src": str(re_env["work"] / "new" / "직장인들.S03E10.mkv"), "status": "fed"}])
+    st = reencode_ctl.state()
+    assert [w["status"] for w in st["waiting_list"][:2]] == ["fed", "held"]
