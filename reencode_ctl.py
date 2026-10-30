@@ -146,10 +146,14 @@ def state() -> dict:
         return {"id": it.get("id"), "name": Path(it.get("src", "")).name,
                 "tier": ("새 드라마" if it.get("profile") == "drama" else "새 예능") if it.get("kind") == "new" else "샘플" if it.get("kind") == "sample" else it.get("tier"),
                 "size": it.get("size", 0), "new_size": it.get("new_size"), "saved": it.get("saved"),
-                "mbps": it.get("mbps"), "res": it.get("res"), "dur": it.get("dur"), "status": it.get("status"),
+                # 새 영상(N…)엔 mbps가 없어서 크기·길이로 계산
+                "mbps": it.get("mbps") or (round(it["size"] * 8 / it["dur"] / 1e6, 2) if it.get("size") and it.get("dur") else None),
+                "res": it.get("res"), "dur": it.get("dur"), "status": it.get("status"),
                 "expect_save": it.get("expect_save", 0), "done_at": it.get("done_at"), "msg": it.get("msg") or "",
                 "out_mbps": it.get("out_mbps"), "final": it.get("final")}
-    done = sorted((it for it in items if it.get("status") == "done"), key=lambda it: it.get("done_at") or "", reverse=True)
+    # 새 예능·새 드라마(N…) 완료분도 같이 (10-31: 일괄 재인코딩만 나와서 안 보였다)
+    done = sorted((it for it in items + new_items if it.get("status") == "done"),
+                  key=lambda it: it.get("done_at") or "", reverse=True)
     # 새 예능은 일괄 재인코딩보다 먼저 집히므로 대기 목록 맨 앞
     # 워커는 새 예능 → 드라마 샘플 → 일괄 순서로 집는다
     waiting = new_open + held + samples_open + [it for it in items if it.get("status") == "fed"] + [it for it in items if it.get("status") == "pending"]

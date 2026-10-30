@@ -451,3 +451,11 @@ def test_held_new_files_listed_first(re_env):
     _add_new_items(re_env, [{"id": "N0001", "kind": "new", "src": str(re_env["work"] / "new" / "직장인들.S03E10.mkv"), "status": "fed"}])
     st = reencode_ctl.state()
     assert [w["status"] for w in st["waiting_list"][:2]] == ["fed", "held"]
+
+
+def test_new_items_in_done_list(re_env):
+    _add_new_items(re_env, [{"id": "N0002", "kind": "new", "profile": "variety", "src": "/v/new/직장인들.S03E10.mkv",
+                             "status": "done", "size": 3 * 2 ** 30, "new_size": 2 ** 30, "dur": 4000, "done_at": "2026-10-31 00:27:45"}])
+    st = reencode_ctl.state()
+    top = st["done_list"][0]
+    assert top["id"] == "N0002" and top["tier"] == "새 예능" and top["mbps"] == round(3 * 2 ** 30 * 8 / 4000 / 1e6, 2)
