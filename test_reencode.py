@@ -459,3 +459,20 @@ def test_new_items_in_done_list(re_env):
     st = reencode_ctl.state()
     top = st["done_list"][0]
     assert top["id"] == "N0002" and top["tier"] == "새 예능" and top["mbps"] == round(3 * 2 ** 30 * 8 / 4000 / 1e6, 2)
+
+
+def test_eta_uses_active_time_only():
+    def t(h, m):
+        return f"2026-10-30 {h:02d}:{m:02d}:00"
+    items = [{"id": f"{i:04d}", "status": "done", "dur": 3600, "done_at": t(1, 6 * i)} for i in range(5)]   # 6분 간격 5건
+    items.append({"id": "0099", "status": "done", "dur": 3600, "done_at": t(9, 0)})                        # 7시간 쉰 뒤(가동 시간에서 뺌)
+    items.append({"id": "0100", "status": "done", "dur": 3600, "done_at": t(9, 6)})
+    items += [{"id": "0200", "status": "pending", "tier": 3, "dur": 3600},
+              {"id": "0300", "status": "pending", "tier": "D1", "profile": "drama", "dur": 1800}]
+    now = reencode_ctl._ts("2026-10-30 10:00:00")
+    e = reencode_ctl.eta({"items": items, "new_items": []}, [{"profile": "variety"}], {}, now=now)
+    assert e["counted"] == 5 and e["active_h"] == 0.5 and e["per_hour"] == 10.0 and e["sec_per_job"] == 360
+    labels = {g["label"]: g["count"] for g in e["groups"]}
+    assert labels == {"새 예능": 1, "예능 3순위": 1, "드라마 1순위": 1}
+    assert e["remain_count"] == 3 and e["remain_h"] == round(900 / 3600, 1)   # 6분 + 6분 + 3분(드라마는 길이 절반)
+    assert e["end_continuous"] == "2026-10-30 10:15" and e["end_schedule"] == "2026-10-30"

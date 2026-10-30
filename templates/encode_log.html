@@ -32,6 +32,40 @@
     .hold-table th, .hold-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; }
     .hold-table th:first-child, .hold-table td:first-child, .hold-table .name { text-align: left; }
     .re-fail summary { cursor: pointer; display: inline; }
+    .re-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 4px 0 14px; }
+    .re-tile { background: var(--bg-solid); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+    .re-tile .v { font-size: 22px; font-weight: 800; color: var(--fg); line-height: 1.25; font-variant-numeric: tabular-nums; }
+    .re-tile .k { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .re-tile .s { font-size: 12px; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
+    .re-bar { height: 10px; border-radius: 999px; background: var(--bg-solid); border: 1px solid var(--line); overflow: hidden; }
+    .re-bar.thin { height: 7px; }
+    .re-bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width .4s; }
+    .re-progress { margin-bottom: 12px; }
+    .re-prog-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; margin-bottom: 6px; color: var(--muted); }
+    .re-prog-head b { color: var(--fg); }
+    .re-now { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; }
+    .re-now-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 8px; overflow-wrap: anywhere; }
+    .re-now-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--warning); animation: pulse-dot 1.2s ease-in-out infinite; }
+    .re-now-meta { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .re-cols { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 18px; }
+    .re-sub { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 8px; }
+    .re-tiers { list-style: none; margin: 0; padding: 0; }
+    .re-tiers li { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 12.5px; padding: 4px 0; }
+    .re-tiers .lbl { font-weight: 600; color: var(--fg); }
+    .re-tiers .num { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .re-tiers .re-bar i.hold { background: var(--line); }
+    .re-daily { display: flex; align-items: flex-end; gap: 6px; height: 96px; }
+    .re-daily .col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
+    .re-daily .col i { display: block; width: 100%; max-width: 28px; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; opacity: .85; }
+    .re-daily .col span { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .re-daily .col b { font-size: 11px; color: var(--fg); margin-bottom: 2px; font-weight: 600; }
+    .re-note { font-size: 11.5px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+    .re-summary { font-size: 12.5px; color: var(--muted); white-space: pre-line; }
+    @media (max-width: 760px) {
+      .re-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .re-cols { grid-template-columns: minmax(0, 1fr); }
+      .re-tile .v { font-size: 19px; }
+    }
     .hold-table thead th { color: var(--muted); font-weight: 600; font-size: 12px; }
     @media (max-width: 640px) {
       .log-view { height: 50vh; font-size: 12px; }
@@ -68,16 +102,34 @@
         <button type="button" class="btn" id="reStopBtn" onclick="reencodeCmd('stop')" title="지금 파일이 NAS에서 검사·교체까지 끝나면 PC를 꺼요">⏹ 종료 (지금 파일까지 · 끝나면 PC 꺼짐)</button>
         <button type="button" class="btn" id="reTrashBtn" hidden onclick="trashEmptied()" title="Synology Drive 웹에서 휴지통을 비운 뒤 누르세요">🧹 휴지통 비웠음</button>
       </div>
-      <div class="log-tools">
-        <div class="group grow"><div class="pause-state" id="reSummary" style="white-space:pre-line;">불러오는 중…</div></div>
+      {# 10-31 사용자 "보기 좋게": 숫자 타일 · 전체/순위별 진행 막대 · 지금 파일 진행률 · 최근 7일 처리량 #}
+      <div class="re-tiles" id="reTiles"></div>
+      <div class="re-progress">
+        <div class="re-prog-head"><b id="reProgLabel">-</b><span id="reProgSaved"></span></div>
+        <div class="re-bar"><i id="reProgBar"></i></div>
+      </div>
+      <div class="re-now" id="reNow" hidden>
+        <div class="re-now-head"><span class="re-now-dot"></span><span id="reNowName"></span></div>
+        <div class="re-bar thin"><i id="reNowBar"></i></div>
+        <div class="re-now-meta" id="reNowMeta"></div>
+      </div>
+      <div class="re-cols">
+        <div>
+          <div class="re-sub">순위별 진행</div>
+          <ul class="re-tiers" id="reTierBody"></ul>
+        </div>
+        <div>
+          <div class="re-sub">최근 7일 처리량</div>
+          <div class="re-daily" id="reDaily"></div>
+          <div class="re-note" id="reEtaNote"></div>
+        </div>
+      </div>
+      <div class="log-tools" style="margin-top:12px;">
+        <div class="group grow"><div class="re-summary" id="reSummary">불러오는 중…</div></div>
         <div class="group"><button type="button" class="btn small" onclick="loadReencode()">↻ 새로고침</button></div>
       </div>
-      <div class="hint" id="reCurrent"></div>
+      <div class="hint" id="reCurrent" hidden></div>
       <div class="hint" id="reHint" style="margin-top:6px;"></div>
-      <table class="hold-table" style="margin-top:10px;">
-        <thead><tr><th>순위</th><th>완료</th><th>남음</th><th>보류</th><th>실패</th><th>줄인 용량</th><th>예상</th></tr></thead>
-        <tbody id="reTierBody"></tbody>
-      </table>
       <div id="reFailed" class="hint" style="margin-top:8px;"></div>
       <details id="reAckedWrap" class="hint" style="margin-top:4px;" hidden><summary id="reAckedSum"></summary><div id="reAcked"></div></details>
       <div class="filter-btns" style="margin-top:12px;">
@@ -155,7 +207,15 @@
         wb.className = "status-badge " + ws[1];
         wb.textContent = "PC: " + ws[0] + (w.pending_upload ? " · 올리기 대기 " + w.pending_upload + "개" : "") +
           (w.updated ? " (" + String(w.updated).slice(5, 16) + ")" : "");
-        document.getElementById("reCurrent").textContent = d.current ? "지금: #" + d.current.id + " " + d.current.name + " (" + reGb(d.current.size) + ")" : "";
+        var e = d.eta || {}, ce = e.current && d.current && e.current.id === d.current.id ? e.current : null;
+        var now = document.getElementById("reNow");
+        now.hidden = !d.current;
+        if (d.current) {
+          document.getElementById("reNowName").textContent = "지금 #" + d.current.id + " · " + d.current.name + " (" + reGb(d.current.size) + ")";
+          document.getElementById("reNowBar").style.width = (ce ? ce.pct : 0) + "%";
+          document.getElementById("reNowMeta").textContent = ce ? "약 " + ce.pct + "% · " + ce.elapsed_min + "분 지남 · 약 " + ce.left_min + "분 남음 (예상 " + ce.expect_min + "분)" : "진행률 계산 중";
+        }
+        renderEta(e);
         document.getElementById("reStartBtn").hidden = !!d.running;
         document.getElementById("reStopBtn").hidden = !d.running;
         document.getElementById("reTrashBtn").hidden = !d.trash_warn;
@@ -168,11 +228,16 @@
         oa.hidden = !d.off_after;
         if (d.off_after) oa.textContent = "⏹ #" + d.off_after.id + " 파일이 NAS에서 교체되면 PC를 꺼요 (대기 중)";
         document.getElementById("reTierBody").innerHTML = Object.keys(d.tiers).map(function(k) {
-          var t = d.tiers[k];
-          var label = k.charAt(0) === "D" ? "드라마 " + k.slice(1) + "순위" : k + "순위";
-          return "<tr><td>" + reEsc(label) + "</td><td>" + t.done + "</td><td>" + t.todo + "</td><td>" + (t.hold || 0) + "</td><td>" + t.failed +
-            "</td><td>" + reGb(t.saved) + "</td><td>" + reGb(t.expect) + "</td></tr>";
+          var t = d.tiers[k], all = t.done + t.todo + (t.hold || 0) + t.failed || 1;
+          var label = k.charAt(0) === "D" ? "드라마 " + k.slice(1) + "순위" : "예능 " + k + "순위";
+          var extra = (t.hold ? " · 보류 " + t.hold : "") + (t.failed ? " · 실패 " + t.failed : "");
+          return '<li><span class="lbl">' + reEsc(label) + '</span><div class="re-bar thin"><i style="width:' + (t.done / all * 100).toFixed(1) + '%"></i></div>' +
+            '<span class="num">' + t.done + "/" + all + extra + " · -" + reGb(t.saved) + "</span></li>";
         }).join("");
+        var total = d.total || 1, doneN = (d.counts && d.counts.done) || 0;
+        document.getElementById("reProgLabel").textContent = "전체 " + doneN + " / " + total + "개 완료 (" + (doneN / total * 100).toFixed(1) + "%)";
+        document.getElementById("reProgSaved").textContent = "줄인 용량 " + reGb(d.saved) + " / 예상 " + reGb(d.expect);
+        document.getElementById("reProgBar").style.width = (doneN / total * 100).toFixed(1) + "%";
         // 실패: 확인 완료를 누르면 접힌 '확인한 실패'로 내려간다(10-28)
         // ffmpeg 오류 원문은 길어서 짧은 요약 + 펼치면 원문 (10-28 사용자)
         var failLine = function(f) {
@@ -214,6 +279,28 @@
         showToast((res.data && (res.data.message || res.data.error)) || "요청했어요", res.ok ? "success" : "error");
         loadReencode();
       }).catch(function(e) { done(); showToast("오류: " + e, "error"); });
+    }
+    function reHours(h) { return h >= 48 ? (h / 24).toFixed(1) + "일" : h + "시간"; }
+    function tile(v, k, s) { return '<div class="re-tile"><div class="v">' + v + '</div><div class="k">' + k + '</div>' + (s ? '<div class="s">' + s + '</div>' : "") + "</div>"; }
+    function renderEta(e) {
+      var tiles = document.getElementById("reTiles");
+      if (!e.per_hour) { tiles.innerHTML = tile("-", "남은 시간", "완료 기록이 쌓이면 계산해요"); return; }
+      var mmss = Math.floor(e.sec_per_job / 60) + "분 " + (e.sec_per_job % 60) + "초";
+      var groups = (e.groups || []).filter(function(g) { return g.count; }).map(function(g) { return reEsc(g.label) + " " + g.count; }).join(" · ");
+      var endLabel = String(e.end_continuous || "").slice(5);
+      tiles.innerHTML =
+        tile((e.remain_count || 0).toLocaleString() + "건", "남은 작업", groups) +
+        tile(reHours(e.remain_h), "남은 시간", "계속 켜 둘 때") +
+        tile(e.end_schedule ? reEsc(e.end_schedule.slice(5).replace("-", "/")) + "쯤" : "-", "예상 완료",
+             "지금처럼(하루 " + e.daily_active_h + "시간 가동)<br>계속 켜면 " + reEsc(endLabel)) +
+        tile(e.per_hour + "건", "시간당 처리", "한 건 평균 " + mmss);
+      var daily = e.daily || [], dmax = Math.max.apply(null, daily.map(function(x) { return x.count; }).concat([1]));
+      document.getElementById("reDaily").innerHTML = daily.map(function(x) {
+        return '<div class="col" title="' + reEsc(x.day + " · " + x.count + "개 · 가동 " + x.active_h + "시간") + '"><b>' + (x.count || "") + '</b>' +
+          '<i style="height:' + (x.count / dmax * 70).toFixed(1) + 'px"></i><span>' + reEsc(x.day.slice(8)) + "일</span></div>";
+      }).join("");
+      document.getElementById("reEtaNote").innerHTML = "최근 " + e.window_days + "일 중 워커가 실제로 돈 " + e.active_h +
+        "시간 기준(PC가 꺼져 있던 시간은 뺌). 새벽 " + reEsc(e.night_at) + " 자동 시작 기준 완료 예상은 가동한 날 하루 평균으로 계산. 드라마는 샘플·새 드라마 속도로 어림했어요.";
     }
     function reFailSummary(msg) {
       if (/INVALIDDATA|Invalid NAL|Terminating thread|Error while decoding|corrupt|-1145393733/i.test(msg)) return "원본 손상(디코딩 오류)";
