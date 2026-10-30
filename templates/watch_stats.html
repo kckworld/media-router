@@ -1,0 +1,143 @@
+{# 오늘 > 시청 통계 (2026-10-31): Grafana '미디어 시청 통계'를 옮김. 보기 전용은 개인정보 칸 없음(API도 안 줌) #}
+{% set active_page = 'stats' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .st-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+    .st-tools select { width: auto; min-width: 0; }
+    .st-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+    .st-kpi { background: var(--bg-solid); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+    .st-kpi b { display: block; font-size: 24px; color: var(--fg); }
+    .st-kpi span { font-size: 12px; color: var(--muted); }
+    .st-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .st-bars { list-style: none; margin: 0; padding: 0; }
+    .st-bars li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 5px 0; font-size: 13px; }
+    .st-bars .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .st-bars .val { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .st-bars .bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--bg-solid); overflow: hidden; }
+    .st-bars .bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+    .st-daily { display: flex; align-items: flex-end; gap: 2px; height: 120px; padding-top: 6px; }
+    .st-daily div { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 1px; opacity: .85; }
+    .st-daily-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .st-heat { border-collapse: collapse; width: 100%; font-size: 11px; table-layout: fixed; }
+    .st-heat td, .st-heat th { text-align: center; padding: 3px 0; color: var(--muted); font-weight: 500; }
+    .st-heat td { border-radius: 3px; }
+    .st-heat th:first-child { width: 22px; }
+    .st-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .st-table th, .st-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+    .st-table td.t { white-space: normal; }
+    .st-table thead th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    .st-empty { color: var(--muted); padding: 8px 0; font-size: 13px; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>시청 통계 (Plex · Jellyfin)</span>
+        <a class="btn small" href="/popular" target="_blank" rel="noopener">공개 인기 순위 ↗</a>
+      </div>
+      <div class="st-tools">
+        <select id="stDays" onchange="load()" aria-label="기간">
+          <option value="7">최근 7일</option><option value="30" selected>최근 30일</option><option value="90">최근 90일</option><option value="365">최근 1년</option>
+        </select>
+        <select id="stService" onchange="load()" aria-label="서비스">
+          <option value="">Plex + Jellyfin</option><option value="plex">Plex</option><option value="jellyfin">Jellyfin</option>
+        </select>
+        {% if private %}<select id="stPerson" onchange="load()" aria-label="사용자"><option value="">모든 사용자</option></select>{% endif %}
+        <span class="hint" id="stInfo"></span>
+      </div>
+      <div class="st-kpis" id="stKpis"></div>
+    </div>
+
+    <div class="st-grid">
+      <div class="card"><div class="section-title">콘텐츠별 인기도 (2명 이상 본 것, 상위 20)</div><ul class="st-bars" id="stPopular"></ul></div>
+      <div class="card">
+        <div class="section-title">일별 재생</div>
+        <div class="st-daily" id="stDaily"></div><div class="st-daily-axis" id="stDailyAxis"></div>
+        <div class="section-title" style="margin-top:16px;">서비스 · 유형 · 장르</div>
+        <ul class="st-bars" id="stMix"></ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">요일 × 시간 (주당 평균 재생 수)</div>
+      <table class="st-heat" id="stHeat"></table>
+    </div>
+
+    {% if private %}
+    <div class="st-grid">
+      <div class="card"><div class="section-title">사용자별 시청 시간 (상위 20)</div><ul class="st-bars" id="stUsers"></ul></div>
+      <div class="card">
+        <div class="section-title">최근 재생 기록</div>
+        <div style="overflow:auto; max-height:520px;"><table class="st-table"><thead><tr><th>시각</th><th>사용자</th><th>제목</th><th>서비스</th><th>분</th><th>지역</th></tr></thead><tbody id="stRecent"></tbody></table></div>
+      </div>
+    </div>
+    {% endif %}
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var PRIVATE = {{ private | tojson }};
+    var DOW = ["일", "월", "화", "수", "목", "금", "토"];
+    var TYPE = { episode: "시리즈", movie: "영화" };
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function bars(el, rows, label, value, fmt) {
+      var max = Math.max.apply(null, rows.map(value).concat([1]));
+      el.innerHTML = rows.length ? rows.map(function(r) {
+        return '<li><span class="lbl">' + esc(label(r)) + '</span><span class="val">' + esc(fmt(r)) + '</span>' +
+          '<span class="bar"><i style="width:' + (value(r) / max * 100).toFixed(1) + '%"></i></span></li>';
+      }).join("") : '<li class="st-empty">기록이 없어요.</li>';
+    }
+    function load() {
+      var q = "days=" + document.getElementById("stDays").value + "&service=" + document.getElementById("stService").value;
+      if (PRIVATE) q += "&person=" + encodeURIComponent(document.getElementById("stPerson").value);
+      var t0 = Date.now();
+      document.getElementById("stInfo").textContent = "불러오는 중…";
+      fetch("/api/stats?" + q, { cache: "no-store" }).then(mrJson).then(function(res) {
+        var d = res.data || {};
+        if (!res.ok || !d.ok) { document.getElementById("stInfo").textContent = d.error || "불러오지 못했어요"; return; }
+        document.getElementById("stInfo").textContent = ((Date.now() - t0) / 1000).toFixed(1) + "초";
+        render(d);
+      }).catch(function(e) { document.getElementById("stInfo").textContent = "오류: " + e; });
+    }
+    function render(d) {
+      var total = d.services.reduce(function(a, s) { return a + s.plays; }, 0) || 1;
+      document.getElementById("stKpis").innerHTML = [
+        [d.plays, "재생 횟수"], [d.hours + "h", "시청 시간"], [d.active_users, "활성 사용자"],
+        [d.services.map(function(s) { return (s.source === "plex" ? "Plex " : "Jellyfin ") + Math.round(s.plays / total * 100) + "%"; }).join(" · ") || "-", "서비스 비율"]
+      ].map(function(k) { return '<div class="st-kpi"><b>' + esc(k[0]) + '</b><span>' + k[1] + '</span></div>'; }).join("");
+      bars(document.getElementById("stPopular"), d.popular, function(r) { return r.content; }, function(r) { return r.plays; },
+           function(r) { return r.plays + "회 · " + r.viewers + "명 · " + r.hours + "h"; });
+      var dmax = Math.max.apply(null, d.daily.map(function(r) { return r.plays; }).concat([1]));
+      document.getElementById("stDaily").innerHTML = d.daily.map(function(r) {
+        return '<div title="' + esc(r.day + " · " + r.plays + "회") + '" style="height:' + (r.plays / dmax * 100).toFixed(1) + '%"></div>';
+      }).join("");
+      document.getElementById("stDailyAxis").innerHTML = d.daily.length
+        ? "<span>" + esc(d.daily[0].day.slice(5)) + "</span><span>최대 " + dmax + "회</span><span>" + esc(d.daily[d.daily.length - 1].day.slice(5)) + "</span>" : "";
+      var mix = d.services.map(function(s) { return { l: s.source === "plex" ? "Plex" : "Jellyfin", v: s.plays }; })
+        .concat(d.types.map(function(t) { return { l: TYPE[t.type] || t.type, v: t.plays }; }))
+        .concat(d.genres.map(function(g) { return { l: "장르 · " + g.genre, v: g.plays }; }));
+      bars(document.getElementById("stMix"), mix, function(r) { return r.l; }, function(r) { return r.v; }, function(r) { return r.v + "회"; });
+      var hmax = Math.max.apply(null, [].concat.apply([], d.heatmap).concat([0.1]));
+      var head = "<tr><th></th>" + Array.from({ length: 24 }, function(_, h) { return "<th>" + (h % 3 ? "" : h) + "</th>"; }).join("") + "</tr>";
+      document.getElementById("stHeat").innerHTML = head + d.heatmap.map(function(row, i) {
+        return "<tr><th>" + DOW[i] + "</th>" + row.map(function(v, h) {
+          return '<td title="' + DOW[i] + " " + h + "시 · 주당 " + v + '회" style="background:rgba(99,102,241,' + (v / hmax * 0.9).toFixed(2) + ')">&nbsp;</td>';
+        }).join("") + "</tr>";
+      }).join("");
+      if (!PRIVATE) return;
+      var sel = document.getElementById("stPerson"), cur = sel.value;
+      if (sel.options.length <= 1) sel.innerHTML = '<option value="">모든 사용자</option>' + (d.persons || []).map(function(p) { return '<option>' + esc(p) + '</option>'; }).join("");
+      sel.value = cur;
+      bars(document.getElementById("stUsers"), d.users || [], function(r) { return r.person + " (" + r.source + ")"; },
+           function(r) { return r.hours; }, function(r) { return r.hours + "h"; });
+      document.getElementById("stRecent").innerHTML = (d.recent || []).map(function(r) {
+        return "<tr><td>" + esc(r.at) + "</td><td>" + esc(r.person) + '</td><td class="t">' + esc(r.title) + (r.episode ? " · " + esc(r.episode) : "") +
+          "</td><td>" + esc(r.source) + "</td><td>" + esc(r.minutes) + "</td><td>" + esc(r.region || "") + "</td></tr>";
+      }).join("") || '<tr><td colspan="6" class="st-empty">기록이 없어요.</td></tr>';
+    }
+    load();
+  </script>
+{% endblock %}

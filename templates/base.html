@@ -3,7 +3,8 @@
     page_css / content / scripts 블록만 채운다. 메뉴 구성은 아래 NAV 하나만 고치면 된다. -#}
 {%- set NAV_ALL = [
   {'key': 'today', 'label': '오늘', 'pages': [
-    {'key': 'check', 'label': '체크 목록', 'href': '/?mode=check'}]},
+    {'key': 'check', 'label': '체크 목록', 'href': '/?mode=check'},
+    {'key': 'stats', 'label': '시청 통계', 'href': '/stats'}]},
   {'key': 'rules', 'label': '규칙', 'pages': [
     {'key': 'rules', 'label': '분류 규칙', 'href': '/?mode='},
     {'key': 'rename', 'label': '파일명 치환', 'href': '/rename_rules'},

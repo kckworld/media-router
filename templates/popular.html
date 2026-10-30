@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>인기 순위</title>
+{# 로그인 없이 보는 공개 페이지(2026-10-31): 콘텐츠 이름·재생 수·본 사람 수만. 사용자 이름·IP·지역 없음 #}
+<style>
+  :root { --bg: #f5f6f8; --card: #fff; --fg: #1d2129; --muted: #6b7280; --line: #e3e6eb; --accent: #2f6fed; --accent-soft: #e8f0fe; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15171c; --card: #1f2229; --fg: #e8eaed; --muted: #9aa0a6; --line: #333842; --accent: #7aa7ff; --accent-soft: #23314d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  main { max-width: 560px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 22px; margin: 4px 0; }
+  .lead { color: var(--muted); margin: 0 0 14px; font-size: 14px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tabs a { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 600; background: var(--card); }
+  .tabs a.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 6px 16px; }
+  ol { list-style: none; margin: 0; padding: 0; }
+  li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 2px 8px; padding: 10px 0; border-bottom: 1px solid var(--line); align-items: center; }
+  li:last-child { border-bottom: 0; }
+  .rank { font-weight: 800; color: var(--accent); text-align: center; }
+  .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .num { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .bar { grid-column: 2 / -1; height: 5px; border-radius: 3px; background: var(--bg); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .empty { color: var(--muted); padding: 16px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎬 요즘 많이 본 콘텐츠</h1>
+  <p class="lead">최근 {{ days }}일 동안 두 명 이상 본 영화·시리즈 순위예요.</p>
+  <nav class="tabs">
+    {% for d in (7, 30, 90) %}<a href="?days={{ d }}" class="{{ 'on' if d == days else '' }}">{{ d }}일</a>{% endfor %}
+  </nav>
+  <div class="card">
+    {% if error %}<div class="empty">{{ error }}</div>
+    {% elif not rows %}<div class="empty">아직 순위가 없어요.</div>
+    {% else %}
+    {% set top = rows[0].plays or 1 %}
+    <ol>
+      {% for r in rows %}
+      <li><span class="rank">{{ loop.index }}</span><span class="name">{{ r.content }}</span>
+        <span class="num">{{ r.plays }}회 · {{ r.viewers }}명</span>
+        <span class="bar"><i style="width: {{ '%.1f' % (r.plays / top * 100) }}%"></i></span></li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+  </div>
+</main>
+</body>
+</html>

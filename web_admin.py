@@ -1075,6 +1075,68 @@ def api_movies_download():
     return jsonify({"ok": ok, "message": message, "error": None if ok else message}), (200 if ok else 409)
 
 
+# ── 시청 통계 (2026-10-31): Grafana '미디어 시청 통계' 대시보드를 MR로 (Grafana가 느려서, 사용자 결정) ──
+# 관리자: 전체. 보기 전용: 개인정보(사용자별·최근 재생 기록·사용자 목록)는 API에서도 뺀다.
+# /popular: 로그인 없는 공개 페이지 - 콘텐츠 인기 순위만(이름·IP·지역 없음).
+import watch_stats
+STATS_CACHE_SEC = 60
+_stats_cache: dict = {"lock": threading.Lock(), "data": {}}
+
+
+def _watch_stats(key: tuple, fn):
+    with _stats_cache["lock"]:
+        hit = _stats_cache["data"].get(key)
+        if hit and time.time() - hit[0] < STATS_CACHE_SEC:
+            return hit[1]
+    with _stats_db() as conn:
+        conn.set_session(readonly=True)
+        data = fn(conn.cursor())
+    with _stats_cache["lock"]:
+        _stats_cache["data"][key] = (time.time(), data)
+    return data
+
+
+@app.route("/stats", methods=["GET"])
+def stats_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("watch_stats.html", authed=True, private=session_role(request) == "admin")
+
+
+@app.route("/api/stats", methods=["GET"])
+def api_stats():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    private = session_role(request) == "admin"
+    days = request.args.get("days", "30")
+    days = min(365, max(1, int(days))) if days.isdigit() else 30
+    person = (request.args.get("person") or "").strip()[:100] if private else ""
+    service = request.args.get("service") if request.args.get("service") in ("plex", "jellyfin") else ""
+    try:
+        data = _watch_stats(("all", days, person, service, private),
+                            lambda cur: watch_stats.summary(cur, days, person, service, private))
+    except Exception as e:
+        app.logger.warning("시청 통계 조회 실패: %s", type(e).__name__)
+        return jsonify({"ok": False, "error": f"통계 DB에 연결하지 못했어요 ({type(e).__name__})"}), 502
+    return jsonify(dict(data, ok=True, days=days, private=private))
+
+
+@app.route("/popular", methods=["GET"])
+def popular_page():
+    """로그인 없이 보는 인기 순위(콘텐츠 이름·재생 수·본 사람 수만)"""
+    days = request.args.get("days", "30")
+    days = days if days in ("7", "30", "90") else "30"
+    try:
+        rows = _watch_stats(("popular", int(days)), lambda cur: watch_stats.popularity(cur, int(days), limit=30))
+        error = None
+    except Exception as e:
+        app.logger.warning("공개 인기 순위 조회 실패: %s", type(e).__name__)
+        rows, error = [], "지금은 순위를 불러올 수 없어요."
+    return render_template("popular.html", rows=rows, days=int(days), error=error)
+
+
 # ── 작업 > 드라마·예능 (2026-10-30): 티프리카 게시판을 영화 탭처럼 ──
 # 이 회차만 받기 = qBit에 추가(저장 위치·분류는 qBit RSS 규칙 "드라마"/"예능"과 같게) → 분류 규칙이 정리.
 # 계속 받기 = bt4g/drama_keywords.txt·bt4g_keywords.txt에 키워드 → tfreeca.py RSS가 다음 회차부터.
