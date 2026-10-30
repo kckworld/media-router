@@ -255,7 +255,7 @@ def test_enrich_caches_by_post(monkeypatch, tmp_path):
                         {"id": 1, "title": "'텐징' - Tenzing", "year": 2026, "poster": None, "rating": None, "overview": ""})
     items = [{"id": "400639", "title": "텐징 Tenzing 2026 1080p"}]
     out = movies.enrich(items, "k", tmp_path / "c.json")
-    assert out[0]["display"] == "텐징 - Tenzing (2026)" and "namu.wiki/Search?q=" in out[0]["namu"]
+    assert out[0]["display"] == "텐징 - Tenzing (2026)" and out[0]["namu"].startswith("https://namu.wiki/Go?q=") and out[0]["namu"].endswith("%28%EC%98%81%ED%99%94%29")
     movies.enrich(items, "k", tmp_path / "c.json")
     assert calls == ["텐징"]   # 두 번째는 캐시
 

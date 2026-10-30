@@ -188,8 +188,9 @@ TMDB_IMG = "https://image.tmdb.org/t/p"
 
 
 def namu_url(title: str) -> str:
-    """나무위키는 봇 접근을 막아서 문서가 있는지 확인할 수 없으므로 검색 링크로 준다"""
-    return "https://namu.wiki/Search?q=" + requests.utils.quote(f"{title} 영화")
+    """나무위키는 봇 접근을 막아서 문서가 있는지 미리 확인할 수 없다 → /Go(있으면 문서, 없으면 검색)"""
+    # 10-31 사용자: 검색 대신 문서로 - /Go는 '제목(영화)' 문서가 있으면 문서로, 없으면 검색으로 간다
+    return "https://namu.wiki/Go?q=" + requests.utils.quote(f"{title}(영화)")
 
 
 def enrich(items: list[dict], api_key: str, cache_path: Path, workers: int = 6) -> list[dict]:
