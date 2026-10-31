@@ -353,7 +353,11 @@ def _sub_key(name: str) -> str:
     """'프로포즈 The Proposal 2009 ... BONE (1).smi' → 비교용 (브라우저가 붙인 ' (1)'·기호·띄어쓰기 무시)"""
     stem = Path(name).stem
     stem = re.sub(r"\s*\(\d+\)$", "", stem)
+    stem = _SUB_LANG_RE.sub("", stem)  # '... SAMPA.ko.srt'도 '... SAMPA.srt'와 같은 자막
     return re.sub(r"[\W_]+", "", stem).lower()
+
+
+_SUB_LANG_RE = re.compile(r"\.(ko|kor|korean)$", re.I)
 
 
 def find_subtitles(sub_names: list[str], search_dirs=None) -> list[Path]:
@@ -377,7 +381,8 @@ def place_subtitles(subs: list[Path], video: Path, move=None) -> list[Path]:
     move = move or shutil.move
     placed = []
     for p in subs:
-        dest = _unique(video.with_suffix(p.suffix.lower()))
+        lang = ".ko" if _SUB_LANG_RE.search(p.stem) else ""
+        dest = _unique(video.with_name(video.stem + lang + p.suffix.lower()))
         move(str(p), str(dest))
         try:
             os.chmod(dest, 0o664)
