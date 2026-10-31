@@ -43,7 +43,7 @@ def _display(job: dict) -> str:
 
 def _attach_subs(job: dict, video_path, sub_dirs, notify) -> bool:
     """기다리던 자막이 들어왔으면 영화 옆으로 옮긴다. 옮겼으면 True"""
-    subs = movies.find_subtitles(job.get("subs") or [], sub_dirs)
+    subs = movies.find_subtitles(job.get("subs") or [], sub_dirs, movies.movie_sub_keys(job.get("post_title", "")))
     if not subs:
         return False
     placed = movies.place_subtitles(subs, video_path)
@@ -66,6 +66,8 @@ def process(jobs: list[dict], host_dir=movies.HOST_MOVIE_DIR, library=movies.MOV
                 changes[job["btih"]] = {"subs_pending": False}
             elif now - job.get("done", now) > movies.SUB_WAIT_SEC:
                 changes[job["btih"]] = {"subs_pending": False}  # 그만 기다림
+                notify(f"⌛ '{_display(job)}' 자막을 2주 동안 못 찾아서 그만 기다려요. "
+                       "필요하면 Claude에게 붙여 달라고 해 주세요.")
             continue
         if status != "downloading":
             continue

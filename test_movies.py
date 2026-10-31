@@ -125,7 +125,7 @@ def test_subtitle_waits_then_follows_movie_name(tmp_path):
     (drop / SUB.replace(".smi", " (1).smi")).write_text("s")
     changes = movie_mover.process([job], host, lib, sent.append, now=4000, sub_dirs=[drop])
     assert changes["abc"] == {"subs_pending": False}
-    assert (lib / "파" / "프로포즈 (2009).The.Proposal.2009.1080p.smi").read_text() == "s"
+    assert (lib / "파" / "프로포즈 (2009).The.Proposal.2009.1080p.ko.smi").read_text() == "s"
     assert not list(drop.iterdir())
 
 
@@ -138,7 +138,7 @@ def test_subtitle_already_there_when_movie_finishes(tmp_path):
     sent = []
     changes = movie_mover.process([job], host, lib, sent.append, now=2000, sub_dirs=[drop])
     assert "subs_pending" not in changes["abc"]
-    assert (lib / "파" / "프로포즈 (2009).The.Proposal.2009.1080p.smi").exists()
+    assert (lib / "파" / "프로포즈 (2009).The.Proposal.2009.1080p.ko.smi").exists()
     assert "미리 받아 둔 자막" in sent[0]
 
 
@@ -371,3 +371,57 @@ def test_movie_button_starts_download_and_keeps_list(wa, monkeypatch):
     cq2 = dict(cq, message={"chat": {"id": 1}, "message_id": 78})
     web_admin._handle_telegram_callback(cq2)
     assert len(qbit) == 1 and "이미 받는 중" in sent[-1][0]
+
+
+def test_place_files_keeps_only_main_feature(tmp_path):
+    src = tmp_path / "abc"
+    src.mkdir()
+    main = "The Furious (2026) (1080p BluRay x265 SAMPA)"
+    (src / f"{main}.mkv").write_bytes(b"v" * 1000)
+    (src / f"{main}.srt").write_text("s")
+    for n in ("Trailer", "Menu", "Deleted Scenes"):
+        (src / f"{n}.mkv").write_bytes(b"v" * 100)
+    (src / "Trailer.srt").write_text("t")
+    p = "퓨리어스 (2026)"
+    names = sorted(x.name for x in movies.place_files(src, p, tmp_path / "lib"))
+    assert names == [f"{p}.{main}.mkv", f"{p}.{main}.srt"]
+
+
+def test_place_files_keeps_split_parts(tmp_path):
+    src = tmp_path / "abc"
+    src.mkdir()
+    (src / "Movie.CD1.avi").write_bytes(b"v" * 1000)
+    (src / "Movie.CD2.avi").write_bytes(b"v" * 900)
+    assert len(movies.place_files(src, "영화 (1999)", tmp_path / "lib")) == 2
+
+
+def test_subtitle_with_other_name_found_by_title_and_year(tmp_path):
+    host, lib = _done_movie(tmp_path)
+    drop = tmp_path / "drop"
+    drop.mkdir()
+    (drop / "프로포즈.The.Proposal.2009.한글.srt").write_bytes("안녕".encode("cp949"))
+    (drop / "다른영화.2009.srt").write_text("x")
+    job = _job(tmp_path, prefix="프로포즈 (2009)", folder="파", subs=[SUB], post_id="400648",
+               post_title="프로포즈 The Proposal 2009 1080p WEB-DL HEVC x265 5.1 BONE")
+    changes = movie_mover.process([job], host, lib, lambda t: None, now=2000, sub_dirs=[drop])
+    assert "subs_pending" not in changes["abc"]
+    placed = lib / "파" / "프로포즈 (2009).The.Proposal.2009.1080p.ko.srt"
+    assert placed.read_text(encoding="utf-8") == "안녕"  # EUC-KR → UTF-8
+    assert (drop / "다른영화.2009.srt").exists()
+
+
+def test_subtitle_ko_suffix_matches_attachment_name(tmp_path):
+    drop = tmp_path / "drop"
+    drop.mkdir()
+    (drop / "The Furious 2026 1080p BluRay x265 SAMPA.ko.srt").write_text("s")
+    assert movies.find_subtitles(["The Furious 2026 1080p BluRay x265 SAMPA.srt"], [drop])
+
+
+def test_gives_up_waiting_for_subtitle_with_notice(tmp_path):
+    host, lib = _done_movie(tmp_path)
+    job = _job(tmp_path, status="done", prefix="프로포즈 (2009)", folder="파", subs=[SUB], post_id="1",
+               video="x.mkv", done=0, subs_pending=True)
+    sent = []
+    changes = movie_mover.process([job], host, lib, sent.append, now=movies.SUB_WAIT_SEC + 10,
+                                  sub_dirs=[tmp_path / "none"])
+    assert changes["abc"] == {"subs_pending": False} and "그만 기다려요" in sent[0]

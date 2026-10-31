@@ -360,30 +360,70 @@ def _sub_key(name: str) -> str:
 _SUB_LANG_RE = re.compile(r"\.(ko|kor|korean)$", re.I)
 
 
-def find_subtitles(sub_names: list[str], search_dirs=None) -> list[Path]:
-    """job['subs'](티프리카 첨부 자막 이름)와 같은 이름의 자막 파일을 찾는다"""
+def movie_sub_keys(post_title: str) -> list[str]:
+    """글 제목에서 '<한글 제목><연도>'·'<영문 제목><연도>' 비교용 키 (이름이 달라도 같은 영화 자막 찾기)"""
+    ko, en, year = split_post_title(post_title or "")
+    if not year:
+        return []
+    keys = [re.sub(r"[\W_]+", "", f"{t}{year}").lower() for t in (ko, en) if t]
+    return [k for k in keys if len(k) >= 6]
+
+
+def find_subtitles(sub_names: list[str], search_dirs=None, title_keys=()) -> list[Path]:
+    """job['subs'](티프리카 첨부 자막 이름)와 같은 이름의 자막 파일을 찾는다.
+    같은 이름이 없으면 이름에 영화 제목+연도가 든 자막을 쓴다 (사이트마다 이름을 바꿔 주는 경우)."""
     want = {_sub_key(n) for n in sub_names}
-    found = []
+    found, loose = [], []
     for d in search_dirs or SUB_SEARCH_DIRS:
         if not d.is_dir():
             continue
         for p in d.rglob("*"):
             if MOVIE_DIR_NAME in p.parts or "@eaDir" in p.parts:
                 continue
-            if p.is_file() and p.suffix.lower() in SUB_EXTS and _sub_key(p.name) in want:
+            if not (p.is_file() and p.suffix.lower() in SUB_EXTS):
+                continue
+            key = _sub_key(p.name)
+            if key in want:
                 found.append(p)
-    return found
+            elif any(t in key for t in title_keys):
+                loose.append(p)
+    return found or loose
+
+
+def to_utf8(path: Path) -> bool:
+    """한글 자막이 EUC-KR(CP949)이면 UTF-8로 바꾼다 (Plex가 글자를 깨뜨리지 않게). 바꿨으면 True"""
+    if path.suffix.lower() not in {".srt", ".smi", ".ass", ".ssa", ".vtt"}:
+        return False
+    raw = path.read_bytes()
+    try:
+        raw.decode("utf-8")
+        return False
+    except UnicodeDecodeError:
+        pass
+    try:
+        text = raw.decode("cp949")
+    except UnicodeDecodeError:
+        return False
+    if path.suffix.lower() == ".smi":
+        text = re.sub(r"charset\s*=\s*[\"']?(euc-kr|ks_c_5601-1987|cp949)", "charset=utf-8", text, flags=re.I)
+    path.write_text(text, encoding="utf-8")
+    return True
 
 
 def place_subtitles(subs: list[Path], video: Path, move=None) -> list[Path]:
-    """자막을 영화 파일과 같은 이름(확장자만 자막)으로 영화 옆에 둔다"""
+    """자막을 '<영화 파일 이름>.<언어>.<확장자>'로 영화 옆에 둔다. 티프리카 첨부 자막은 한글이라
+    언어를 모르면 ko로 붙인다 (Plex에 '한국어'로 보이게)."""
     import shutil
     move = move or shutil.move
     placed = []
     for p in subs:
-        lang = ".ko" if _SUB_LANG_RE.search(p.stem) else ""
-        dest = _unique(video.with_name(video.stem + lang + p.suffix.lower()))
+        lang = sub_lang(p.name) or "ko"
+        dest = _unique(video.with_name(f"{video.stem}.{lang}{p.suffix.lower()}"))
         move(str(p), str(dest))
+        try:
+            to_utf8(dest)
+        except OSError:
+            pass
         try:
             os.chmod(dest, 0o664)
         except OSError:
@@ -413,7 +453,9 @@ def _sample(p: Path) -> bool:
 
 
 def place_files(job_dir: Path, prefix: str, dest_dir: Path, move=None) -> list[Path]:
-    """영상·자막 파일 이름 앞에 'prefix.'를 붙여 dest_dir로 옮긴다. 샘플은 뺀다.
+    """영상·자막 파일 이름 앞에 'prefix.'를 붙여 dest_dir로 옮긴다. 본편만 옮기고 샘플·예고편·
+    메이킹 같은 부가영상과 그 자막은 뺀다(남은 건 movie_mover가 폴더째 지움). 본편 절반 크기 이상인
+    영상은 CD1/CD2 같은 나눠진 본편으로 보고 같이 옮긴다.
     영상과 이름이 다른 자막(YTS의 'Subs/English.srt' 등)은 '<영상 이름>.<언어>.srt'로 바꿔야
     Plex가 그 영화 자막으로 붙인다."""
     import shutil
@@ -423,6 +465,12 @@ def place_files(job_dir: Path, prefix: str, dest_dir: Path, move=None) -> list[P
              if p.is_file() and p.suffix.lower() in VIDEO_EXTS | SUB_EXTS and not _sample(p)]
     videos = [p for p in files if p.suffix.lower() in VIDEO_EXTS]
     main = max(videos, key=lambda p: p.stat().st_size) if videos else None
+    if main:
+        extras = [p for p in videos if p.stat().st_size < main.stat().st_size / 2]
+        extra_stems = [p.stem.lower() for p in extras]
+        files = [p for p in files if p not in extras and not (
+            p.suffix.lower() in SUB_EXTS and not p.stem.lower().startswith(main.stem.lower())
+            and any(p.stem.lower().startswith(st) for st in extra_stems))]
     main_name = (main.name if main.name.startswith(prefix + ".") else f"{prefix}.{main.name}") if main else ""
     placed = []
     for p in files:
@@ -433,6 +481,11 @@ def place_files(job_dir: Path, prefix: str, dest_dir: Path, move=None) -> list[P
             name = f"{Path(main_name).stem}.{lang}{p.suffix.lower()}"
         dest = _unique(dest_dir / name)
         move(str(p), str(dest))
+        if p.suffix.lower() in SUB_EXTS:
+            try:
+                to_utf8(dest)
+            except OSError:
+                pass
         try:
             os.chmod(dest, 0o664)
         except OSError:
