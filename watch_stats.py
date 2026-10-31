@@ -73,6 +73,6 @@ def summary(cur, days: int, person: str = "", service: str = "", private: bool =
             CASE media_type WHEN 'movie' THEN NULL ELSE CASE WHEN episode IS NOT NULL THEN episode || '화 ' ELSE '' END || title END AS episode,
             source, ROUND(watched_sec / 60.0)::int AS minutes, region_label AS region
             FROM v_play_history_geo WHERE {wg} ORDER BY played_at DESC LIMIT 300""", gargs)
-        cur.execute("SELECT name FROM persons ORDER BY name LIMIT 50")
+        cur.execute("SELECT name FROM persons ORDER BY name")
         out["persons"] = [r[0] for r in cur.fetchall()]
     return out
