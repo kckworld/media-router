@@ -276,6 +276,8 @@ TG_CONFIRM_TTL_SEC = 300
 TG_MOVIE_TTL_SEC = 24 * 3600
 # 단톡방 요청 알림의 [완료]/[보류] 버튼
 TG_REQUEST_TTL_SEC = 30 * 24 * 3600
+# 사진 일기 버튼(pd_*)을 넘겨 두는 곳 (호스트 /volume1/docker/media-router/data/photo_diary_inbox)
+PHOTO_DIARY_INBOX = DATA_DIR / "photo_diary_inbox"
 # 메뉴 버튼을 바꾸면 올린다 → 이미 메뉴를 받은 대화창에도 새 메뉴를 한 번 띄움
 TG_MENU_VERSION = 3
 # 메뉴 안내는 봇마다 한 번 - 토큰을 바꾸면(새 봇) 그 봇에도 한 번 띄운다
@@ -376,6 +378,13 @@ def _handle_telegram_callback(cq: dict) -> None:
     action, _, ts = (cq.get("data") or "").partition(":")
     msg = cq.get("message") or {}
     chat_id = (msg.get("chat") or {}).get("id")
+    if action.startswith("pd_"):
+        # 사진 일기(/volume1/docker/photo-diary)의 버튼 - MR은 파일로 넘기기만 하고 처리는 그쪽이 1분 안에 한다
+        PHOTO_DIARY_INBOX.mkdir(parents=True, exist_ok=True)
+        (PHOTO_DIARY_INBOX / f"{int(time.time() * 1000)}_{cq.get('id')}.json").write_text(json.dumps(
+            {"action": action, "ts": ts, "message_id": msg.get("message_id")}), encoding="utf-8")
+        _tg_call("answerCallbackQuery", {"callback_query_id": cq.get("id"), "text": "받았어요. 1분 안에 처리해요."})
+        return
     is_movie = action.startswith("mv_")
     ttl = (TG_MOVIE_TTL_SEC if is_movie or action.startswith("re_")
            else TG_REQUEST_TTL_SEC if action.startswith("rq_") else TG_CONFIRM_TTL_SEC)
