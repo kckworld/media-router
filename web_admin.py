@@ -2344,8 +2344,9 @@ def index():
 
     if mode == "check":
         entries, selected_ui = _check_entries(rules, selected_day)
+        done_entries, _ = _check_entries(rules, selected_day, done=True)
         return render_template("today.html",
-            weekdays=WEEKDAYS, selected_day=selected_ui, rules=entries,
+            weekdays=WEEKDAYS, selected_day=selected_ui, rules=entries, done_rules=done_entries,
             today_name=today_name, yest_name=yest_name, two_days_ago_name=two_days_ago_name,
             rule_count=len(rules), today_label=_today_label())
 
@@ -2364,8 +2365,9 @@ def _today_label() -> str:
     return f"{now.month}월 {now.day}일 {WEEKDAYS[now.weekday()]}요일"
 
 
-def _check_entries(rules, selected_day=""):
+def _check_entries(rules, selected_day="", done=False):
     """체크 목록: 고른 요일(기본은 그저께+어제+오늘)의 미처리 항목을 '요일별 항목'으로 펼친다.
+    done=True면 반대로 이미 받음 처리된 항목만 준다(화면의 '받은 것도 보기' 버튼용, 2026-11-01).
     반환: (항목 목록, 화면에 표시할 선택값)"""
     w_today = current_weekday()
     today_name, yest_name = WEEKDAYS[w_today], WEEKDAYS[(w_today-1)%7]
@@ -2384,7 +2386,7 @@ def _check_entries(rules, selected_day=""):
             continue
         umap = r.get("updated_map") or {}
         for d in days_to_show:
-            if d not in days or umap.get(d, "N") == "Y":
+            if d not in days or (umap.get(d, "N") == "Y") != done:
                 continue
             item = dict(r)
             item["rkday"] = f"{rule_key(r)}|{d}"

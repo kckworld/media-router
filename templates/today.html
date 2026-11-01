@@ -28,6 +28,9 @@
     .check-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; padding-top: 6px; }
     .check-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
     .check-row.is-gulbang { background: var(--warn-soft); }
+    .done-list { border-top: 1px dashed var(--line); }
+    .check-row.is-done-row { opacity: .55; }
+    .check-row.is-done-row .check-box { cursor: default; color: var(--muted); font-size: 18px; }
     .empty { padding: 32px 18px; text-align: center; color: var(--muted); }
     .today-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
     .today-foot .muted { font-size: 13px; }
@@ -81,6 +84,9 @@
     <section class="card list-card">
       <div class="list-card-head">
         <h2 class="section-title">체크 목록</h2>
+        {% if done_rules %}
+        <button type="button" class="btn small" id="doneToggle" aria-pressed="false" aria-controls="doneList" onclick="toggleDone(this)">받은 것도 보기 ({{ done_rules|length }})</button>
+        {% endif %}
         {% if rules %}
         <label class="muted" style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;" data-write>
           <input type="checkbox" id="selectAll" style="width:18px; height:18px;"> 보이는 항목 전체 선택
@@ -132,6 +138,24 @@
         {% endfor %}
       </ul>
       {% endif %}
+
+      {% if done_rules %}
+      {# 받음 처리된 항목: 평소엔 숨기고 '받은 것도 보기' 버튼으로 잠깐 펼친다(체크박스 없음 → 받음 처리·전체 선택에 안 섞임) #}
+      <ul class="list done-list" id="doneList" hidden>
+        {% for r in done_rules %}
+        <li class="check-row is-done-row">
+          <span class="check-box" aria-hidden="true">✓</span>
+          <div class="check-main">
+            <div class="check-title">{{ r.subfolder }} <span class="tag ok">받음</span></div>
+            <div class="check-meta"><span>{{ r.category }}</span><code>{{ pattern_text(r) }}</code></div>
+          </div>
+          <div class="check-side">
+            <span class="badge-day {{ r.rel }}">{{ rel_label.get(r.rel, '') }}{{ ' · ' if r.rel else '' }}{{ r.day }}</span>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
     </section>
   </form>
 
@@ -155,6 +179,13 @@
 {% block scripts %}
   <script>
     var DAY_PARAM = {{ selected_day|tojson }};
+
+    function toggleDone(btn) {
+      var list = document.getElementById('doneList'), show = list.hidden;
+      list.hidden = !show;
+      btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+      btn.textContent = (show ? '받은 것 숨기기' : '받은 것도 보기') + ' (' + list.children.length + ')';
+    }
 
     function rows() { return Array.prototype.slice.call(document.querySelectorAll('#checkList .check-row')); }
     function visibleRows() { return rows().filter(function (r) { return !r.hidden; }); }
