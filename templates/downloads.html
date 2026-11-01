@@ -91,6 +91,21 @@
       </table></div>
       <div class="hint" style="margin-top:10px;"><b>취소</b>하면 qBittorrent에서 지우고 받던 파일도 지워요. 일시정지 같은 다른 조작은 qBittorrent 화면에서 하세요.</div>
     </div>
+
+    <div class="card">
+      <div class="section-title">다 받았는데 아직 안 옮겨진 파일</div>
+      <div class="toolbar">
+        <div class="group dl-summary">
+          <span id="pendCount" class="status-badge unknown">-</span>
+          <span class="hint">/volume2/torrent/download · /volume1/video/임시/download (받는 중·incomplete 폴더는 빼요)</span>
+        </div>
+        <div class="group"><button type="button" class="btn small" onclick="loadPending()">↻ 새로고침</button></div>
+      </div>
+      <div class="dl-wrap"><table class="dl-table">
+        <thead><tr><th>이름</th><th>크기</th><th>도착</th><th>왜 아직 여기 있나</th></tr></thead>
+        <tbody id="pendBody"><tr><td colspan="4" class="hint">불러오는 중...</td></tr></tbody>
+      </table></div>
+    </div>
   
 {% endblock %}
 
@@ -214,6 +229,38 @@
     document.addEventListener("visibilitychange", function() { if (!document.hidden) load(); });
     load();
     setAutoRefresh(true);
+
+    // 다 받았는데 아직 안 옮겨진 파일 (2026-11-01): 받은 폴더 두 곳을 훑어 이유와 함께. 30초마다
+    var PEND_COLOR = { soon: "idle", movie: "idle", paused: "running", stuck: "error", norule: "error" };
+    function fmtAgo(ts) {
+      var m = Math.floor((Date.now() / 1000 - ts) / 60);
+      if (m < 1) return "방금";
+      if (m < 60) return m + "분 전";
+      if (m < 1440) return Math.floor(m / 60) + "시간 전";
+      return Math.floor(m / 1440) + "일 전";
+    }
+    function loadPending() {
+      fetch("/downloads/pending", { cache: "no-store" })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          var body = document.getElementById("pendBody"), cnt = document.getElementById("pendCount");
+          if (!d.success) { body.innerHTML = '<tr><td colspan="4" class="hint">⚠ ' + esc(d.message || "불러오기 실패") + '</td></tr>'; return; }
+          var items = d.items || [];
+          cnt.className = "status-badge " + (items.some(function(x) { return x.kind === "stuck" || x.kind === "norule"; }) ? "error" : items.length ? "running" : "idle");
+          cnt.textContent = items.length ? items.length + "개" : "없음";
+          if (!items.length) { body.innerHTML = '<tr><td colspan="4" class="hint">안 옮겨진 파일이 없어요.</td></tr>'; return; }
+          body.innerHTML = items.map(function(x) {
+            var sub = x.rel !== x.name ? x.folder + "/" + x.rel.slice(0, x.rel.length - x.name.length) : x.folder + "/";
+            return '<tr><td><div style="word-break:break-all;">' + esc(x.name) + '</div><div class="hint">' + esc(sub) + '</div></td>' +
+              '<td style="white-space:nowrap;">' + fmtBytes(x.size) + '</td>' +
+              '<td style="white-space:nowrap;" title="' + esc(new Date(x.mtime * 1000).toLocaleString()) + '">' + fmtAgo(x.mtime) + '</td>' +
+              '<td><span class="status-badge ' + (PEND_COLOR[x.kind] || "unknown") + '" style="white-space:normal;">' + esc(x.reason) + '</span></td></tr>';
+          }).join("");
+        })
+        .catch(function(e) { document.getElementById("pendBody").innerHTML = '<tr><td colspan="4" class="hint">⚠ 요청 오류: ' + esc(e) + '</td></tr>'; });
+    }
+    loadPending();
+    setInterval(function() { if (!document.hidden) loadPending(); }, 30000);
 
     // "PC 끄기" 버튼: 1분 유예로 종료 예약(인코딩 관리의 'PC 종료 취소'로 되돌릴 수 있음).
     // 인코딩 중이면 서버가 409로 알려주고, 한 번 더 확인받으면 force로 다시 보낸다.

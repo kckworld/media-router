@@ -1278,6 +1278,7 @@ def api_tf_subscribe(kind):
 # /request 는 로그인 없이 연다. REQUEST_PUBLIC_HOSTS(별도 주소, 예: request.kckworld.com)로
 # 들어오면 요청 페이지만 열리고 관리 화면은 404 - 공개 주소에서 로그인 화면조차 안 보이게.
 import media_requests
+import pending_downloads
 MEDIA_REQUESTS_PATH = DATA_DIR / "media_requests.json"
 MEDIA_REQUEST_SETTINGS = DATA_DIR / "media_request_settings.json"
 REQUEST_PUBLIC_HOSTS = {h.strip().lower() for h in os.getenv("REQUEST_PUBLIC_HOSTS", "request.kckworld.com").split(",") if h.strip()}
@@ -3934,6 +3935,22 @@ def api_downloads_cancel():
         return jsonify({"success": False, "message": f"qBittorrent에서 지우지 못했어요: {e}"}), 502
     _movie_cancel_job(h)
     return jsonify({"success": True})
+
+
+@app.route("/downloads/pending", methods=["GET"])
+def downloads_pending():
+    """다 받았는데 아직 안 옮겨진 파일 (받은 폴더 = 설정의 paths.sources) + 이유 짐작 (2026-11-01)"""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"success": False, "message": "로그인이 필요합니다."}), 401
+    try:
+        cfg = load_cfg()
+        items = pending_downloads.scan((cfg.get("paths") or {}).get("sources") or [], cfg.get("rules") or [],
+                                       cfg.get("base_paths") or {}, paused=bool(processing_pause_state().get("paused")))
+    except Exception as e:
+        app.logger.exception("안 옮겨진 파일 확인 실패")
+        return jsonify({"success": False, "message": f"폴더를 읽지 못했어요: {e}"}), 500
+    return jsonify({"success": True, "items": items})
 
 
 @app.route("/downloads/data", methods=["GET"])
