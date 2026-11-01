@@ -29,6 +29,11 @@
     .st-table td.t { white-space: normal; }
     .st-table thead th { color: var(--muted); font-weight: 600; font-size: 12px; }
     .st-empty { color: var(--muted); padding: 8px 0; font-size: 13px; }
+    .st-sub { font-size: 12px; color: var(--muted); font-weight: 600; margin: 14px 0 4px; }
+    .st-sub:first-of-type { margin-top: 4px; }
+    .st-bars .bar i.tx { background: #f59e0b; }
+    .st-prog { display: inline-block; width: 70px; height: 6px; border-radius: 3px; background: var(--bg-solid); vertical-align: middle; overflow: hidden; margin-right: 6px; }
+    .st-prog i { display: block; height: 100%; background: var(--accent); }
   </style>
 {% endblock %}
 
@@ -66,6 +71,23 @@
       <table class="st-heat" id="stHeat"></table>
     </div>
 
+    <div class="st-grid">
+      <div class="card">
+        <div class="section-title">재생 방식 · 변환 <span class="hint" id="stPbSince"></span></div>
+        <div class="st-kpis" id="stPbKpis"></div>
+        <div class="st-sub">변환 이유 (Plex는 이유를 안 줘서 원본 코덱·화질로 표시)</div><ul class="st-bars" id="stReasons"></ul>
+        <div class="st-sub">앱·기기 종류별 (주황 막대 = 변환 비율)</div><ul class="st-bars" id="stPlatforms"></ul>
+        <div class="st-sub">원본 영상 코덱별</div><ul class="st-bars" id="stCodecs"></ul>
+        {% if private %}<div class="st-sub">변환이 많은 사람 · 기기</div><ul class="st-bars" id="stDevices"></ul>{% endif %}
+      </div>
+      <div class="card">
+        <div class="section-title">끝까지 본 비율 <span class="hint">11-01부터 기록</span></div>
+        <div class="st-kpis" id="stDoneKpis"></div>
+        <div class="st-sub">끝까지 잘 보는 콘텐츠 (2번 이상 본 것)</div><ul class="st-bars" id="stDoneBest"></ul>
+        <div class="st-sub">중간에 많이 끄는 콘텐츠</div><ul class="st-bars" id="stDoneWorst"></ul>
+      </div>
+    </div>
+
     {% if private %}
     <div class="st-grid">
       <div class="card"><div class="section-title">사용자별 시청 시간 (상위 20)</div><ul class="st-bars" id="stUsers"></ul></div>
@@ -73,6 +95,10 @@
         <div class="section-title">최근 재생 기록</div>
         <div style="overflow:auto; max-height:520px;"><table class="st-table"><thead><tr><th>시각</th><th>사용자</th><th>제목</th><th>서비스</th><th>분</th><th>지역</th></tr></thead><tbody id="stRecent"></tbody></table></div>
       </div>
+    </div>
+    <div class="card">
+      <div class="section-title">시리즈 진도 <span class="hint">기간 안에 본 시리즈 · 본 화수는 전체 기록, 전체 화수는 라이브러리 기준</span></div>
+      <div style="overflow:auto; max-height:520px;"><table class="st-table"><thead><tr><th>사용자</th><th>시리즈</th><th>마지막 본 회차</th><th>본 화수</th><th>마지막</th></tr></thead><tbody id="stSeries"></tbody></table></div>
     </div>
     {% endif %}
 {% endblock %}
@@ -127,7 +153,16 @@
           return '<td title="' + DOW[i] + " " + h + "시 · 주당 " + v + '회" style="background:rgba(99,102,241,' + (v / hmax * 0.9).toFixed(2) + ')">&nbsp;</td>';
         }).join("") + "</tr>";
       }).join("");
+      renderPlayback(d.playback || {});
+      renderCompletion(d.completion || {});
       if (!PRIVATE) return;
+      document.getElementById("stSeries").innerHTML = (d.series || []).map(function(r) {
+        var pct = r.total ? Math.min(100, r.watched / r.total * 100) : 0;
+        var at = (r.season != null ? "S" + r.season + " " : "") + (r.episode != null ? r.episode + "화" : "");
+        return "<tr><td>" + esc(r.person) + '</td><td class="t">' + esc(r.series) + "</td><td>" + esc(at || "-") + "</td><td>" +
+          (r.total ? '<span class="st-prog"><i style="width:' + pct.toFixed(1) + '%"></i></span>' + esc(r.watched + " / " + r.total)
+                   : esc(r.watched + "화")) + "</td><td>" + esc(r.last) + "</td></tr>";
+      }).join("") || '<tr><td colspan="5" class="st-empty">기록이 없어요.</td></tr>';
       var sel = document.getElementById("stPerson"), cur = sel.value;
       if (sel.options.length <= 1) sel.innerHTML = '<option value="">모든 사용자</option>' + (d.persons || []).map(function(p) { return '<option>' + esc(p) + '</option>'; }).join("");
       sel.value = cur;
@@ -137,6 +172,49 @@
         return "<tr><td>" + esc(r.at) + "</td><td>" + esc(r.person) + '</td><td class="t">' + esc(r.title) + (r.episode ? " · " + esc(r.episode) : "") +
           "</td><td>" + esc(r.source) + "</td><td>" + esc(r.minutes) + "</td><td>" + esc(r.region || "") + "</td></tr>";
       }).join("") || '<tr><td colspan="6" class="st-empty">기록이 없어요.</td></tr>';
+    }
+    var METHOD = { DirectPlay: "원본 그대로", DirectStream: "포장만 바꿈", Transcode: "변환" };
+    var REASON = {
+      ContainerNotSupported: "파일 형식(컨테이너) 미지원", VideoCodecNotSupported: "영상 코덱 미지원",
+      AudioCodecNotSupported: "오디오 코덱 미지원", ContainerBitrateExceedsLimit: "화질(비트레이트) 제한",
+      VideoBitrateNotSupported: "영상 비트레이트 제한", AudioChannelsNotSupported: "오디오 채널 미지원",
+      SubtitleCodecNotSupported: "자막 입히기", VideoResolutionNotSupported: "해상도 미지원",
+      VideoLevelNotSupported: "영상 레벨 미지원", VideoProfileNotSupported: "영상 프로필 미지원",
+      AudioBitrateNotSupported: "오디오 비트레이트 제한", AudioSampleRateNotSupported: "오디오 샘플레이트 미지원"
+    };
+    function reasonLabel(r) {
+      if (r.indexOf("plex:") === 0) return "Plex · 원본 " + r.slice(5);
+      return "Jellyfin · " + (REASON[r] || r);
+    }
+    function txBars(el, rows, label) {
+      var max = Math.max.apply(null, rows.map(function(r) { return r.hours; }).concat([0.1]));
+      el.innerHTML = rows.length ? rows.map(function(r) {
+        return '<li><span class="lbl">' + esc(label(r)) + '</span><span class="val">' + esc(r.hours + "h · 변환 " + r.tx_pct + "%") + '</span>' +
+          '<span class="bar"><i class="tx" style="width:' + (r.hours / max * r.tx_pct).toFixed(1) + '%"></i></span></li>';
+      }).join("") : '<li class="st-empty">기록이 없어요.</li>';
+    }
+    function renderPlayback(p) {
+      document.getElementById("stPbSince").textContent = p.since ? p.since.slice(5) + "부터 기록 · 5분 단위 추정" : "";
+      var methods = p.methods || [], total = methods.reduce(function(a, m) { return a + m.hours; }, 0);
+      var tx = methods.filter(function(m) { return m.method === "Transcode"; }).reduce(function(a, m) { return a + m.hours; }, 0);
+      document.getElementById("stPbKpis").innerHTML = [[Math.round(total * 10) / 10 + "h", "재생 시간"],
+        [total ? Math.round(tx / total * 100) + "%" : "-", "변환 재생 비율"]].concat(methods.map(function(m) {
+          return [m.hours + "h", METHOD[m.method] || m.method];
+        })).map(function(k) { return '<div class="st-kpi"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join("");
+      bars(document.getElementById("stReasons"), p.reasons || [], function(r) { return reasonLabel(r.reason); },
+           function(r) { return r.hours; }, function(r) { return r.hours + "h"; });
+      txBars(document.getElementById("stPlatforms"), p.platforms || [], function(r) { return r.platform; });
+      txBars(document.getElementById("stCodecs"), p.codecs || [], function(r) { return r.codec; });
+      if (PRIVATE) txBars(document.getElementById("stDevices"), p.devices || [], function(r) { return r.person + " · " + (r.device || "?"); });
+    }
+    function renderCompletion(c) {
+      document.getElementById("stDoneKpis").innerHTML = (c.views ? [
+        [c.views, "시청 수"], [Math.round(c.finished / c.views * 100) + "%", "끝까지 봄 (" + c.finish_pct + "% 이상)"],
+        [Math.round(c.early / c.views * 100) + "%", "절반도 안 보고 끔"], [c.avg_pct + "%", "평균 진행률"]
+      ] : [["-", "아직 기록이 적어요"]]).map(function(k) { return '<div class="st-kpi"><b>' + esc(k[0]) + '</b><span>' + esc(k[1]) + '</span></div>'; }).join("");
+      var fmt = function(r) { return "평균 " + r.avg_pct + "% · 완주 " + r.done_pct + "% · " + r.views + "번"; };
+      bars(document.getElementById("stDoneBest"), c.best || [], function(r) { return r.content; }, function(r) { return r.avg_pct; }, fmt);
+      bars(document.getElementById("stDoneWorst"), c.worst || [], function(r) { return r.content; }, function(r) { return 100 - r.avg_pct; }, fmt);
     }
     load();
   </script>
