@@ -269,7 +269,12 @@ def state() -> dict:
                   key=lambda it: it.get("done_at") or "", reverse=True)
     # 새 예능은 일괄 재인코딩보다 먼저 집히므로 대기 목록 맨 앞
     # 워커는 새 예능 → 드라마 샘플 → 일괄 순서로 집는다
-    waiting = new_open + held + samples_open + [it for it in items if it.get("status") == "fed"] + [it for it in items if it.get("status") == "pending"]
+    # 일괄 대기는 reencode.py feed_order와 같은 순서: q["order"]=="drama_first"면 드라마 D1→D2→D3가 예능보다 먼저(11-02)
+    pending = [it for it in items if it.get("status") == "pending"]
+    if q.get("order") == "drama_first":
+        tier_rank = {"D1": 0, "D2": 1, "D3": 2}
+        pending.sort(key=lambda it: (0, tier_rank.get(it.get("tier"), 3)) if it.get("profile") == "drama" else (1, 0))
+    waiting = new_open + held + samples_open + [it for it in items if it.get("status") == "fed"] + pending
     return {"available": True, "counts": counts, "total": len(items), "saved": saved, "expect": expect,
             # 예능 1~3(숫자) 다음 드라마 D1~D3(글자) - 섞어서 sorted하면 TypeError
             "tiers": {str(k): v for k, v in sorted(tiers.items(), key=lambda kv: (isinstance(kv[0], str), str(kv[0])))},
@@ -279,7 +284,7 @@ def state() -> dict:
             "failed": [row(it) for it in new_failed + [it for it in items if it.get("status") == "failed"]],
             "new_waiting": len(new_open),
             "done_list": [row(it) for it in done[:30]], "waiting_list": [row(it) for it in waiting[:20]],
-            "waiting_total": len(waiting), "eta": eta(q, held, w), "trash_bytes": trash, "trash_warn": trash >= TRASH_WARN}
+            "waiting_total": len(waiting), "order": q.get("order") or "variety_first", "eta": eta(q, held, w), "trash_bytes": trash, "trash_warn": trash >= TRASH_WARN}
 
 
 def log_tail(path: Path, lines: int = 200) -> str:
