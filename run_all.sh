@@ -1,5 +1,13 @@
 #!/bin/bash
 set -euo pipefail
+# 요청 완료 안내 카톡 보내기 (2026-11-01): Media Router가 같은 SSH 키로 'kakao-send'를 보내고 JSON을 stdin으로 넘기면
+# kakao-desktop 화면 조작(kakao_send.py)만 하고 결과 JSON을 돌려준다. 아래 exec가 stdout을 로그로 돌리기 전에 처리.
+if [ "${SSH_ORIGINAL_COMMAND:-}" = "kakao-send" ]; then
+    out="$(python3 /volume1/docker/media-router/kakao_send.py 2>&1 | tail -n 1)" || true
+    echo "[run_all $(date '+%H:%M:%S')] 카톡 보내기: $out" >> "/volume1/docker/media-router/logs/run_all.$(date +%F).log" 2>/dev/null || true
+    echo "$out"
+    exit 0
+fi
 LOGDIR="/volume1/docker/media-router/logs"
 mkdir -p "$LOGDIR"
 LOGFILE="$LOGDIR/run_all.$(date +%F).log"

@@ -1300,11 +1300,25 @@ def _public_host_guard():
     return make_response("Not Found", 404)
 
 
-def _request_code() -> str:
+def _request_settings() -> dict:
+    """{"code": 단톡방 코드, "kakao_on": 카톡 완료 안내 켬, "kakao_room": 받는 카톡 방 이름}"""
     try:
-        return str(json.loads(MEDIA_REQUEST_SETTINGS.read_text(encoding="utf-8")).get("code") or "")
+        d = json.loads(MEDIA_REQUEST_SETTINGS.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
-        return ""
+        return {}
+
+
+def _save_request_settings(**fields) -> dict:
+    """설정 파일의 다른 값(코드·카톡)은 그대로 두고 주어진 값만 바꾼다"""
+    d = _request_settings()
+    d.update(fields)
+    MEDIA_REQUEST_SETTINGS.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    return d
+
+
+def _request_code() -> str:
+    return str(_request_settings().get("code") or "")
 
 
 @app.route("/request", methods=["GET"])
@@ -1426,14 +1440,54 @@ def _notify_request_done(it: dict) -> bool:
         library = ""
     caption = media_requests.done_caption(it, detail, library)
     poster = (detail or {}).get("poster") or it.get("poster")
+    poster = poster.replace("/w185/", "/w500/") if poster else ""
+    sent = False
     if poster:
         tg = _tg_cfg()
         if tg.get("enabled") and tg.get("chat_id"):
-            res = _tg_call("sendPhoto", {"chat_id": tg["chat_id"], "photo": poster.replace("/w185/", "/w500/"),
-                                         "caption": caption[:1000]})
-            if (res or {}).get("ok"):
-                return True
-    return _tg_notify(caption)
+            res = _tg_call("sendPhoto", {"chat_id": tg["chat_id"], "photo": poster, "caption": caption[:1000]})
+            sent = bool((res or {}).get("ok"))
+    if not sent:
+        sent = _tg_notify(caption)
+    _kakao_announce(poster, caption)
+    return sent
+
+
+def _kakao_announce(poster: str, caption: str) -> None:
+    """설정에서 켜 두었으면 같은 안내를 카톡 방에도 (텔레그램은 그대로). 못 보내면 텔레그램으로 알린다."""
+    st = _request_settings()
+    room = str(st.get("kakao_room") or "").strip()
+    if not (st.get("kakao_on") and room):
+        return
+    res = _kakao_send(room, poster, caption)
+    if not res.get("ok"):
+        app.logger.warning("요청 완료 카톡 실패: %s", res.get("message"))
+        _tg_notify(f"⚠ 카톡 '{room}' 방에 요청 완료 안내를 못 보냈어요 (텔레그램 안내만 갔어요)\n{res.get('message', '')}")
+    elif "포스터는 못 보냄" in str(res.get("message")):
+        _tg_notify(f"⚠ 카톡 '{room}' 방에 글은 보냈는데 {res['message'].split('(', 1)[-1].rstrip(')')}")
+
+
+def _kakao_send(room: str, poster: str, text: str) -> dict:
+    """호스트의 kakao_send.py(run_all.sh 강제 명령 'kakao-send')로 kakao-desktop 카톡 화면 조작.
+    방 이름이 완전히 같은 채팅창이 열려 있어야 하고, 창 제목을 붙여넣기·Enter 직전마다 확인한다."""
+    if not Path(RUN_BATCH_SSH_KEY).exists():
+        return {"ok": False, "message": "SSH 키가 없어요 (secrets/run_batch_key)"}
+    payload = json.dumps({"room": room, "poster": poster, "text": text}, ensure_ascii=False)
+    try:
+        r = subprocess.run(
+            ["ssh", "-i", RUN_BATCH_SSH_KEY, "-p", RUN_BATCH_SSH_PORT, "-o", "StrictHostKeyChecking=no",
+             "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+             f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", "kakao-send"],
+            input=payload, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "message": "카톡 보내기가 2분 안에 안 끝났어요"}
+    except Exception as e:
+        return {"ok": False, "message": f"NAS 연결 실패: {e}"}
+    try:
+        res = json.loads(r.stdout.strip().splitlines()[-1])
+        return res if isinstance(res, dict) else {"ok": False, "message": "응답 형식이 이상해요"}
+    except (ValueError, IndexError):
+        return {"ok": False, "message": f"응답을 못 읽었어요 (종료코드 {r.returncode}): {(r.stderr or r.stdout).strip()[:150]}"}
 
 
 @app.route("/requests", methods=["GET"])
@@ -1442,7 +1496,8 @@ def media_requests_page():
     if auth is not True:
         return auth
     return render_template("requests.html", authed=True, statuses=media_requests.STATUSES,
-                           code=_request_code(), public_hosts=sorted(REQUEST_PUBLIC_HOSTS))
+                           code=_request_code(), public_hosts=sorted(REQUEST_PUBLIC_HOSTS),
+                           kakao=_request_settings())
 
 
 @app.route("/api/requests", methods=["GET"])
@@ -1477,8 +1532,30 @@ def api_media_request_code():
     code = str((request.get_json(silent=True) or {}).get("code") or "").strip()
     if len(code) > 20:
         return jsonify({"ok": False, "error": "코드는 20자까지예요."}), 400
-    MEDIA_REQUEST_SETTINGS.write_text(json.dumps({"code": code}, ensure_ascii=False), encoding="utf-8")
+    _save_request_settings(code=code)
     return jsonify({"ok": True, "code": code})
+
+
+@app.route("/api/requests/kakao", methods=["POST"])
+def api_media_request_kakao():
+    """완료 안내를 카톡 방에도 보낼지(켬/끔)와 받는 방 이름. test=true면 지금 설정으로 시험 글 한 줄을 보낸다."""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    body = request.get_json(silent=True) or {}
+    room = str(body.get("room") or "").strip()
+    if len(room) > 50:
+        return jsonify({"ok": False, "error": "방 이름은 50자까지예요."}), 400
+    if body.get("test"):
+        if not room:
+            return jsonify({"ok": False, "error": "방 이름을 넣어 주세요."}), 400
+        res = _kakao_send(room, "", f"[Media Router 시험] 요청 완료 안내 카톡 연결 확인 ({time.strftime('%m-%d %H:%M')})")
+        return jsonify({"ok": bool(res.get("ok")), "error": "" if res.get("ok") else res.get("message", "")})
+    on = bool(body.get("on"))
+    if on and not room:
+        return jsonify({"ok": False, "error": "켜려면 방 이름을 넣어 주세요."}), 400
+    _save_request_settings(kakao_on=on, kakao_room=room)
+    return jsonify({"ok": True, "on": on, "room": room})
 
 
 # ── 예능 일괄 재인코딩 v2 (2026-10-27, /volume1/docker/reencode/reencode.py — 미디어 정리 세션) ──
@@ -2828,7 +2905,7 @@ def settings():
                 raise ValueError("요청 페이지 코드는 20자까지예요.")
             save_cfg(cfg)
             REENCODE_SETTINGS_PATH.write_text(json.dumps(re_cfg), encoding="utf-8")
-            MEDIA_REQUEST_SETTINGS.write_text(json.dumps({"code": req_code}, ensure_ascii=False), encoding="utf-8")
+            _save_request_settings(code=req_code)
             saved = True
         except Exception as e:
             if isinstance(e, ValueError):

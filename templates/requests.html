@@ -36,6 +36,19 @@
         <button type="button" class="btn small primary" data-write onclick="saveCode()">코드 저장</button>
         <span class="hint" id="codeState">{{ '요청 받는 중' if code else '⚠ 코드가 없어서 요청을 안 받고 있어요' }}</span>
       </div>
+      <div class="section-title" style="margin-top:16px;">완료 안내 카톡</div>
+      <div class="hint">
+        요청을 완료로 바꾸면 텔레그램 안내(포스터+글)를 카톡 방에도 보내요 (kakao-desktop 화면 조작).
+        kakao-desktop에서 그 방 채팅창을 <b>열어 둬야</b> 하고, 창 제목이 아래 이름과 <b>완전히 같을 때만</b> 보내요.
+        못 보내면 텔레그램으로 알려 줘요.
+      </div>
+      <div class="rq-code" style="margin-top:10px;">
+        <label><input type="checkbox" id="kkOn" {{ 'checked' if kakao.get('kakao_on') }} data-write> 켜기</label>
+        <input type="text" id="kkRoom" value="{{ kakao.get('kakao_room') or '' }}" maxlength="50" placeholder="카톡 방 이름 (정확히)" data-write style="width:200px;">
+        <button type="button" class="btn small primary" data-write onclick="saveKakao()">저장</button>
+        <button type="button" class="btn small" data-write onclick="testKakao()">시험 보내기</button>
+        <span class="hint" id="kkState">{{ ('켜짐 → ' ~ kakao.get('kakao_room')) if kakao.get('kakao_on') and kakao.get('kakao_room') else '꺼짐 (텔레그램만)' }}</span>
+      </div>
     </div>
 
     <div class="card">
@@ -106,6 +119,24 @@
         if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); return; }
         document.getElementById("codeState").textContent = code ? "요청 받는 중" : "⚠ 코드가 없어서 요청을 안 받고 있어요";
         showToast(code ? "코드를 저장했어요." : "코드를 지웠어요. 이제 요청을 안 받아요.", "success");
+      });
+    }
+    function saveKakao() {
+      var on = document.getElementById("kkOn").checked, room = document.getElementById("kkRoom").value.trim();
+      post("/api/requests/kakao", { on: on, room: room }).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); return; }
+        document.getElementById("kkState").textContent = on ? "켜짐 → " + room : "꺼짐 (텔레그램만)";
+        showToast(on ? "카톡 안내를 켰어요." : "카톡 안내를 껐어요.", "success");
+      });
+    }
+    function testKakao() {
+      var room = document.getElementById("kkRoom").value.trim();
+      if (!room) { showToast("방 이름을 넣어 주세요", "error"); return; }
+      if (!confirm("'" + room + "' 방에 시험 글 한 줄을 보낼까요?")) return;
+      showToast("보내는 중… (10초쯤)", "info");
+      post("/api/requests/kakao", { test: true, room: room }).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast("못 보냈어요: " + ((res.data && res.data.error) || "오류"), "error"); return; }
+        showToast("보냈어요. 카톡에서 확인해 주세요.", "success");
       });
     }
     load();
