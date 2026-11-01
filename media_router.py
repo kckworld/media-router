@@ -90,8 +90,8 @@ def find_same_airdate_duplicate(target_dir: Path, f: Path):
             return other
     return None
 
-def expected_variety_episode(target_dir: Path, show: str, date: str):
-    """폴더에서 이 방송일 직전 회차 +1. 직전 회차 파일이 없으면 None"""
+def previous_variety_episode(target_dir: Path, show: str, date: str):
+    """폴더에서 이 방송일 직전 회차 (방송일 yymmdd, 회차). 없으면 None"""
     prev = None
     for other in target_dir.iterdir():
         p = parse_variety_name(other.name)
@@ -99,7 +99,33 @@ def expected_variety_episode(target_dir: Path, show: str, date: str):
             continue
         if prev is None or (p[2], p[1]) > prev:
             prev = (p[2], p[1])
+    return prev
+
+def expected_variety_episode(target_dir: Path, show: str, date: str):
+    """폴더에서 이 방송일 직전 회차 +1. 직전 회차 파일이 없으면 None"""
+    prev = previous_variety_episode(target_dir, show, date)
     return prev[1] + 1 if prev else None
+
+def variety_episode_autofix(target_dir: Path, filename: str):
+    """회차 번호 자동 고침 (2026-11-01 사용자 승인, 런닝맨 E826→E825 계기).
+    먼저 오는 릴이 회차를 +1로 붙이는 일이 있다. 직전 회차 방송일에서 정확히 7일 뒤인데
+    번호가 기대값(직전+1)보다 정확히 1 크면 기대 번호로 고친 이름을 돌려준다.
+    결방·특집처럼 날짜가 안 맞거나 차이가 2 이상이면 None(지금처럼 알림만)."""
+    m = VARIETY_NAME_RE.match(filename)
+    if not m or not target_dir.is_dir():
+        return None
+    show, ep, date = m.group("show"), int(m.group("ep")), m.group("date")
+    prev = previous_variety_episode(target_dir, show, date)
+    if not prev or ep != prev[1] + 2:
+        return None
+    try:
+        gap = (datetime.strptime(date, "%y%m%d") - datetime.strptime(prev[0], "%y%m%d")).days
+    except ValueError:
+        return None
+    if gap != 7:
+        return None
+    width = len(m.group("ep"))
+    return filename[:m.start("ep")] + str(prev[1] + 1).zfill(width) + filename[m.end("ep"):]
 
 def sanitize_filename_for_plex(filename: str) -> str:
     """Plex TV 스캐너가 인식 못하는 토큰(예: .END) 제거"""
@@ -726,8 +752,18 @@ def main() -> None:
                                     mark_rule_updated_map(r)
                                     continue
                             elif expected is not None and parsed[1] != expected:
-                                log(f"EPISODE_NUMBER_GAP: {f.name} (직전 회차로 보면 E{expected})")
-                                tg_send(cfg, f"회차 번호 확인 필요: {f.name} (직전 회차로 보면 E{expected}, 결방·특집이면 무시)")
+                                fixed = variety_episode_autofix(target_dir, f.name)
+                                if fixed and not (target_dir / fixed).exists() and not f.with_name(fixed).exists():
+                                    old_name = f.name
+                                    new_src = f.with_name(fixed)
+                                    f.rename(new_src)
+                                    f = new_src   # 알림이 실패해도 아래 이동은 새 이름으로
+                                    log(f"EPISODE_NUMBER_AUTOFIX: {old_name} -> {fixed} (직전 회차 7일 뒤, 번호 +1)")
+                                    tg_send(cfg, f"회차 번호 자동으로 고침: {old_name} → {fixed} (직전 회차 다음 주인데 번호가 1 커서)")
+                                else:
+                                    why = " - 고친 이름이 이미 있어서 안 고침" if fixed else ""
+                                    log(f"EPISODE_NUMBER_GAP: {f.name} (직전 회차로 보면 E{expected}){why}")
+                                    tg_send(cfg, f"회차 번호 확인 필요: {f.name} (직전 회차로 보면 E{expected}, 결방·특집이면 무시){why}")
                         except Exception as e:
                             log(f"Same-airdate duplicate check fail: {f} ({e})")
 
