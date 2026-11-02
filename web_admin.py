@@ -1274,7 +1274,7 @@ MEDIA_REQUESTS_PATH = DATA_DIR / "media_requests.json"
 MEDIA_REQUEST_SETTINGS = DATA_DIR / "media_request_settings.json"
 REQUEST_PUBLIC_HOSTS = {h.strip().lower() for h in os.getenv("REQUEST_PUBLIC_HOSTS", "request.kckworld.com").split(",") if h.strip()}
 # '/requests'(관리 화면)가 걸리지 않게 '/request'는 정확히 비교하고, 하위 경로는 '/request/'로
-_REQUEST_PUBLIC_PATHS = ("/request/", "/static/")
+_REQUEST_PUBLIC_PATHS = ("/request/", "/static/", "/survey/")   # /survey/submit (설문, 11-02)
 _rq_search_limit = media_requests.RateLimiter(30, 60)        # 검색: 1분에 30번
 _rq_submit_limit = media_requests.RateLimiter(5, 3600)       # 요청: 1시간에 5번
 _rq_code_fail_limit = media_requests.RateLimiter(10, 3600)   # 코드 틀림: 1시간에 10번
@@ -1296,7 +1296,7 @@ def _public_host_guard():
         return None
     if request.path == "/":
         return media_request_page()
-    if request.path == "/request" or request.path.startswith(_REQUEST_PUBLIC_PATHS):
+    if request.path in ("/request", "/survey") or request.path.startswith(_REQUEST_PUBLIC_PATHS):
         return None
     return make_response("Not Found", 404)
 
@@ -1489,6 +1489,124 @@ def _kakao_send(room: str, poster: str, text: str) -> dict:
         return res if isinstance(res, dict) else {"ok": False, "message": "응답 형식이 이상해요"}
     except (ValueError, IndexError):
         return {"ok": False, "message": f"응답을 못 읽었어요 (종료코드 {r.returncode}): {(r.stderr or r.stdout).strip()[:150]}"}
+
+
+# ── 단톡방 설문 (2026-11-02): 공개 /survey + 관리자 /surveys. 보안은 요청 페이지와 같게(단톡방 코드·허니팟·IP 제한) ──
+import media_survey
+SURVEY_PATH = DATA_DIR / "survey_answers.json"
+SURVEY_SETTINGS = DATA_DIR / "survey_settings.json"
+_sv_submit_limit = media_requests.RateLimiter(5, 3600)      # 한 접속지 1시간에 5번
+_sv_submit_total = media_requests.RateLimiter(60, 3600)     # 전체 1시간에 60번
+
+
+def _survey_open() -> bool:
+    try:
+        return bool(json.loads(SURVEY_SETTINGS.read_text(encoding="utf-8")).get("open", True))
+    except (OSError, ValueError):
+        return True
+
+
+@app.route("/survey", methods=["GET"])
+def survey_page():
+    return render_template("survey.html", open=_survey_open() and bool(_request_code()),
+                           apps=media_survey.APPS, otts=media_survey.OTTS, reasons=media_survey.REASONS,
+                           genres=media_survey.GENRES, pains=media_survey.PAINS)
+
+
+@app.route("/survey/submit", methods=["POST"])
+def survey_submit():
+    form = request.get_json(silent=True) or {}
+    ip = _public_ip(request)
+    if form.get("website"):  # 사람은 못 보는 칸 - 봇이 채움
+        return jsonify({"ok": True})
+    code = _request_code()
+    if not (code and _survey_open()):
+        return jsonify({"ok": False, "error": "설문이 끝났어요."}), 403
+    if not hmac.compare_digest(str(form.get("code") or "").strip(), code):
+        if not (_rq_code_fail_limit.allow(ip) and _rq_code_fail_total.allow("*")):
+            return jsonify({"ok": False, "error": "잠시 뒤에 다시 해 주세요."}), 429
+        return jsonify({"ok": False, "error": "단톡방 코드가 맞지 않아요."}), 403
+    data, err = media_survey.validate(form)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    if not (_sv_submit_limit.allow(ip) and _sv_submit_total.allow("*")):
+        return jsonify({"ok": False, "error": "너무 많이 보냈어요. 한 시간 뒤에 다시 해 주세요."}), 429
+    item, replaced = media_survey.upsert(SURVEY_PATH, data)
+    try:
+        _tg_notify(f"📝 설문 {'답 고침' if replaced else '새 답'}: {item['name']}\n{media_survey.one_line(item)}")
+    except Exception:
+        app.logger.warning("설문 텔레그램 알림 실패")
+    return jsonify({"ok": True})
+
+
+def _survey_items_for(req) -> list[dict]:
+    items = sorted(media_survey.load(SURVEY_PATH), key=lambda it: -it.get("updated", 0))
+    return [media_survey.mask(it) for it in items] if session_role(req) == "viewer" else items
+
+
+@app.route("/surveys", methods=["GET"])
+def surveys_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("surveys.html", authed=True, open=_survey_open(), code_set=bool(_request_code()),
+                           public_hosts=sorted(REQUEST_PUBLIC_HOSTS), fields=media_survey.FIELDS)
+
+
+@app.route("/api/surveys", methods=["GET"])
+def api_surveys():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    items = _survey_items_for(request)
+    return jsonify({"ok": True, "items": items, "stats": media_survey.aggregate(items), "open": _survey_open(),
+                    "viewer": session_role(request) == "viewer"})
+
+
+@app.route("/surveys.csv", methods=["GET"])
+def surveys_csv():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    resp = make_response(media_survey.to_csv(_survey_items_for(request)))
+    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+    resp.headers["Content-Disposition"] = f"attachment; filename=survey-{time.strftime('%Y%m%d')}.csv"
+    return resp
+
+
+@app.route("/api/surveys/open", methods=["POST"])
+def api_surveys_open():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    on = bool((request.get_json(silent=True) or {}).get("open"))
+    SURVEY_SETTINGS.write_text(json.dumps({"open": on}), encoding="utf-8")
+    return jsonify({"ok": True, "open": on})
+
+
+@app.route("/api/surveys/delete", methods=["POST"])
+def api_surveys_delete():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    ids = [str(i) for i in ((request.get_json(silent=True) or {}).get("ids") or [])][:100]
+    return jsonify({"ok": True, "deleted": media_survey.delete(SURVEY_PATH, ids)})
+
+
+@app.route("/api/surveys/merge", methods=["POST"])
+def api_surveys_merge():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    body = request.get_json(silent=True) or {}
+    ids = [str(i) for i in (body.get("ids") or [])][:50]
+    keep = str(body.get("keep") or "")
+    if len(set(ids) | {keep}) < 2:
+        return jsonify({"ok": False, "error": "합칠 답을 두 개 이상 골라 주세요."}), 400
+    item = media_survey.merge(SURVEY_PATH, ids, keep)
+    if not item:
+        return jsonify({"ok": False, "error": "답을 찾지 못했어요. 새로고침해 주세요."}), 404
+    return jsonify({"ok": True, "item": item})
 
 
 @app.route("/requests", methods=["GET"])

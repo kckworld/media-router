@@ -1,0 +1,136 @@
+{% set active_page = 'surveys' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .sv-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .sv-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .sv-stat h4 { margin: 0 0 6px; font-size: 14px; }
+    .sv-row { display: grid; grid-template-columns: 9em 1fr 2.5em; gap: 8px; align-items: center; font-size: 13px; margin: 3px 0; }
+    .sv-row .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sv-track { background: var(--bg-solid); border-radius: 999px; height: 10px; overflow: hidden; }
+    .sv-fill { background: var(--accent); height: 100%; border-radius: 999px; }
+    .sv-row .n { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .sv-texts h4 { margin: 14px 0 6px; font-size: 14px; }
+    .sv-text { font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--line); white-space: pre-wrap; word-break: break-all; }
+    .sv-text b { color: var(--muted); font-weight: 600; margin-right: 6px; }
+    .sv-list { list-style: none; margin: 0; padding: 0; }
+    .sv-item { display: flex; gap: 10px; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+    .sv-item:last-child { border-bottom: 0; }
+    .sv-item input { margin-top: 4px; }
+    .sv-main { flex: 1; min-width: 0; }
+    .sv-title { font-weight: 700; color: var(--fg); }
+    .sv-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .sv-ans { font-size: 13px; margin-top: 6px; display: grid; grid-template-columns: 8.5em 1fr; gap: 2px 10px; }
+    .sv-ans dt { color: var(--muted); }
+    .sv-ans dd { margin: 0; white-space: pre-wrap; word-break: break-all; }
+    .sv-empty { color: var(--muted); padding: 12px 2px; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="section-title">설문 페이지</div>
+      <div class="hint">
+        단톡방에 아래 주소를 알려 주세요. 요청 페이지와 같은 단톡방 코드로 들어가요.<br>
+        {% for h in public_hosts %}<code>https://{{ h }}/survey</code> (리버스 프록시 등록 후) · {% endfor %}<code>https://media.kckworld.com/survey</code>
+        {% if not code_set %}<br><b>⚠ 요청 화면에 단톡방 코드가 없어서 설문도 닫혀 보여요.</b>{% endif %}
+      </div>
+      <div class="sv-bar" style="margin-top:10px;">
+        <label><input type="checkbox" id="svOpen" {{ 'checked' if open }} data-write onchange="setOpen(this.checked)"> 설문 받기</label>
+        <span class="hint" id="openState">{{ '받는 중' if open else '닫힘 — "설문이 끝났어요"가 보여요' }}</span>
+        <a class="btn small" href="/surveys.csv">CSV 내려받기</a>
+        <a class="btn small" href="/survey" target="_blank" rel="noopener">설문 화면 열기 ↗</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">집계 <span class="hint" id="svTotal"></span></div>
+      <div class="sv-stats" id="svChips"><div class="sv-empty">불러오는 중...</div></div>
+      <div class="sv-texts" id="svTexts"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">답 목록</div>
+      <div class="sv-bar" style="margin-bottom:8px;">
+        <button type="button" class="btn small" data-write onclick="mergeSel()">고른 답 합치기</button>
+        <button type="button" class="btn small" data-write onclick="deleteSel()">고른 답 지우기</button>
+        <span class="hint">이름 오타로 둘로 갈라졌으면 둘 다 골라 합치기 — 가장 최근 답을 남기고 빈 칸만 채워요.</span>
+      </div>
+      <ul class="sv-list" id="svList"><li class="sv-empty">불러오는 중...</li></ul>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var FIELDS = {{ fields | tojson }};
+    var ITEMS = [];
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function post(url, body) {
+      return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(mrJson);
+    }
+    function when(ts) { var d = new Date(ts * 1000); return (d.getMonth() + 1) + "/" + d.getDate() + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+    function render(data) {
+      var st = data.stats;
+      document.getElementById("svTotal").textContent = "· " + st.total + "명";
+      document.getElementById("svChips").innerHTML = st.chips.map(function(c) {
+        var max = Math.max.apply(null, c.rows.map(function(r) { return r[1]; }).concat([1]));
+        return '<div class="sv-stat"><h4>' + esc(c.title) + '</h4>' + c.rows.map(function(r) {
+          return '<div class="sv-row"><span class="lbl" title="' + esc(r[0]) + '">' + esc(r[0]) + '</span><div class="sv-track"><div class="sv-fill" style="width:' + (r[1] / max * 100) + '%"></div></div><span class="n">' + r[1] + '</span></div>';
+        }).join("") + '</div>';
+      }).join("");
+      document.getElementById("svTexts").innerHTML = st.texts.filter(function(t) { return t.rows.length; }).map(function(t) {
+        return '<h4>' + esc(t.title) + ' <span class="hint">' + t.rows.length + '</span></h4>' + t.rows.map(function(r) {
+          return '<div class="sv-text"><b>' + esc(r.name) + '</b>' + esc(r.text) + '</div>';
+        }).join("");
+      }).join("");
+      var list = document.getElementById("svList");
+      if (!ITEMS.length) { list.innerHTML = '<li class="sv-empty">아직 답이 없어요.</li>'; return; }
+      list.innerHTML = ITEMS.map(function(it) {
+        var rows = FIELDS.filter(function(f) { return f[0] !== "name"; }).map(function(f) {
+          var v = it[f[0]]; v = Array.isArray(v) ? v.join(", ") : v;
+          return v ? '<dt>' + esc(f[1]) + '</dt><dd>' + esc(v) + '</dd>' : "";
+        }).join("");
+        return '<li class="sv-item"><input type="checkbox" class="svSel" value="' + esc(it.id) + '" data-write>' +
+          '<div class="sv-main"><div class="sv-title">' + esc(it.name) + '</div>' +
+          '<div class="sv-sub">' + when(it.updated) + (it.times > 1 ? ' · ' + it.times + '번 냄(마지막 답)' : '') + '</div>' +
+          '<dl class="sv-ans">' + rows + '</dl></div></li>';
+      }).join("");
+    }
+    function load() {
+      fetch("/api/surveys", { cache: "no-store" }).then(mrJson).then(function(res) {
+        if (res.ok && res.data.ok) { ITEMS = res.data.items; render(res.data); }
+      }).catch(function() {});
+    }
+    function selected() { return Array.prototype.map.call(document.querySelectorAll(".svSel:checked"), function(c) { return c.value; }); }
+    function deleteSel() {
+      var ids = selected();
+      if (!ids.length) { showToast("지울 답을 골라 주세요", "error"); return; }
+      if (!confirm(ids.length + "개 답을 지울까요? 되돌릴 수 없어요.")) return;
+      post("/api/surveys/delete", { ids: ids }).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast("지우지 못했어요", "error"); return; }
+        showToast(res.data.deleted + "개 지웠어요.", "success"); load();
+      });
+    }
+    function mergeSel() {
+      var ids = selected();
+      if (ids.length < 2) { showToast("합칠 답을 두 개 이상 골라 주세요", "error"); return; }
+      var picked = ITEMS.filter(function(it) { return ids.indexOf(it.id) >= 0; });
+      var keep = picked.reduce(function(a, b) { return (b.updated || 0) > (a.updated || 0) ? b : a; });
+      if (!confirm("'" + keep.name + "' 답으로 " + ids.length + "개를 합칠까요?")) return;
+      post("/api/surveys/merge", { ids: ids, keep: keep.id }).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "합치지 못했어요", "error"); return; }
+        showToast("합쳤어요.", "success"); load();
+      });
+    }
+    function setOpen(on) {
+      post("/api/surveys/open", { open: on }).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast("바꾸지 못했어요", "error"); return; }
+        document.getElementById("openState").textContent = on ? "받는 중" : '닫힘 — "설문이 끝났어요"가 보여요';
+        showToast(on ? "설문을 열었어요." : "설문을 닫았어요.", "success");
+      });
+    }
+    load();
+    setInterval(function() { if (!document.hidden) load(); }, 30000);
+  </script>
+{% endblock %}
