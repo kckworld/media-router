@@ -719,7 +719,8 @@ def authed(req):
 
 # 보기 전용 계정에 숨기는 화면 (가족 Jellyfin·Plex 계정명, 서버 경로·연결 정보)
 VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users", "/skills", "/api/skills",
-                          "/requests", "/api/requests")  # 요청 목록엔 단톡방 사람 이름이 있다
+                          "/requests", "/api/requests",  # 요청 목록엔 단톡방 사람 이름이 있다
+                          "/diary", "/api/diary")          # 일기 메모(11-02)는 관리자만
 READONLY_MESSAGE = "읽기 전용 계정이라 바꿀 수 없어요."
 
 
@@ -1607,6 +1608,45 @@ def api_surveys_merge():
     if not item:
         return jsonify({"ok": False, "error": "답을 찾지 못했어요. 새로고침해 주세요."}), 404
     return jsonify({"ok": True, "item": item})
+
+
+# ── 일기 메모 (2026-11-02): 사진 일기(photo-diary, 팀장 담당)용 메모를 웹에서도. 관리자만 ──
+import diary_memos
+DIARY_DIR = DATA_DIR / "diary_memos"
+
+
+@app.route("/diary", methods=["GET"])
+def diary_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("diary.html", today=datetime.now(APP_TZ).strftime("%Y-%m-%d"), max_len=diary_memos.MAX_LEN)
+
+
+@app.route("/api/diary", methods=["GET", "POST"])
+def api_diary():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if request.method == "GET":
+        day = request.args.get("date") or datetime.now(APP_TZ).strftime("%Y-%m-%d")
+        if not diary_memos.valid_date(day):
+            return jsonify({"ok": False, "error": "날짜가 이상해요."}), 400
+        return jsonify({"ok": True, "date": day, "items": diary_memos.load(DIARY_DIR, day)})
+    item, err = diary_memos.add(DIARY_DIR, (request.get_json(silent=True) or {}).get("text"), datetime.now(APP_TZ))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "item": item})
+
+
+@app.route("/api/diary/delete", methods=["POST"])
+def api_diary_delete():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    body = request.get_json(silent=True) or {}
+    ok = diary_memos.delete(DIARY_DIR, str(body.get("date") or ""), str(body.get("id") or ""))
+    return jsonify({"ok": ok}), (200 if ok else 404)
 
 
 @app.route("/requests", methods=["GET"])
