@@ -63,8 +63,9 @@
       <label for="code">단톡방 코드 <span class="req">*</span></label>
       <input type="text" id="code" inputmode="numeric" maxlength="20" placeholder="단톡방 공지에 있는 코드" required>
 
-      <label for="name"><span class="num">1</span>이름 <span class="req">*</span></label>
-      <input type="text" id="name" maxlength="30" placeholder="단톡방 이름" required>
+      <label for="name"><span class="num">1</span>본인 이름 <span class="req">*</span></label>
+      <input type="text" id="name" maxlength="30" placeholder="예: 홍길동" required>
+      <div class="hint">단톡방 이름이 아니라 내 이름을 적어 주세요</div>
 
       <span class="label"><span class="num">2</span>쓰는 앱</span>
       <div class="chips" data-name="app" data-one>
@@ -129,7 +130,7 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   function store(k, v) { try { if (v === undefined) return localStorage.getItem(k) || ""; localStorage.setItem(k, v); } catch (e) { return ""; } }
-  $("code").value = store("rq_code"); $("name").value = store("rq_name");   // 요청 페이지와 같이 씀
+  $("code").value = store("rq_code");   // 코드만 요청 페이지와 같이 씀. 이름은 자동으로 안 채움(11-02: 요청 페이지에 방 이름을 적은 사람이 그대로 따라옴)
 
   function vals(name) { return Array.prototype.map.call(document.querySelectorAll("input[name=" + name + "]:checked"), function (i) { return i.value; }); }
   function one(name) { var i = document.querySelector("input[name=" + name + "]:checked"); return i ? i.value : ""; }
@@ -184,7 +185,7 @@
       .then(function (d) {
         $("submitBtn").disabled = false;
         if (!d.ok) { $("msg").className = "msg err"; $("msg").textContent = d.error || "보내지 못했어요."; return; }
-        store("rq_code", body.code); store("rq_name", body.name);
+        store("rq_code", body.code);
         $("msg").textContent = "";
         $("formCard").hidden = true; $("doneCard").hidden = false; window.scrollTo(0, 0);
       })

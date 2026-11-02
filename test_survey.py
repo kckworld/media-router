@@ -38,6 +38,7 @@ def saved(tmp_path):
 def test_page_and_submit(sv):
     c, sent, tmp_path = sv
     html = c.get("/survey").get_data(as_text=True)
+    assert "본인 이름" in html and "단톡방 이름이 아니라 내 이름을" in html and 'store("rq_name")' not in html
     assert "kckworld 설문" in html and 'id="svForm"' in html and "유튜브 프리미엄" in html and "해외드라마" in html
     r = c.post("/survey/submit", json=GOOD).get_json()
     assert r == {"ok": True}
