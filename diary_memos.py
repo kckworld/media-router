@@ -43,21 +43,35 @@ def path_for(base: Path, day: str) -> Path:
     return base / f"{day}.jsonl"
 
 
-def load(base: Path, day: str) -> list[dict]:
-    p = path_for(base, day)
-    out = []
+def _read(p: Path) -> list[dict]:
     try:
         lines = p.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return out
+        return []
+    out = []
     for line in lines:
         try:
             d = json.loads(line)
         except ValueError:
             continue
-        if isinstance(d, dict) and d.get("text"):
+        if isinstance(d, dict):
             out.append(d)
-    return sorted(out, key=lambda d: d.get("time", ""))
+    return out
+
+
+def load(base: Path, day: str) -> list[dict]:
+    """날짜.jsonl(웹) + 날짜.tg.jsonl(사진 일기 봇이 kck9010으로 씀, MR은 읽기만 — 11-02)을 시각 순으로.
+    텔레그램 줄은 src="telegram", 글 없이 위치(lat/lon)만 있으면 location=True"""
+    items = [d for d in _read(path_for(base, day)) if d.get("text")]
+    for d in _read(base / f"{day}.tg.jsonl"):
+        d = dict(d, src="telegram")
+        d.pop("id", None)                 # 텔레그램 줄은 웹에서 못 지운다
+        if not d.get("text"):
+            if d.get("lat") is None or d.get("lon") is None:
+                continue
+            d["location"] = True
+        items.append(d)
+    return sorted(items, key=lambda d: d.get("time", ""))
 
 
 def clean(text: str) -> str:

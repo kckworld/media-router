@@ -58,3 +58,22 @@ def test_admin_only(dy, monkeypatch):
 
 def test_shift_and_valid_date():
     assert dm.shift("2026-11-01", 1) == "2026-11-02" and dm.valid_date("2026-02-28") and not dm.valid_date("2026-02-30")
+
+
+def test_telegram_memos_merged_read_only(dy):
+    c, base = dy
+    r = c.post("/api/diary", json={"text": "웹 메모"}).get_json()
+    day = r["item"]["time"][:10]
+    tg = base / f"{day}.tg.jsonl"
+    tg.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in [
+        {"time": day + "T07:00:00+09:00", "text": "봇 아침", "src": "telegram"},
+        {"time": day + "T23:59:00+09:00", "lat": 37.5, "lon": 127.0, "src": "telegram"},
+        {"time": day + "T09:00:00+09:00", "src": "telegram"}]) + "\n", encoding="utf-8")
+    before = tg.read_text(encoding="utf-8")
+    items = c.get(f"/api/diary?date={day}").get_json()["items"]
+    assert [(i.get("text"), i["src"], i.get("location")) for i in items] == [
+        ("봇 아침", "telegram", None), ("웹 메모", "web", None), (None, "telegram", True)]
+    assert all("id" not in i for i in items if i["src"] == "telegram")
+    c.post("/api/diary", json={"text": "또 웹"})
+    assert tg.read_text(encoding="utf-8") == before                    # MR은 .tg.jsonl을 안 씀
+    assert "📍 위치" in c.get("/diary").get_data(as_text=True)
