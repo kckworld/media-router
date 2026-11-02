@@ -36,6 +36,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import ass2srt
+
 BASE = Path(__file__).resolve().parent
 STATE_PATH = Path(os.getenv("AUTO_SUBS_STATE", str(BASE / "data" / "auto_subs.json")))
 FFMPEG = os.getenv("FFMPEG_BIN", "/bin/ffmpeg")
@@ -386,6 +388,11 @@ def reconcile(folder: Path, key_prefix: str, state: dict) -> None:
                     log(f"E{ep}: 팬 자막 이름 정리 {p.name} → {clean}")
             rec.update(status="replaced", replaced_at=time.time())
             log(f"E{ep}: 팬 자막이 들어와 자동 자막 삭제 — {[p.name for p in mine]}")
+            # 팬 자막이 ASS면 이제 같은 이름 .srt 자리가 비었으니 SRT로(media_router는 자리가 차 있어 못 바꿨다)
+            for p in korean_subs(folder, ep):
+                if p.suffix.lower() in (".ass", ".ssa"):
+                    ok, msg = ass2srt.convert_file(p)
+                    log(f"E{ep}: 팬 자막 ASS→SRT {'완료' if ok else '실패'} {p.name} ({msg})")
         else:
             rec["path"] = str(mine[0])
 
@@ -445,6 +452,8 @@ def process_folder(folder: Path, state: dict, key: str, translate=None, now: flo
         if engine != "deepl":
             ko = ko.replace("→ DeepL)", f"→ {ENGINE_LABEL[engine]})", 1).replace(
                 "자동 번역 (DeepL)", f"자동 번역 ({ENGINE_LABEL[engine]})", 1)
+        if fmt in ("ass", "ssa"):      # 11-02 사용자 결정: ASS는 전부 SRT로(Plex 실시간 변환·버퍼링 줄이기)
+            ko, fmt = ass2srt.ass_to_srt(ko)[0], "srt"
         dst = video.with_name(video.stem + f".ko.{fmt}")
         if dst.exists():               # 혹시 모를 경쟁 상황: 절대 덮어쓰지 않음
             continue

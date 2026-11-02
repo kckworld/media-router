@@ -42,6 +42,7 @@ def env(tmp_path, monkeypatch):
     folder = tmp_path / "명탐정 코난 (1996)"
     folder.mkdir()
     monkeypatch.setattr(a, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(a.ass2srt, "HOLD", tmp_path / "ass_hold")      # 팬 ASS → SRT 때 원본 보관 위치
     monkeypatch.setattr(a, "extract_english_sub", lambda v: ("ass", EN_ASS))
     monkeypatch.setattr(a, "MAX_PER_RUN", 99)
     monkeypatch.setattr(a, "AGY", Path("/nonexistent/agy"))
@@ -98,8 +99,10 @@ def test_creates_korean_sub_for_new_episode(env):
     v = video(env, "Detective Conan.S01.E1217 [에피소드 1217].mkv")
     state = {}
     s = run(env, state)
-    sub = env / "Detective Conan.S01.E1217 [에피소드 1217].ko.ass"
+    sub = env / "Detective Conan.S01.E1217 [에피소드 1217].ko.srt"     # ASS 원본도 SRT로 저장(11-02)
     assert s["created"] == 1 and sub.exists() and "[KO]" in sub.read_text(encoding="utf-8")
+    assert not (env / "Detective Conan.S01.E1217 [에피소드 1217].ko.ass").exists()
+    assert "-->" in sub.read_text(encoding="utf-8") and "Dialogue:" not in sub.read_text(encoding="utf-8")
     rec = state[str(env) + "|1217"]
     assert rec["status"] == "auto" and rec["sha256"] == a.sha256(sub)
     assert (sub.stat().st_mode & 0o777) == 0o664      # Plex·Jellyfin이 읽을 수 있어야 함
@@ -140,11 +143,14 @@ def test_fan_ass_pushed_to_underscore_name_gets_cleaned(env):
     state = {}
     run(env, state)
     # media_router가 같은 이름이 있어서 "_1"을 붙여 옮긴 팬 자막
-    (env / "Detective Conan.S01.E1217 [t].ko_1.ass").write_text("fan sub", encoding="utf-8")
+    (env / "Detective Conan.S01.E1217 [t].ko_1.ass").write_text(EN_ASS, encoding="utf-8")
     run(env, state)
-    final = env / "Detective Conan.S01.E1217 [t].ko.ass"
-    assert final.read_text(encoding="utf-8") == "fan sub"
+    # 이름 정리(_1 떼기) → 자동 자막이 비운 .srt 자리로 SRT 변환(11-02), ASS 원본은 보관 폴더로
+    final = env / "Detective Conan.S01.E1217 [t].ko.srt"
+    assert "-->" in final.read_text(encoding="utf-8") and "[KO]" not in final.read_text(encoding="utf-8")
     assert not (env / "Detective Conan.S01.E1217 [t].ko_1.ass").exists()
+    assert not (env / "Detective Conan.S01.E1217 [t].ko.ass").exists()
+    assert list((env.parent / "ass_hold").rglob("*.ko.ass"))
     assert state[str(env) + "|1217"]["status"] == "replaced"
 
 
@@ -162,8 +168,8 @@ def test_follows_aniname_title_rename(env):
     v = video(env, "Detective Conan.S01.E1217 [에피소드 1217].mkv")
     state = {}
     run(env, state)
-    old = env / "Detective Conan.S01.E1217 [에피소드 1217].ko.ass"
-    new = env / "Detective Conan.S01.E1217 [진짜 제목].ko.ass"
+    old = env / "Detective Conan.S01.E1217 [에피소드 1217].ko.srt"
+    new = env / "Detective Conan.S01.E1217 [진짜 제목].ko.srt"
     old.rename(new)
     v.rename(env / "Detective Conan.S01.E1217 [진짜 제목].mkv")
     run(env, state)
@@ -346,7 +352,7 @@ def test_agy_episode_labels_engine_limits_per_run_and_retries_failures(env, monk
     rec = state[str(env) + "|1218"]
     assert rec["engine"] == "agy" and str(env) + "|1219" not in state
     text = Path(rec["path"]).read_text(encoding="utf-8")
-    assert "Title: 한국어 자동 번역 (Gemini)" in text and "영어 자막 → Gemini)" in text
+    assert "agy:" in text and "-->" in text                          # SRT라 머리글(Title) 표시는 없음, 엔진은 기록에
 
     def boom(*args):
         raise a.AgyError("시간 초과")

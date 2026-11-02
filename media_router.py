@@ -12,6 +12,7 @@ except ImportError:
 import requests
 from db import load_cfg, update_rule_fields, set_config_value, DATA_DIR
 from movies import MOVIE_DIR_NAME
+import ass2srt
 
 BASE: Path = Path(__file__).resolve().parent
 LOGDIR: Path = DATA_DIR / "logs"
@@ -126,6 +127,27 @@ def variety_episode_autofix(target_dir: Path, filename: str):
         return None
     width = len(m.group("ep"))
     return filename[:m.start("ep")] + str(prev[1] + 1).zfill(width) + filename[m.end("ep"):]
+
+def convert_ass_after_move(cfg: Dict, dst: Path) -> None:
+    """옮긴 파일이 외부 .ass/.ssa면 같은 이름 .srt로(원본은 보관 폴더), mkv 안에 ASS 트랙이 있으면 SRT로 다시 묶기.
+    같은 이름 .srt가 이미 있으면 그대로 둔다(자동 자막이면 auto_subtitles가 지운 뒤 바꾼다)."""
+    try:
+        suf = dst.suffix.lower()
+        if suf in (".ass", ".ssa"):
+            if ass2srt.srt_name(dst).exists():
+                log(f"ASS2SRT_SKIP: {dst.name} (같은 이름 SRT가 있음)")
+                return
+            ok, msg = ass2srt.convert_file(dst)
+        elif suf == ".mkv" and ass2srt.has_embedded_ass(dst):
+            ok, msg = ass2srt.convert_mkv(dst)
+        else:
+            return
+        log(f"ASS2SRT_{'OK' if ok else 'FAIL'}: {dst} ({msg})")
+        if not ok:
+            tg_send(cfg, f"⚠ ASS→SRT 변환 실패(원본 그대로 둠): {dst.name}\n{msg[:200]}")
+    except Exception as e:
+        log(f"ASS2SRT_FAIL: {dst} ({e})")
+        tg_send(cfg, f"⚠ ASS→SRT 변환 실패(원본 그대로 둠): {dst.name}\n{e}")
 
 def sanitize_filename_for_plex(filename: str) -> str:
     """Plex TV 스캐너가 인식 못하는 토큰(예: .END) 제거"""
@@ -817,6 +839,9 @@ def main() -> None:
                     moved_count += 1
                     log(f"MOVED: {f} -> {dst}")
                     tg_send(cfg, f"이동: {f.name} → {target_dir}")
+
+                    # ASS 자막은 SRT로 (11-02 사용자 결정: Plex 실시간 변환·버퍼링 줄이기). 실패해도 이동은 끝난 것
+                    convert_ass_after_move(cfg, Path(dst))
 
                     # 자막(.srt 등) 같은 비디오가 아닌 파일은 "완료" 체크를 건드리지
                     # 않는다 - 영상은 인코딩 보류로 빠지고 자막만 먼저 최종 폴더에
