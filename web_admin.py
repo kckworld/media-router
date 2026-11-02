@@ -1914,6 +1914,19 @@ def _reencode_watch_worker(state: dict) -> bool:
     return True
 
 
+def _ass2srt_step() -> None:
+    """밤에 1분마다 호스트의 ass2srt_bulk.py step (내장 ASS → SRT 일괄, 꺼져 있으면 호스트에서 바로 끝남, 11-02)"""
+    if not Path(RUN_BATCH_SSH_KEY).exists():
+        return
+    try:
+        subprocess.Popen(["ssh", "-i", RUN_BATCH_SSH_KEY, "-p", RUN_BATCH_SSH_PORT, "-o", "StrictHostKeyChecking=no",
+                          "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                          f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", "ass2srt-step"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        app.logger.warning("ASS→SRT 일괄 호출 실패")
+
+
 def _reencode_scheduler_loop() -> None:
     """1분마다: 결과가 있으면 collect, PC 종료 예고 알림, 지금 파일 끝나면 종료, 새벽 자동 시작, 아침 요약"""
     while True:
@@ -1924,6 +1937,8 @@ def _reencode_scheduler_loop() -> None:
             if reencode_ctl.needs_collect():
                 _reencode_host("run", wait=False)
             now = datetime.now(APP_TZ)
+            if 1 <= now.hour < 7:
+                _ass2srt_step()
             cfg = reencode_settings()
             with _reencode_sched_lock:
                 state = _reencode_sched_load()

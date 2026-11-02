@@ -8,6 +8,12 @@ if [ "${SSH_ORIGINAL_COMMAND:-}" = "kakao-send" ]; then
     echo "$out"
     exit 0
 fi
+# 라이브러리 내장 ASS → SRT 일괄 변환 (2026-11-02): Media Router가 밤에 1분마다 'ass2srt-step'을 보낸다.
+# /volume1/docker/ass2srt/enabled 가 있을 때만 50초 안에서 한 파일씩(자기 잠금). 로그는 ass2srt.log
+if [ "${SSH_ORIGINAL_COMMAND:-}" = "ass2srt-step" ]; then
+    nice -n 19 ionice -c3 python3 /volume1/docker/media-router/ass2srt_bulk.py step >/dev/null 2>&1 || true
+    exit 0
+fi
 LOGDIR="/volume1/docker/media-router/logs"
 mkdir -p "$LOGDIR"
 LOGFILE="$LOGDIR/run_all.$(date +%F).log"
