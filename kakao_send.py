@@ -56,6 +56,48 @@ def find_room(room: str) -> str:
     return hits[0]
 
 
+# 방 창이 없을 때 직접 열기 (2026-11-03): 매일 04:16 kakao-desktop 재시작 뒤엔 채팅방 창이 다 닫혀 있다.
+# 카톡 검색칸은 붙여넣기로는 걸러지지 않고(Enter하면 맨 위 방이 열림) 버튼 위치가 상태마다 달라서,
+# 채팅 목록 줄을 위에서부터 차례로 더블클릭해 열어 보고, 열린 창 제목이 방 이름과 **완전히 같을 때만** 쓴다.
+# 다른 방이 새로 열리면 그 창만 Alt+F4로 닫는다(메인 창은 절대 안 닫음 — 닫으면 트레이로 숨어 못 꺼냄).
+# 좌표는 메인 창(392x642) 기준: 채팅 탭(32,117), 목록 줄 가운데 y=150부터 70px 간격, 아래 광고(y>540)는 피함.
+CHAT_TAB = (32, 117)
+ROW_X, ROW_YS = 200, (150, 220, 290, 360, 430, 500)
+
+
+def visible_windows() -> list[str]:
+    return [w for w in x("xdotool", "search", "--onlyvisible", "--class", "kakaotalk.exe", check=False).split()
+            if w.isdigit()]
+
+
+def main_window() -> str:
+    mains = [w for w in visible_windows() if win_name(w) == "KakaoTalk"]
+    if len(mains) != 1:
+        raise Fail("카톡 메인 창이 안 보임(트레이에 숨었거나 로그아웃) - 보내지 않음")
+    return mains[0]
+
+
+def open_room(room: str) -> str:
+    main = main_window()
+    before = set(visible_windows())
+    focus(main, "KakaoTalk")
+    x("xdotool", "mousemove", "--window", main, str(CHAT_TAB[0]), str(CHAT_TAB[1]), "click", "1")
+    time.sleep(0.8)
+    for y in ROW_YS:
+        focus(main, "KakaoTalk")
+        x("xdotool", "mousemove", "--window", main, str(ROW_X), str(y), "click", "--repeat", "2", "--delay", "100", "1")
+        time.sleep(1.5)
+        a = active()
+        name = win_name(a)
+        if name == room:
+            return a
+        if a and a != main and a not in before and active() == a:
+            x("xdotool", "key", "--clearmodifiers", "alt+F4")     # 새로 연 다른 방 창만 닫기(활성 창이 그 창일 때만)
+            time.sleep(0.8)
+        before = set(visible_windows()) | before
+    raise Fail(f"채팅 목록 위쪽 {len(ROW_YS)}줄에서 '{room}' 방을 못 찾음 - 보내지 않음")
+
+
 def focus(w: str, room: str) -> None:
     """방 창을 앞으로 가져오고, 활성 창이 정말 그 방인지 확인 (아니면 Fail - 아무것도 안 보냄)"""
     x("xdotool", "windowactivate", "--sync", w, check=False, timeout=10)
@@ -136,7 +178,13 @@ def main() -> dict:
     try:
         if "KakaoTalk.exe" not in x("pgrep", "-af", "KakaoTalk.exe", check=False):
             raise Fail("카톡이 실행 중이 아님")
-        w = find_room(room)
+        try:
+            w = find_room(room)
+        except Fail as e:
+            if "열려 있지 않음" not in str(e):
+                raise
+            open_room(room)                       # 창이 없으면 직접 열고, 아래에서 다시 완전 일치로 찾는다
+            w = find_room(room)
         image_err = ""
         if poster.startswith("https://"):
             try:
