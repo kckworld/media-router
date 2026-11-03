@@ -372,6 +372,7 @@ a.tile:hover { border-color: var(--line-strong); }
 .drawer-foot .grow { flex: 1; }
 .icon-btn { width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; font-size: 18px; }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.diary-btn { width: auto; gap: 4px; padding: 0 10px; color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; }
 
 .form-field { display: flex; flex-direction: column; gap: 6px; }
 .form-field > label, .form-field > .label { font-size: 13px; font-weight: 600; color: var(--muted); }

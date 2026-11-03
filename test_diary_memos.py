@@ -77,3 +77,14 @@ def test_telegram_memos_merged_read_only(dy):
     c.post("/api/diary", json={"text": "또 웹"})
     assert tg.read_text(encoding="utf-8") == before                    # MR은 .tg.jsonl을 안 씀
     assert "📍 위치" in c.get("/diary").get_data(as_text=True)
+
+
+def test_diary_button_in_appbar_not_in_swipe_order(dy, monkeypatch):
+    import re
+    c, base = dy
+    html = c.get("/downloads").get_data(as_text=True)
+    assert 'class="icon-btn diary-btn" href="/diary"' in html                 # 상단 바 버튼(관리자)
+    order = re.search(r'<nav id="pageOrder".*?</nav>', html, re.S).group(0)
+    assert "/downloads" in order and "/diary" not in order                    # 스와이프 순서엔 없음(11-03)
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
+    assert "diary-btn" not in c.get("/downloads").get_data(as_text=True)      # 보기 전용엔 안 보임
