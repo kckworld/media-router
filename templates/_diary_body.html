@@ -1,0 +1,112 @@
+{#- 일기 메모 본문(11-03): MR 화면(생활 > 일기 메모, diary_tab.html)과 홈 화면 앱(diary.html, /diary?app=1)이 같이 쓴다.
+    색은 MR 변수(--surface 등)를 쓰고, 단독 앱 화면은 그 변수를 직접 정의한다. 스타일은 .dy 안에만. -#}
+<style>
+  .dy { --dy-accent: #ffb74d; font-size: 18px; line-height: 1.55; max-width: 560px; }
+  .dy label.big { display: block; font-weight: 700; margin-bottom: 8px; color: var(--text); }
+  .dy textarea { width: 100%; min-height: 150px; font: inherit; font-size: 20px; color: var(--text); background: var(--surface);
+                 border: 2px solid var(--line); border-radius: 14px; padding: 14px; resize: vertical; box-sizing: border-box; }
+  .dy textarea:focus { outline: 3px solid var(--dy-accent); outline-offset: 1px; border-color: var(--dy-accent); }
+  .dy .row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 15px; color: var(--muted); }
+  .dy .write { width: 100%; min-height: 60px; margin-top: 12px; font: inherit; font-size: 22px; font-weight: 800;
+               background: var(--dy-accent); color: #2b1600; border: 0; border-radius: 14px; cursor: pointer; }
+  .dy .write:disabled { opacity: .55; }
+  .dy .write:focus-visible, .dy button:focus-visible { outline: 3px solid var(--text); outline-offset: 2px; }
+  .dy .status { min-height: 1.6em; margin-top: 10px; font-weight: 700; font-size: 18px; }
+  .dy .status.ok { color: var(--success, #1e6b35); }
+  .dy .status.err { color: var(--danger); }
+  .dy .day { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 26px 0 8px; }
+  .dy .day h2 { font-size: 20px; margin: 0; text-align: center; flex: 1; color: var(--text); }
+  .dy .nav { min-width: 56px; min-height: 56px; font: inherit; font-size: 22px; background: var(--surface); color: var(--text);
+             border: 2px solid var(--line); border-radius: 12px; cursor: pointer; }
+  .dy .nav:disabled { opacity: .35; }
+  .dy ul { list-style: none; margin: 0; padding: 0; }
+  .dy li { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px;
+           display: flex; gap: 12px; align-items: flex-start; color: var(--text); }
+  .dy .t { color: var(--muted); font-size: 16px; font-variant-numeric: tabular-nums; min-width: 3.2em; padding-top: 2px; }
+  .dy .src { display: block; font-size: 14px; }
+  .dy .txt { flex: 1; white-space: pre-wrap; word-break: break-word; }
+  .dy .del { min-width: 56px; min-height: 48px; font: inherit; font-size: 16px; background: none; color: var(--danger);
+             border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+  .dy .empty { color: var(--muted); text-align: center; padding: 18px 0; display: block; }
+</style>
+<div class="dy">
+  <form id="memoForm" novalidate>
+    <label class="big" for="memo">오늘 있었던 일</label>
+    <textarea id="memo" maxlength="{{ max_len }}" {{ 'autofocus' if autofocus }}
+              placeholder="생각나는 대로 적어 두면 밤 사진 일기에 같이 들어가요" aria-describedby="count"></textarea>
+    <div class="row"><span>Enter는 줄바꿈, 다 쓰면 아래 버튼</span><span id="count" aria-live="off">0 / {{ max_len }}</span></div>
+    <button type="submit" class="write" id="writeBtn">적기</button>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+  </form>
+
+  <section aria-labelledby="dayTitle">
+    <div class="day">
+      <button type="button" class="nav" id="prevBtn" aria-label="전날 메모 보기">‹</button>
+      <h2 id="dayTitle">오늘 메모</h2>
+      <button type="button" class="nav" id="nextBtn" aria-label="다음날 메모 보기">›</button>
+    </div>
+    <ul id="list" aria-live="polite"><li class="empty">불러오는 중…</li></ul>
+  </section>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var TODAY = "{{ today }}", day = TODAY, MAX = {{ max_len }};
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+  function hm(iso) { var m = /T(\d\d:\d\d)/.exec(iso || ""); return m ? m[1] : ""; }
+  function label(d) {
+    if (d === TODAY) return "오늘 메모";
+    var dt = new Date(d + "T00:00:00"), w = "일월화수목금토"[dt.getDay()];
+    return (dt.getMonth() + 1) + "월 " + dt.getDate() + "일 (" + w + ")";
+  }
+  function post(url, body) {
+    return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); });
+  }
+  function load() {
+    $("dayTitle").textContent = label(day);
+    $("nextBtn").disabled = day >= TODAY;
+    fetch("/api/diary?date=" + day, { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) { $("list").innerHTML = '<li class="empty">' + esc(d.error || "불러오지 못했어요") + '</li>'; return; }
+      if (!d.items.length) { $("list").innerHTML = '<li class="empty">아직 적은 메모가 없어요</li>'; return; }
+      $("list").innerHTML = d.items.map(function (m) {
+        var tg = m.src === "telegram";
+        var body = m.location ? "📍 위치" : esc(m.text);
+        return '<li><span class="t">' + hm(m.time) + (tg ? '<span class="src" title="텔레그램에서 온 메모" aria-label="텔레그램">✈</span>' : '') +
+          '</span><span class="txt">' + body + '</span>' +
+          (m.src === "web" ? '<button type="button" class="del" data-id="' + esc(m.id) + '" aria-label="' + hm(m.time) + ' 메모 지우기">지우기</button>' : '') + '</li>';
+      }).join("");
+    }).catch(function () { $("list").innerHTML = '<li class="empty">불러오지 못했어요</li>'; });
+  }
+  $("memo").addEventListener("input", function () { $("count").textContent = $("memo").value.length + " / " + MAX; });
+  $("memoForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var text = $("memo").value.trim();
+    if (!text) { $("status").className = "status err"; $("status").textContent = "적을 내용을 써 주세요."; $("memo").focus(); return; }
+    $("writeBtn").disabled = true;
+    post("/api/diary", { text: text }).then(function (res) {
+      $("writeBtn").disabled = false;
+      if (!res.ok || !res.d.ok) { $("status").className = "status err"; $("status").textContent = (res.d && res.d.error) || "적지 못했어요."; return; }
+      $("memo").value = ""; $("count").textContent = "0 / " + MAX;
+      $("status").className = "status ok"; $("status").textContent = "✍ " + hm(res.d.item.time) + " 적었어요";
+      day = TODAY; load(); $("memo").focus();
+      setTimeout(function () { $("status").textContent = ""; }, 4000);
+    }).catch(function () { $("writeBtn").disabled = false; $("status").className = "status err"; $("status").textContent = "적지 못했어요. 잠시 뒤에 다시 해 주세요."; });
+  });
+  $("list").addEventListener("click", function (e) {
+    var b = e.target.closest(".del"); if (!b) return;
+    if (!confirm("이 메모를 지울까요?")) return;
+    post("/api/diary/delete", { date: day, id: b.dataset.id }).then(function (res) {
+      if (!res.ok || !res.d.ok) { $("status").className = "status err"; $("status").textContent = "지우지 못했어요."; return; }
+      $("status").className = "status ok"; $("status").textContent = "지웠어요"; load();
+    });
+  });
+  function shift(n) { var dt = new Date(day + "T00:00:00"); dt.setDate(dt.getDate() + n);
+    var y = dt.getFullYear(), m = String(dt.getMonth() + 1).padStart(2, "0"), dd = String(dt.getDate()).padStart(2, "0");
+    day = y + "-" + m + "-" + dd; if (day > TODAY) day = TODAY; load(); }
+  $("prevBtn").onclick = function () { shift(-1); };
+  $("nextBtn").onclick = function () { shift(1); };
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) load(); });
+  load();
+})();
+</script>

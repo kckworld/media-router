@@ -1,7 +1,7 @@
 {
   "name": "일기 메모",
   "short_name": "일기 메모",
-  "start_url": "/diary",
+  "start_url": "/diary?app=1",
   "scope": "/diary",
   "display": "standalone",
   "background_color": "#FFF8EF",

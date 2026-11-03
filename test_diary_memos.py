@@ -22,7 +22,9 @@ def dy(monkeypatch, tmp_path):
 def test_write_list_delete(dy):
     c, base = dy
     html = c.get("/diary").get_data(as_text=True)
-    assert "일기 메모" in html and "/static/diary.webmanifest" in html and 'id="writeBtn"' in html
+    assert "일기 메모" in html and 'id="writeBtn"' in html and 'id="pageOrder"' in html      # MR 틀 안(생활 그룹)
+    app_html = c.get("/diary?app=1").get_data(as_text=True)
+    assert "/static/diary.webmanifest" in app_html and 'id="writeBtn"' in app_html and "pageOrder" not in app_html
     assert c.post("/api/diary", json={"text": "  "}).status_code == 400
     assert c.post("/api/diary", json={"text": "x" * 501}).status_code == 400
     r = c.post("/api/diary", json={"text": "점심에 공원 산책\n날씨 좋음"}).get_json()
@@ -79,12 +81,19 @@ def test_telegram_memos_merged_read_only(dy):
     assert "📍 위치" in c.get("/diary").get_data(as_text=True)
 
 
-def test_diary_button_in_appbar_not_in_swipe_order(dy, monkeypatch):
+def test_life_group_menu_and_swipe_order(dy, monkeypatch):
+    """생활 그룹(11-03): 가계부·일기 메모는 '생활'로, 작업엔 미디어 일만. 스와이프 순서는 생활 안에서 이어짐"""
     import re
     c, base = dy
     html = c.get("/downloads").get_data(as_text=True)
-    assert 'class="icon-btn diary-btn" href="/diary"' in html                 # 상단 바 버튼(관리자)
-    order = re.search(r'<nav id="pageOrder".*?</nav>', html, re.S).group(0)
-    assert "/downloads" in order and "/diary" not in order                    # 스와이프 순서엔 없음(11-03)
+    assert 'class="icon-btn diary-btn" href="/diary"' in html                 # 상단 ✎ 일기 버튼은 그대로
+    order = re.findall(r'href="([^"]+)"', re.search(r'<nav id="pageOrder".*?</nav>', html, re.S).group(0))
+    assert order.index("/encode_log") + 1 == order.index("/recon") and order.index("/recon") + 1 == order.index("/diary")
+    assert order.index("/diary") + 1 == order.index("/settings")
+    nav = re.search(r'<nav class="bottomnav".*?</nav>', html, re.S).group(0)
+    assert ">생활<" in nav.replace("</svg>", ">") and 'href="/recon"' in nav
+    diary_html = c.get("/diary").get_data(as_text=True)
+    assert "tab-swipe.js" in diary_html                                        # 일기 화면에서도 스와이프 됨
     monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
-    assert "diary-btn" not in c.get("/downloads").get_data(as_text=True)      # 보기 전용엔 안 보임
+    v = c.get("/downloads").get_data(as_text=True)
+    assert "diary-btn" not in v and 'href="/recon"' not in v and ">생활<" not in v.replace("</svg>", ">")   # 보기 전용엔 생활 그룹 없음

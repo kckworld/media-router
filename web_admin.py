@@ -1699,7 +1699,9 @@ def diary_page():
     auth = authed(request)
     if auth is not True:
         return auth
-    return render_template("diary.html", today=datetime.now(APP_TZ).strftime("%Y-%m-%d"), max_len=diary_memos.MAX_LEN)
+    # 홈 화면 앱(manifest start_url ?app=1)은 단독 화면, MR 메뉴(생활 > 일기 메모)는 공통 틀 안(스와이프 이어짐, 11-03)
+    tpl = "diary.html" if request.args.get("app") else "diary_tab.html"
+    return render_template(tpl, authed=True, today=datetime.now(APP_TZ).strftime("%Y-%m-%d"), max_len=diary_memos.MAX_LEN)
 
 
 @app.route("/api/diary", methods=["GET", "POST"])
