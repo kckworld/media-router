@@ -1351,7 +1351,7 @@ def media_request_submit():
     code = _request_code()
     if not code:
         return jsonify({"ok": False, "error": "지금은 요청을 받지 않아요."}), 403
-    if not hmac.compare_digest(str(form.get("code") or "").strip(), code):
+    if not hmac.compare_digest(str(form.get("code") or "").strip().encode(), code.encode()):
         if not (_rq_code_fail_limit.allow(ip) and _rq_code_fail_total.allow("*")):
             return jsonify({"ok": False, "error": "잠시 뒤에 다시 해 주세요."}), 429
         return jsonify({"ok": False, "error": "단톡방 코드가 맞지 않아요."}), 403
@@ -1471,6 +1471,62 @@ def _kakao_announce(poster: str, caption: str) -> None:
         _tg_notify(f"⚠ 카톡 '{room}' 방에 글은 보냈는데 {res['message'].split('(', 1)[-1].rstrip(')')}")
 
 
+# ── 내부 카톡 보내기 API (2026-11-03): n8n(날씨 06:00·18:00 등)이 부른다. NAS 안에서만, 비밀 키 헤더, 허용 방만 ──
+INTERNAL_KEY_PATH = DATA_DIR / "internal_api_key"
+# 엉뚱한 방 사고 방지(시험방 "김창기"와 단톡방 "김창기NAS 고객방"처럼 이름이 비슷함): 목록에 있는 방만 보낸다
+INTERNAL_KAKAO_ROOMS = ("건이네가족", "김창기")
+_internal_kakao_lock = threading.Lock()   # 카톡 화면 조작은 한 번에 하나
+_PRIVATE_IP = re.compile(r"^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)")
+_IP_HOST = re.compile(r"^(\d{1,3}(\.\d{1,3}){3}|localhost)(:\d+)?$")
+
+
+def _internal_key() -> str:
+    """처음 부를 때 만든다(600, data 폴더 주인=kck9010 소유 — 팀장이 n8n에 넣으려고 읽음). 값은 어디에도 찍지 않는다."""
+    try:
+        k = INTERNAL_KEY_PATH.read_text(encoding="utf-8").strip()
+        if k:
+            return k
+    except OSError:
+        pass
+    k = secrets.token_urlsafe(32)
+    INTERNAL_KEY_PATH.write_text(k + "\n", encoding="utf-8")
+    try:
+        os.chmod(INTERNAL_KEY_PATH, 0o600)
+        st = DATA_DIR.stat()
+        os.chown(INTERNAL_KEY_PATH, st.st_uid, st.st_gid)
+    except OSError:
+        pass
+    return k
+
+
+def _is_internal_request(req) -> bool:
+    """NAS 안에서 직접 온 요청만: 터널·리버스 프록시 흔적이 없고, 주소가 IP(도메인 아님), 보낸 곳이 사설망"""
+    if req.headers.get("CF-Connecting-IP") or req.headers.get("CF-Ray") or req.headers.get("X-Forwarded-For"):
+        return False
+    if not _IP_HOST.match((req.host or "").lower()):
+        return False
+    return bool(_PRIVATE_IP.match(req.remote_addr or ""))
+
+
+@app.route("/api/internal/kakao-send", methods=["POST"])
+def api_internal_kakao_send():
+    if not _is_internal_request(request):
+        return make_response("Not Found", 404)
+    if not hmac.compare_digest(request.headers.get("X-Internal-Key", "").encode(), _internal_key().encode()):
+        return jsonify({"ok": False, "message": "키가 맞지 않아요"}), 403
+    body = request.get_json(silent=True) or {}
+    room, text = str(body.get("room") or "").strip(), str(body.get("text") or "").strip()
+    if room not in INTERNAL_KAKAO_ROOMS:
+        return jsonify({"ok": False, "message": "허용되지 않은 방이에요"}), 400
+    if not text or len(text) > 2000:
+        return jsonify({"ok": False, "message": "글이 비었거나 너무 길어요(2000자)"}), 400
+    with _internal_kakao_lock:
+        res = _kakao_send(room, "", text)
+    ok = bool(res.get("ok"))
+    app.logger.info("내부 카톡 보내기 %s: %s", room, "성공" if ok else "실패")   # 본문은 안 남김
+    return jsonify({"ok": True} if ok else {"ok": False, "message": str(res.get("message") or "실패")}), (200 if ok else 502)
+
+
 def _kakao_send(room: str, poster: str, text: str) -> dict:
     """호스트의 kakao_send.py(run_all.sh 강제 명령 'kakao-send')로 kakao-desktop 카톡 화면 조작.
     방 이름이 완전히 같은 채팅창이 열려 있어야 하고, 창 제목을 붙여넣기·Enter 직전마다 확인한다."""
@@ -1525,7 +1581,7 @@ def survey_submit():
     code = _request_code()
     if not (code and _survey_open()):
         return jsonify({"ok": False, "error": "설문이 끝났어요."}), 403
-    if not hmac.compare_digest(str(form.get("code") or "").strip(), code):
+    if not hmac.compare_digest(str(form.get("code") or "").strip().encode(), code.encode()):
         if not (_rq_code_fail_limit.allow(ip) and _rq_code_fail_total.allow("*")):
             return jsonify({"ok": False, "error": "잠시 뒤에 다시 해 주세요."}), 429
         return jsonify({"ok": False, "error": "단톡방 코드가 맞지 않아요."}), 403
@@ -3023,9 +3079,9 @@ def login():
         return redirect(f"/login?error=2&wait={blocked_for}")
 
     role = None
-    if hmac.compare_digest(pw, PASSWORD):
+    if hmac.compare_digest(pw.encode(), PASSWORD.encode()):
         role = "admin"
-    elif VIEWER_PASSWORD and hmac.compare_digest(pw, VIEWER_PASSWORD):
+    elif VIEWER_PASSWORD and hmac.compare_digest(pw.encode(), VIEWER_PASSWORD.encode()):
         role = "viewer"
     if role:
         _clear_login_failures(ip)
