@@ -8,6 +8,15 @@ if [ "${SSH_ORIGINAL_COMMAND:-}" = "kakao-send" ]; then
     echo "$out"
     exit 0
 fi
+# 카톡 방 창 미리 열기 (2026-11-04): Media Router가 05:30에 'kakao-prepare 건이네가족'을 보낸다(06:00 날씨 전).
+# 보내지는 않고 창만 연다. 허용 방은 kakao_send.py PREPARE_ROOMS(+시험용 김창기)
+case "${SSH_ORIGINAL_COMMAND:-}" in "kakao-prepare "*)
+    kp_room="${SSH_ORIGINAL_COMMAND#kakao-prepare }"
+    out="$(python3 /volume1/docker/media-router/kakao_send.py prepare "$kp_room" 2>&1 | tail -n 1)" || true
+    echo "[run_all $(date '+%H:%M:%S')] 카톡 방 미리 열기: $out" >> "/volume1/docker/media-router/logs/run_all.$(date +%F).log" 2>/dev/null || true
+    echo "$out"
+    exit 0 ;;
+esac
 # 라이브러리 내장 ASS → SRT 일괄 변환 (2026-11-02): Media Router가 밤에 1분마다 'ass2srt-step'을 보낸다.
 # /volume1/docker/ass2srt/enabled 가 있을 때만 50초 안에서 한 파일씩(자기 잠금). 로그는 ass2srt.log
 if [ "${SSH_ORIGINAL_COMMAND:-}" = "ass2srt-step" ]; then

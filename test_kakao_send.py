@@ -10,8 +10,9 @@ import kakao_send as ks
 
 class FakeX:
     """xdotool/xclip 흉내. windows: {id: 제목}"""
-    def __init__(self, windows, active="", steal_after_paste=False, stubborn=False, rows=None):
+    def __init__(self, windows, active="", steal_after_paste=False, stubborn=False, rows=None, late=False):
         self.windows, self.active_w, self.keys = dict(windows), active, []
+        self.late = late                # True: 방 창은 생기지만 앞으로 오지 않음(재시작 직후처럼 늦게 뜸)
         self.steal, self.stubborn = steal_after_paste, stubborn
         self.rows = rows or {}          # 채팅 목록 줄 y → 더블클릭하면 열리는 방 이름
         self.next_id = 100
@@ -30,7 +31,7 @@ class FakeX:
             if not self.stubborn:
                 self.active_w = a[-1]
             return ""
-        if a[:2] == ["xdotool", "mousemove"] and "--repeat" in a:
+        if a[:2] == ["xdotool", "mousemove"] and "--repeat" in a and a[-1] == "1":
             room = self.rows.get(int(a[5]))
             if room:
                 same = [w for w, n in self.windows.items() if n == room]
@@ -39,7 +40,8 @@ class FakeX:
                 else:
                     self.next_id += 1
                     self.windows[str(self.next_id)] = room
-                    self.active_w = str(self.next_id)
+                    if not self.late:
+                        self.active_w = str(self.next_id)
             return ""
         if a[:2] == ["xdotool", "key"] and a[-1] == "alt+F4":
             self.keys.append(["alt+F4", self.windows.get(self.active_w)])
@@ -72,6 +74,28 @@ def test_prefix_match_is_not_enough(monkeypatch, tmp_path):
     fake = FakeX({"10": "김창기NAS 고객방", "12": "KakaoTalk"})
     r = run(monkeypatch, tmp_path, fake, {"room": "김창기", "text": "안내"})
     assert not r["ok"] and "못 찾음" in r["message"] and not fake.keys      # 목록에도 없으면 아무것도 안 보냄
+
+
+def test_late_windows_found_and_wrong_ones_all_closed(monkeypatch, tmp_path):
+    """11-04 06:00 실패 재현: 방 창이 앞으로 안 오고 늦게 뜨는 상태 — 새 창 목록으로 찾고, 다른 방 창은 전부 닫음"""
+    fake = FakeX({"12": "KakaoTalk"}, active="12", late=True,
+                 rows={150: "김창기", 220: "김창기NAS 고객방", 290: "건이네가족"})
+    r = run(monkeypatch, tmp_path, fake, {"room": "건이네가족", "text": "06시 날씨"})
+    assert r["ok"], r
+    names = set(fake.windows.values())
+    assert names == {"KakaoTalk", "건이네가족"}                                # 찾다가 연 김창기·고객방 창은 닫힘
+    assert {k[1] for k in fake.keys if k[0] == "alt+F4"} == {"김창기", "김창기NAS 고객방"}
+
+
+def test_prepare_opens_only(monkeypatch, tmp_path):
+    fake = FakeX({"12": "KakaoTalk"}, active="12", rows={150: "김창기NAS 고객방", 220: "건이네가족"})
+    monkeypatch.setattr(ks, "x", fake)
+    monkeypatch.setattr(ks.time, "sleep", lambda s: None)
+    monkeypatch.setattr(ks, "LOCK", str(tmp_path / "lock"))
+    r = ks.prepare("건이네가족")
+    assert r["ok"] and "열어 둠" in r["message"] and set(fake.windows.values()) == {"KakaoTalk", "건이네가족"}
+    assert ["Return"] not in fake.keys and not any(k and k[0] == "ctrl+v" for k in fake.keys)   # 보내지 않음
+    assert ks.prepare("건이네가족")["message"].endswith("이미 열려 있음")
 
 
 def test_opens_room_from_chat_list_closing_wrong_ones(monkeypatch, tmp_path):

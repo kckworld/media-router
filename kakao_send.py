@@ -56,13 +56,17 @@ def find_room(room: str) -> str:
     return hits[0]
 
 
-# 방 창이 없을 때 직접 열기 (2026-11-03): 매일 04:16 kakao-desktop 재시작 뒤엔 채팅방 창이 다 닫혀 있다.
+# 방 창이 없을 때 직접 열기 (2026-11-03, 11-04 고침): 매일 04:16 kakao-desktop 재시작 뒤엔 채팅방 창이 다 닫혀 있다.
 # 카톡 검색칸은 붙여넣기로는 걸러지지 않고(Enter하면 맨 위 방이 열림) 버튼 위치가 상태마다 달라서,
 # 채팅 목록 줄을 위에서부터 차례로 더블클릭해 열어 보고, 열린 창 제목이 방 이름과 **완전히 같을 때만** 쓴다.
-# 다른 방이 새로 열리면 그 창만 Alt+F4로 닫는다(메인 창은 절대 안 닫음 — 닫으면 트레이로 숨어 못 꺼냄).
+# 11-04 06:00 실패: 재시작 직후라 방 창이 1.5초 안에 안 떠서 제목 확인이 빗나갔고, 늦게 뜬 창(김창기NAS 고객방 포함)이
+# 안 닫힌 채 남았다 → 새 창이 뜰 때까지 기다리고, 찾는 동안 새로 생긴 다른 방 창은 끝에 전부 닫는다(늦게 뜬 것까지).
+# 목록은 한 화면(6줄)씩 아래로 스크롤하며 최대 MAX_ROWS줄까지 본다. 메인 창은 절대 안 닫음(닫으면 트레이로 숨어 못 꺼냄).
 # 좌표는 메인 창(392x642) 기준: 채팅 탭(32,117), 목록 줄 가운데 y=150부터 70px 간격, 아래 광고(y>540)는 피함.
 CHAT_TAB = (32, 117)
 ROW_X, ROW_YS = 200, (150, 220, 290, 360, 430, 500)
+MAX_ROWS = 42
+NEW_WAIT = 6.0          # 더블클릭 뒤 새 창을 기다리는 최대 시간(초)
 
 
 def visible_windows() -> list[str]:
@@ -77,25 +81,88 @@ def main_window() -> str:
     return mains[0]
 
 
+def _named_new(before: set, main: str) -> list[str]:
+    """before 이후 새로 보이는 창 중 이름 있는 것(방 창). 이름 없는 작은 창(팝업·툴팁)은 뺀다"""
+    return [w for w in visible_windows() if w not in before and w != main and win_name(w)]
+
+
+def close_window(w: str, keep: str) -> bool:
+    """방 창 w를 닫는다: 앞으로 가져와 활성 창이 정말 w이고 이름이 keep(찾는 방)·KakaoTalk이 아닐 때만 Alt+F4"""
+    name = win_name(w)
+    if not name or name in (keep, "KakaoTalk"):
+        return False
+    x("xdotool", "windowactivate", "--sync", w, check=False, timeout=10)
+    for _ in range(10):
+        if active() == w:
+            break
+        time.sleep(0.2)
+    else:
+        return False
+    if win_name(active()) != name:
+        return False
+    x("xdotool", "key", "--clearmodifiers", "alt+F4")
+    for _ in range(15):
+        time.sleep(0.2)
+        if w not in visible_windows():
+            return True
+    return False
+
+
 def open_room(room: str) -> str:
     main = main_window()
-    before = set(visible_windows())
-    focus(main, "KakaoTalk")
-    x("xdotool", "mousemove", "--window", main, str(CHAT_TAB[0]), str(CHAT_TAB[1]), "click", "1")
-    time.sleep(0.8)
-    for y in ROW_YS:
+    start = set(visible_windows())
+    found = ""
+    try:
         focus(main, "KakaoTalk")
-        x("xdotool", "mousemove", "--window", main, str(ROW_X), str(y), "click", "--repeat", "2", "--delay", "100", "1")
-        time.sleep(1.5)
-        a = active()
-        name = win_name(a)
-        if name == room:
-            return a
-        if a and a != main and a not in before and active() == a:
-            x("xdotool", "key", "--clearmodifiers", "alt+F4")     # 새로 연 다른 방 창만 닫기(활성 창이 그 창일 때만)
-            time.sleep(0.8)
-        before = set(visible_windows()) | before
-    raise Fail(f"채팅 목록 위쪽 {len(ROW_YS)}줄에서 '{room}' 방을 못 찾음 - 보내지 않음")
+        x("xdotool", "mousemove", "--window", main, str(CHAT_TAB[0]), str(CHAT_TAB[1]), "click", "1")
+        time.sleep(0.8)
+        x("xdotool", "mousemove", "--window", main, str(ROW_X), "300", "click", "--repeat", "15", "--delay", "40", "4")
+        time.sleep(0.5)                                            # 목록 맨 위로
+        tried, seen = 0, set()
+        while tried < MAX_ROWS and not found:
+            page = set()
+            for y in ROW_YS:
+                tried += 1
+                before = set(visible_windows())
+                focus(main, "KakaoTalk")
+                x("xdotool", "mousemove", "--window", main, str(ROW_X), str(y),
+                  "click", "--repeat", "2", "--delay", "100", "1")
+                waited, new = 0.0, []
+                while waited < NEW_WAIT:
+                    time.sleep(0.3)
+                    waited += 0.3
+                    new = _named_new(before, main)
+                    a = active()
+                    if new or win_name(a) == room or (a in before and a != main):
+                        break                                       # 새 창, 찾는 방, 이미 열려 있던 창이 앞으로 옴
+                page.update(win_name(w) for w in new)
+                if not new and active() in before and active() != main:
+                    page.add(win_name(active()))
+                hit = [w for w in new if win_name(w) == room]
+                if not hit and win_name(active()) == room:          # 이미 열려 있던 창이 앞으로 온 경우
+                    hit = [active()]
+                if hit:
+                    found = hit[0]
+                    break
+            if not found and page <= seen:
+                break                                              # 스크롤해도 새 방이 없음 = 목록 끝
+            seen |= page
+            if not found:
+                focus(main, "KakaoTalk")                           # 다음 6줄로
+                x("xdotool", "mousemove", "--window", main, str(ROW_X), "300", "click", "--repeat", "6", "--delay", "40", "5")
+                time.sleep(0.6)
+    finally:
+        # 찾는 동안 새로 생긴 다른 방 창은 전부 닫는다(늦게 뜬 것까지 보려고 잠깐 기다린 뒤)
+        time.sleep(1.0)
+        left = []
+        for w in _named_new(start, main):
+            if w != found and not close_window(w, room):
+                left.append(win_name(w))
+        if left and found:
+            raise Fail(f"찾다가 연 창을 못 닫음: {left} - 보내지 않음")
+    if not found:
+        raise Fail(f"채팅 목록에서 '{room}' 방을 못 찾음 - 보내지 않음" + (f" (못 닫은 창: {left})" if left else ""))
+    return found
 
 
 def focus(w: str, room: str) -> None:
@@ -162,6 +229,28 @@ def send_text(w: str, room: str, text: str) -> None:
     x("xdotool", "key", "--clearmodifiers", "Return")
 
 
+def prepare(room: str) -> dict:
+    """방 창만 미리 열어 둔다(보내지 않음). 05:30 Media Router가 SSH 'kakao-prepare'로 부른다(11-04)."""
+    lock = open(LOCK, "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        if "KakaoTalk.exe" not in x("pgrep", "-af", "KakaoTalk.exe", check=False):
+            raise Fail("카톡이 실행 중이 아님")
+        try:
+            find_room(room)
+            return {"ok": True, "message": f"'{room}' 창이 이미 열려 있음"}
+        except Fail as e:
+            if "열려 있지 않음" not in str(e):
+                raise
+        open_room(room)
+        find_room(room)
+        return {"ok": True, "message": f"'{room}' 창을 열어 둠"}
+    except Fail as e:
+        return {"ok": False, "message": str(e)}
+    except Exception as e:
+        return {"ok": False, "message": f"알 수 없는 오류: {e}"}
+
+
 def main() -> dict:
     try:
         req = json.loads(sys.stdin.read() or "{}")
@@ -203,5 +292,12 @@ def main() -> dict:
         return {"ok": False, "image": image, "message": f"알 수 없는 오류: {e}"}
 
 
+PREPARE_ROOMS = ("건이네가족",)      # 05:30 미리 열어 둘 방(06:00 날씨). 다른 방은 여기서 안 연다
+
+
 if __name__ == "__main__":
-    print(json.dumps(main(), ensure_ascii=False))
+    if len(sys.argv) >= 3 and sys.argv[1] == "prepare":
+        r = prepare(sys.argv[2]) if sys.argv[2] in PREPARE_ROOMS + ("김창기",) else {"ok": False, "message": "허용 안 된 방"}
+        print(json.dumps(r, ensure_ascii=False))
+    else:
+        print(json.dumps(main(), ensure_ascii=False))

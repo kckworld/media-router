@@ -1538,9 +1538,9 @@ def _kakao_send(room: str, poster: str, text: str) -> dict:
             ["ssh", "-i", RUN_BATCH_SSH_KEY, "-p", RUN_BATCH_SSH_PORT, "-o", "StrictHostKeyChecking=no",
              "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
              f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", "kakao-send"],
-            input=payload, capture_output=True, text=True, timeout=120)
+            input=payload, capture_output=True, text=True, timeout=300)   # 방 창 열기(목록 탐색)까지 넉넉히(11-04)
     except subprocess.TimeoutExpired:
-        return {"ok": False, "message": "카톡 보내기가 2분 안에 안 끝났어요"}
+        return {"ok": False, "message": "카톡 보내기가 5분 안에 안 끝났어요"}
     except Exception as e:
         return {"ok": False, "message": f"NAS 연결 실패: {e}"}
     try:
@@ -2134,6 +2134,39 @@ def _reencode_watch_worker(state: dict) -> bool:
     return True
 
 
+# 카톡 방 창 미리 열기 (2026-11-04): 매일 04:16 kakao-desktop 재시작으로 방 창이 닫히므로 06:00 날씨 전 05:30에
+# '건이네가족' 창을 열어 둔다(보내지 않음). 못 열면 텔레그램으로 알려 06:00 전에 손볼 수 있게.
+KAKAO_PREPARE_AT = (5, 30)
+KAKAO_PREPARE_ROOM = "건이네가족"
+_kakao_prepare_state = {"day": ""}
+
+
+def _kakao_prepare_due(now) -> None:
+    day = now.strftime("%Y-%m-%d")
+    if (now.hour, now.minute) < KAKAO_PREPARE_AT or now.hour >= 6 or _kakao_prepare_state["day"] == day:
+        return
+    _kakao_prepare_state["day"] = day
+    threading.Thread(target=_tg_safe, args=(_kakao_prepare_run, KAKAO_PREPARE_ROOM), daemon=True).start()
+
+
+def _kakao_prepare_run(room: str) -> dict:
+    res = {"ok": False, "message": "SSH 키가 없어요"}
+    if Path(RUN_BATCH_SSH_KEY).exists():
+        try:
+            r = subprocess.run(["ssh", "-i", RUN_BATCH_SSH_KEY, "-p", RUN_BATCH_SSH_PORT, "-o", "StrictHostKeyChecking=no",
+                                "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                                f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", f"kakao-prepare {room}"],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
+            res = json.loads((r.stdout.strip().splitlines() or ["{}"])[-1])
+        except Exception as e:
+            res = {"ok": False, "message": f"실행 실패: {type(e).__name__}"}
+    app.logger.info("카톡 방 미리 열기 %s: %s", room, "성공" if res.get("ok") else "실패")
+    if not res.get("ok"):
+        _tg_notify(f"⚠ 카톡 '{room}' 방 창을 미리 열지 못했어요(06:00 날씨가 텔레그램으로 갈 수 있어요)\n{res.get('message', '')}\n"
+                   "kakao-desktop 화면에서 카톡을 띄우고 그 방을 열어 두면 돼요.")
+    return res
+
+
 def _ass2srt_step() -> None:
     """밤에 1분마다 호스트의 ass2srt_bulk.py step (내장 ASS → SRT 일괄, 꺼져 있으면 호스트에서 바로 끝남, 11-02)"""
     if not Path(RUN_BATCH_SSH_KEY).exists():
@@ -2152,6 +2185,7 @@ def _reencode_scheduler_loop() -> None:
     while True:
         time.sleep(60)
         try:
+            _kakao_prepare_due(datetime.now(APP_TZ))          # 재인코딩 상태와 상관없이(11-04)
             if not reencode_ctl.available():
                 continue
             if reencode_ctl.needs_collect():

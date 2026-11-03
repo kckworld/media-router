@@ -61,6 +61,28 @@ def test_failure_message_passed(ik, monkeypatch):
     assert r.status_code == 502 and r.get_json() == {"ok": False, "message": "'건이네가족' 채팅방 창이 열려 있지 않음"}
 
 
+def test_prepare_at_0530_once_and_alerts_on_failure(monkeypatch):
+    """05:30에 하루 한 번 '건이네가족' 창 미리 열기, 실패면 텔레그램(11-04)"""
+    from datetime import datetime
+    runs, sent = [], []
+    monkeypatch.setitem(web_admin._kakao_prepare_state, "day", "")
+    monkeypatch.setattr(web_admin, "_tg_safe", lambda fn, *a: fn(*a))
+    monkeypatch.setattr(web_admin.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda s: target(*args)})())
+    monkeypatch.setattr(web_admin, "_kakao_prepare_run", lambda room: runs.append(room))
+    t = lambda h, m: datetime(2026, 11, 4, h, m, tzinfo=web_admin.APP_TZ)
+    web_admin._kakao_prepare_due(t(5, 29))
+    web_admin._kakao_prepare_due(t(5, 30))
+    web_admin._kakao_prepare_due(t(5, 31))
+    assert runs == ["건이네가족"]                                               # 하루 한 번
+    web_admin._kakao_prepare_due(t(6, 10))
+    assert runs == ["건이네가족"]
+    monkeypatch.undo()
+    monkeypatch.setattr(web_admin, "RUN_BATCH_SSH_KEY", "/없는/키")
+    monkeypatch.setattr(web_admin, "_tg_notify", lambda text, *a, **k: sent.append(text) or True)
+    res = web_admin._kakao_prepare_run("건이네가족")
+    assert not res["ok"] and sent and "미리 열지 못했어요" in sent[0]
+
+
 def test_non_ascii_inputs_do_not_crash(ik, monkeypatch, tmp_path):
     """한글 키·코드를 넣어도 500이 아니라 거절(11-03, hmac.compare_digest는 한글 str을 못 비교)"""
     c, calls, key, _ = ik

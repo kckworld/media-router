@@ -37,7 +37,7 @@ def test_write_list_delete(dy):
     assert oct(f.stat().st_mode & 0o777) == "0o644" and oct(base.stat().st_mode & 0o777) == "0o755"
     # 텔레그램 봇 메모처럼 src 없는 줄이 섞여 있어도 읽고, 지우기는 web 것만
     with f.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"id": "tg1", "time": day + "T08:00:00+09:00", "text": "봇 메모"}, ensure_ascii=False) + "\n")
+        fh.write(json.dumps({"id": "tg1", "time": day + "T00:00:00+09:00", "text": "봇 메모"}, ensure_ascii=False) + "\n")
     items = c.get(f"/api/diary?date={day}").get_json()["items"]
     assert [i["text"] for i in items] == ["봇 메모", "점심에 공원 산책\n날씨 좋음"]          # 시각 순
     assert c.post("/api/diary/delete", json={"date": day, "id": "tg1"}).status_code == 404
@@ -69,7 +69,7 @@ def test_telegram_memos_merged_read_only(dy):
     day = r["item"]["time"][:10]
     tg = base / f"{day}.tg.jsonl"
     tg.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in [
-        {"time": day + "T07:00:00+09:00", "text": "봇 아침", "src": "telegram"},
+        {"time": day + "T00:00:00+09:00", "text": "봇 아침", "src": "telegram"},
         {"time": day + "T23:59:00+09:00", "lat": 37.5, "lon": 127.0, "src": "telegram"},
         {"time": day + "T09:00:00+09:00", "src": "telegram"}]) + "\n", encoding="utf-8")
     before = tg.read_text(encoding="utf-8")
