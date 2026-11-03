@@ -14,6 +14,23 @@ if [ "${SSH_ORIGINAL_COMMAND:-}" = "ass2srt-step" ]; then
     nice -n 19 ionice -c3 python3 /volume1/docker/media-router/ass2srt_bulk.py step >/dev/null 2>&1 || true
     exit 0
 fi
+# 가계부 대조 다시 비교 (2026-11-03): Media Router [다시 비교] 버튼이 'card-recon YYYY-MM'을 보낸다.
+# 호스트의 card-recon/recon.py(팀장 담당)만 돌린다. 금액·가맹점이 로그에 남지 않게 출력은 버리고 결과만 돌려준다.
+case "${SSH_ORIGINAL_COMMAND:-}" in "card-recon "*)
+    cr_month="${SSH_ORIGINAL_COMMAND#card-recon }"
+    if ! printf '%s' "$cr_month" | grep -Eqx '[0-9]{4}-[0-9]{2}'; then
+        echo '{"ok": false, "message": "달 형식이 잘못됨"}'
+        exit 0
+    fi
+    cr_rc=0
+    timeout 900 python3 /volume1/docker/card-recon/recon.py run "$cr_month" --no-send >/dev/null 2>&1 || cr_rc=$?
+    if [ "$cr_rc" -eq 0 ]; then
+        echo '{"ok": true}'
+    else
+        echo "{\"ok\": false, \"message\": \"recon.py 실패(종료코드 $cr_rc)\"}"
+    fi
+    exit 0 ;;
+esac
 LOGDIR="/volume1/docker/media-router/logs"
 mkdir -p "$LOGDIR"
 LOGFILE="$LOGDIR/run_all.$(date +%F).log"

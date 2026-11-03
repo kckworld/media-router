@@ -720,7 +720,8 @@ def authed(req):
 # 보기 전용 계정에 숨기는 화면 (가족 Jellyfin·Plex 계정명, 서버 경로·연결 정보)
 VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users", "/skills", "/api/skills",
                           "/requests", "/api/requests",  # 요청 목록엔 단톡방 사람 이름이 있다
-                          "/diary", "/api/diary")          # 일기 메모(11-02)는 관리자만
+                          "/diary", "/api/diary",          # 일기 메모(11-02)는 관리자만
+                          "/recon", "/api/recon")          # 가계부 대조(11-03): 금융정보
 READONLY_MESSAGE = "읽기 전용 계정이라 바꿀 수 없어요."
 
 
@@ -1608,6 +1609,84 @@ def api_surveys_merge():
     if not item:
         return jsonify({"ok": False, "error": "답을 찾지 못했어요. 새로고침해 주세요."}), 404
     return jsonify({"ok": True, "item": item})
+
+
+# ── 가계부 대조 (2026-11-03): 카드 명세서 ↔ 편한가계부 결과(data/card_recon/YYYY-MM.json, 팀장의 card-recon/recon.py가 만듦)
+# 관리자만(보기 전용·공개 주소 불가). [다시 비교]는 호스트에서 recon.py를 돌린다(run_all.sh 강제 명령 'card-recon YYYY-MM').
+# 금액·가맹점은 로그에 남기지 않는다.
+RECON_DIR = DATA_DIR / "card_recon"
+_RECON_MONTH = re.compile(r"^\d{4}-\d{2}$")
+_recon_run = {"running": False, "month": "", "started": 0, "finished": 0, "ok": None, "message": ""}
+_recon_lock = threading.Lock()
+
+
+def _recon_months() -> list[str]:
+    try:
+        return sorted((p.stem for p in RECON_DIR.glob("*.json") if _RECON_MONTH.match(p.stem)), reverse=True)
+    except OSError:
+        return []
+
+
+def _recon_host(month: str) -> None:
+    ok, msg = False, ""
+    try:
+        r = subprocess.run(["ssh", "-i", RUN_BATCH_SSH_KEY, "-p", RUN_BATCH_SSH_PORT, "-o", "StrictHostKeyChecking=no",
+                            "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                            f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", f"card-recon {month}"],
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=960)
+        res = json.loads((r.stdout.strip().splitlines() or ["{}"])[-1])
+        ok, msg = bool(res.get("ok")), str(res.get("message") or "")
+    except subprocess.TimeoutExpired:
+        msg = "16분 안에 안 끝났어요"
+    except Exception as e:
+        msg = f"실행 실패: {type(e).__name__}"
+    with _recon_lock:
+        _recon_run.update(running=False, finished=int(time.time()), ok=ok, message=msg)
+    app.logger.info("가계부 다시 비교 %s: %s", month, "완료" if ok else f"실패 {msg}")
+
+
+@app.route("/recon", methods=["GET"])
+def recon_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("recon.html", authed=True, months=_recon_months())
+
+
+@app.route("/api/recon", methods=["GET"])
+def api_recon():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    months = _recon_months()
+    month = request.args.get("month") or (months[0] if months else "")
+    data = None
+    if month in months:
+        try:
+            data = json.loads((RECON_DIR / f"{month}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = None
+    with _recon_lock:
+        run = dict(_recon_run)
+    return jsonify({"ok": True, "months": months, "month": month, "data": data, "run": run})
+
+
+@app.route("/api/recon/run", methods=["POST"])
+def api_recon_run():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    month = str((request.get_json(silent=True) or {}).get("month") or "")
+    if not _RECON_MONTH.match(month):
+        return jsonify({"ok": False, "error": "달이 이상해요."}), 400
+    if not Path(RUN_BATCH_SSH_KEY).exists():
+        return jsonify({"ok": False, "error": "SSH 키가 없어요."}), 500
+    with _recon_lock:
+        if _recon_run["running"]:
+            return jsonify({"ok": False, "error": f"{_recon_run['month']} 비교가 이미 돌고 있어요."}), 409
+        _recon_run.update(running=True, month=month, started=int(time.time()), finished=0, ok=None, message="")
+    threading.Thread(target=_recon_host, args=(month,), daemon=True).start()
+    return jsonify({"ok": True})
 
 
 # ── 일기 메모 (2026-11-02): 사진 일기(photo-diary, 팀장 담당)용 메모를 웹에서도. 관리자만 ──

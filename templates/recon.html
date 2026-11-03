@@ -1,0 +1,146 @@
+{% set active_page = 'recon' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .rc-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .rc-bar select { min-width: 9em; }
+    .rc-month { font-size: 18px; font-weight: 700; color: var(--text); }
+    .rc-warn { background: var(--danger-light, #fde8e7); color: var(--danger, #b3261e); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+    .rc-warn b { display: block; margin-bottom: 6px; }
+    .rc-cards { display: grid; gap: 10px; }
+    .rc-card { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .rc-card > summary { list-style: none; cursor: pointer; padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; }
+    .rc-card > summary::-webkit-details-marker { display: none; }
+    .rc-name { font-weight: 700; color: var(--text); }
+    .rc-state { font-size: 13px; font-weight: 700; white-space: nowrap; }
+    .rc-state.ok { color: var(--success, #188038); }
+    .rc-state.diff, .rc-state.error { color: var(--danger, #b3261e); }
+    .rc-state.no_statement { color: var(--muted); }
+    .rc-nums { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; font-size: 13px; }
+    .rc-nums span { color: var(--muted); display: block; font-size: 12px; }
+    .rc-nums b { font-variant-numeric: tabular-nums; color: var(--text); }
+    .rc-nums .bad b { color: var(--danger, #b3261e); }
+    .rc-body { padding: 0 14px 12px; font-size: 13px; }
+    .rc-body h4 { margin: 10px 0 4px; font-size: 13px; }
+    .rc-list { list-style: none; margin: 0; padding: 0; }
+    .rc-list li { display: grid; grid-template-columns: 4.2em 1fr auto; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+    .rc-list li:last-child { border-bottom: 0; }
+    .rc-list .amt { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    .rc-list .sub { color: var(--muted); font-size: 12px; }
+    .rc-ex > summary { cursor: pointer; color: var(--muted); margin-top: 10px; }
+    .rc-foot { color: var(--muted); font-size: 12px; margin-top: 10px; }
+    .rc-empty { color: var(--muted); padding: 12px 2px; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="rc-bar">
+        <button type="button" class="btn small" id="prevM" aria-label="이전 달">‹</button>
+        <select id="monthSel" aria-label="사용한 달">
+          {% for m in months %}<option value="{{ m }}">{{ m[:4] }}년 {{ m[5:]|int }}월 사용분</option>{% endfor %}
+        </select>
+        <button type="button" class="btn small" id="nextM" aria-label="다음 달">›</button>
+        <button type="button" class="btn small primary" id="runBtn" data-write>다시 비교</button>
+        <span class="hint" id="runState" role="status" aria-live="polite"></span>
+      </div>
+      <div class="hint" style="margin-top:8px;">가계부를 고친 뒤 편한가계부 앱에서 구글 드라이브 백업을 한 번 하고 누르세요(가장 새 백업으로 비교해요). 1~5분 걸려요.</div>
+    </div>
+
+    <div class="card">
+      <div id="rcWarn"></div>
+      <div class="rc-cards" id="rcCards"><div class="rc-empty">불러오는 중...</div></div>
+      <div class="rc-foot" id="rcFoot"></div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var MONTHS = {{ months | tojson }};
+    var month = MONTHS[0] || "";
+    var STATE = { ok: "✅ 맞음", diff: "⚠️ 차이", no_statement: "⏳ 명세서 아직", error: "❌ 오류" };
+    var pollTimer = null;
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function won(n) { return (n == null || n === "") ? "-" : Number(n).toLocaleString("ko-KR") + "원"; }
+    function md(d) { var m = /(\d{4})-?(\d{2})-?(\d{2})/.exec(d || ""); return m ? (+m[2]) + "/" + (+m[3]) : esc(d); }
+    function rows(list, kind) {
+      return '<ul class="rc-list">' + list.map(function(x) {
+        var who = kind === "st" ? (x.merchant || "") : (x.memo || x.merchant || "");
+        var src = kind === "st" ? (x.card || "") : (x.asset || "");
+        var amt = kind === "st" ? x.pay : x.amt;
+        return '<li><span>' + md(x.date) + '</span><span>' + esc(who) + (src ? '<div class="sub">' + esc(src) + '</div>' : '') +
+          '</span><span class="amt">' + won(amt) + '</span></li>';
+      }).join("") + '</ul>';
+    }
+    function render(d) {
+      var warn = document.getElementById("rcWarn"), cards = document.getElementById("rcCards"), foot = document.getElementById("rcFoot");
+      if (!d) { warn.innerHTML = ""; cards.innerHTML = '<div class="rc-empty">이 달 대조 결과가 없어요.</div>'; foot.textContent = ""; return; }
+      var cc = d.check_card_in_ledger || [];
+      warn.innerHTML = cc.length ? '<div class="rc-warn" role="alert"><b>가계부에 체크카드 건이 있어요 — 지워 주세요 (' + cc.length + '건)</b>' + rows(cc, "ld") + '</div>' : "";
+      cards.innerHTML = (d.groups || []).map(function(g) {
+        var st = g.statement_only || [], ld = g.ledger_only || [], ex = g.excluded || [];
+        var hasDiff = g.diff && Number(g.diff) !== 0;
+        var body = "";
+        if (g.status === "error") body += '<p>' + esc(g.error || "오류") + '</p>';
+        if (st.length) body += '<h4>명세서에만 있음 ' + st.length + '건</h4>' + rows(st, "st");
+        if (ld.length) body += '<h4>가계부에만 있음 ' + ld.length + '건</h4>' + rows(ld, "ld");
+        if (g.ledger_by_asset && Object.keys(g.ledger_by_asset).length) {
+          body += '<h4>가계부 자산별</h4><ul class="rc-list">' + Object.keys(g.ledger_by_asset).map(function(k) {
+            return '<li><span></span><span>' + esc(k) + '</span><span class="amt">' + won(g.ledger_by_asset[k]) + '</span></li>'; }).join("") + '</ul>';
+        }
+        if (ex.length) {
+          var sum = ex.reduce(function(a, x) { return a + (Number(x.pay) || 0); }, 0);
+          body += '<details class="rc-ex"><summary>제외 ' + ex.length + '건 합계 ' + won(sum) + ' (하이패스·해외·체크카드)</summary>' +
+            rows(ex.map(function(x) { return Object.assign({}, x, { card: (x.card || "") + (x.excluded ? " · " + x.excluded : "") }); }), "st") + '</details>';
+        }
+        if (g.statement) body += '<div class="rc-foot">명세서: ' + esc(g.statement) + '</div>';
+        return '<details class="rc-card"' + (g.status === "diff" || g.status === "error" ? " open" : "") + '><summary>' +
+          '<span class="rc-name">' + esc(g.name) + '</span><span class="rc-state ' + esc(g.status) + '">' + (STATE[g.status] || esc(g.status)) + '</span>' +
+          '<div class="rc-nums"><div><span>출금액</span><b>' + won(g.compare_total) + '</b></div><div><span>가계부</span><b>' + won(g.ledger_total) + '</b></div>' +
+          '<div class="' + (hasDiff ? "bad" : "") + '"><span>차이</span><b>' + (g.diff == null ? "-" : won(g.diff)) + '</b></div></div></summary>' +
+          '<div class="rc-body">' + (body || '<p class="rc-foot">더 볼 내용이 없어요.</p>') + '</div></details>';
+      }).join("") || '<div class="rc-empty">카드가 없어요.</div>';
+      foot.textContent = "기준 가계부 백업: " + (d.mmbak_time || "-") + " · 비교한 때: " + (d.made_at || "-");
+    }
+    function showRun(r) {
+      var s = document.getElementById("runState"), b = document.getElementById("runBtn");
+      if (r.running) { s.textContent = "⏳ " + r.month + " 비교 중… (1~5분)"; b.disabled = true; return true; }
+      b.disabled = false;
+      if (r.finished && r.ok === true) s.textContent = "✅ " + r.month + " 다시 비교 끝";
+      else if (r.finished && r.ok === false) s.textContent = "❌ 다시 비교 실패: " + (r.message || "");
+      else s.textContent = "";
+      return false;
+    }
+    function load() {
+      fetch("/api/recon?month=" + encodeURIComponent(month), { cache: "no-store" }).then(mrJson).then(function(res) {
+        if (!res.ok || !res.data.ok) return;
+        if (res.data.months.join() !== MONTHS.join()) {
+          MONTHS = res.data.months;
+          document.getElementById("monthSel").innerHTML = MONTHS.map(function(m) { return '<option value="' + m + '">' + m.slice(0, 4) + '년 ' + (+m.slice(5)) + '월 사용분</option>'; }).join("");
+        }
+        document.getElementById("monthSel").value = month;
+        render(res.data.data);
+        var running = showRun(res.data.run);
+        clearTimeout(pollTimer);
+        if (running) pollTimer = setTimeout(load, 5000);
+      }).catch(function() {});
+    }
+    function go(step) {
+      var i = MONTHS.indexOf(month) - step;            // MONTHS는 최근 달이 앞
+      if (i >= 0 && i < MONTHS.length) { month = MONTHS[i]; load(); }
+    }
+    document.getElementById("monthSel").addEventListener("change", function(e) { month = e.target.value; load(); });
+    document.getElementById("prevM").onclick = function() { go(-1); };
+    document.getElementById("nextM").onclick = function() { go(1); };
+    document.getElementById("runBtn").onclick = function() {
+      if (!month) return;
+      fetch("/api/recon/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month: month }) })
+        .then(mrJson).then(function(res) {
+          if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "시작하지 못했어요", "error"); return; }
+          showToast(month + " 다시 비교를 시작했어요.", "success"); load();
+        });
+    };
+    load();
+  </script>
+{% endblock %}
