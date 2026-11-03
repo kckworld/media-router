@@ -21,8 +21,9 @@ def dy(monkeypatch, tmp_path):
 
 def test_write_list_delete(dy):
     c, base = dy
-    html = c.get("/diary").get_data(as_text=True)
-    assert "일기 메모" in html and 'id="writeBtn"' in html and 'id="pageOrder"' in html      # MR 틀 안(생활 그룹)
+    assert c.get("/diary").headers["Location"].endswith("/journal?tab=memo")              # MR 안에선 생활 > 일기 [메모]
+    html = c.get("/journal?tab=memo").get_data(as_text=True)
+    assert 'id="writeBtn"' in html and 'id="pageOrder"' in html
     app_html = c.get("/diary?app=1").get_data(as_text=True)
     assert "/static/diary.webmanifest" in app_html and 'id="writeBtn"' in app_html and "pageOrder" not in app_html
     assert c.post("/api/diary", json={"text": "  "}).status_code == 400
@@ -78,7 +79,7 @@ def test_telegram_memos_merged_read_only(dy):
     assert all("id" not in i for i in items if i["src"] == "telegram")
     c.post("/api/diary", json={"text": "또 웹"})
     assert tg.read_text(encoding="utf-8") == before                    # MR은 .tg.jsonl을 안 씀
-    assert "📍 위치" in c.get("/diary").get_data(as_text=True)
+    assert "📍 위치" in c.get("/journal?tab=memo").get_data(as_text=True)
 
 
 def test_life_group_menu_and_swipe_order(dy, monkeypatch):
@@ -86,14 +87,13 @@ def test_life_group_menu_and_swipe_order(dy, monkeypatch):
     import re
     c, base = dy
     html = c.get("/downloads").get_data(as_text=True)
-    assert 'class="icon-btn diary-btn" href="/diary"' in html                 # 상단 ✎ 일기 버튼은 그대로
+    assert 'class="icon-btn diary-btn" href="/journal"' in html               # 상단 ✎ 일기 버튼 → 생활 > 일기
     order = re.findall(r'href="([^"]+)"', re.search(r'<nav id="pageOrder".*?</nav>', html, re.S).group(0))
-    assert order.index("/encode_log") + 1 == order.index("/recon") and order.index("/recon") + 1 == order.index("/diary")
-    assert order.index("/diary") + 1 == order.index("/settings")
+    assert order.index("/encode_log") + 1 == order.index("/recon") and order.index("/recon") + 1 == order.index("/journal")
+    assert order.index("/journal") + 1 == order.index("/settings") and "/diary" not in order
     nav = re.search(r'<nav class="bottomnav".*?</nav>', html, re.S).group(0)
     assert ">생활<" in nav.replace("</svg>", ">") and 'href="/recon"' in nav
-    diary_html = c.get("/diary").get_data(as_text=True)
-    assert "tab-swipe.js" in diary_html                                        # 일기 화면에서도 스와이프 됨
+    assert "tab-swipe.js" in c.get("/journal").get_data(as_text=True)          # 일기 화면에서도 스와이프 됨
     monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
     v = c.get("/downloads").get_data(as_text=True)
     assert "diary-btn" not in v and 'href="/recon"' not in v and ">생활<" not in v.replace("</svg>", ">")   # 보기 전용엔 생활 그룹 없음

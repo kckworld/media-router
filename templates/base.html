@@ -23,7 +23,7 @@
     {'key': 'encode', 'label': '인코딩', 'href': '/encode_log'}]},
   {'key': 'life', 'label': '생활', 'pages': [
     {'key': 'recon', 'label': '가계부', 'href': '/recon', 'admin_only': True},
-    {'key': 'diary', 'label': '일기 메모', 'href': '/diary', 'admin_only': True}]},
+    {'key': 'journal', 'label': '일기', 'href': '/journal', 'admin_only': True}]},
   {'key': 'settings', 'label': '설정', 'pages': [
     {'key': 'settings', 'label': '연동·경로', 'href': '/settings', 'admin_only': True},
     {'key': 'users', 'label': '사용자 매핑', 'href': '/users', 'admin_only': True},
@@ -110,7 +110,7 @@
           {% block header_actions %}{% endblock %}
           {%- if not viewer %}
           {#- 일기 메모(11-03): 메뉴 탭에 넣으면 스와이프 순서에 끼어 /diary(단독 화면)에서 막혀서 상단 바에 따로 둔다 -#}
-          <a class="icon-btn diary-btn" href="/diary" aria-label="일기 메모 쓰기">{{ icon('diary', 18) }}<span class="diary-btn-text">일기</span></a>
+          <a class="icon-btn diary-btn" href="/journal" aria-label="일기">{{ icon('diary', 18) }}<span class="diary-btn-text">일기</span></a>
           {%- endif %}
           <button type="button" class="icon-btn theme-btn" id="themeBtn" onclick="cycleTheme()" aria-label="화면 테마 바꾸기"></button>
           <button type="button" class="pc-chip" id="pcChip" onclick="openPcSheet()" aria-haspopup="dialog" aria-label="PC 제어 열기">

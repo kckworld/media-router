@@ -721,7 +721,8 @@ def authed(req):
 VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users", "/skills", "/api/skills",
                           "/requests", "/api/requests",  # 요청 목록엔 단톡방 사람 이름이 있다
                           "/diary", "/api/diary",          # 일기 메모(11-02)는 관리자만
-                          "/recon", "/api/recon")          # 가계부 대조(11-03): 금융정보
+                          "/recon", "/api/recon",          # 가계부 대조(11-03): 금융정보
+                          "/journal", "/api/journal")      # 생활 > 일기(11-03): 가족 일기
 READONLY_MESSAGE = "읽기 전용 계정이라 바꿀 수 없어요."
 
 
@@ -1699,9 +1700,51 @@ def diary_page():
     auth = authed(request)
     if auth is not True:
         return auth
-    # 홈 화면 앱(manifest start_url ?app=1)은 단독 화면, MR 메뉴(생활 > 일기 메모)는 공통 틀 안(스와이프 이어짐, 11-03)
-    tpl = "diary.html" if request.args.get("app") else "diary_tab.html"
-    return render_template(tpl, authed=True, today=datetime.now(APP_TZ).strftime("%Y-%m-%d"), max_len=diary_memos.MAX_LEN)
+    # 홈 화면 앱(manifest start_url ?app=1)은 단독 화면. MR 안에서는 생활 > 일기의 [메모] 탭으로(11-03)
+    if not request.args.get("app"):
+        return redirect("/journal?tab=memo")
+    return render_template("diary.html", today=datetime.now(APP_TZ).strftime("%Y-%m-%d"), max_len=diary_memos.MAX_LEN)
+
+
+# ── 생활 > 일기 (2026-11-03): 사진 일기 초안 보기·복사·고쳐 저장(final.json). 초안·리뷰·교훈은 팀장 photo-diary가 씀 ──
+import diary_drafts
+DRAFT_DIR = DATA_DIR / "diary_drafts"
+
+
+@app.route("/journal", methods=["GET"])
+def journal_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("journal.html", authed=True, tab="memo" if request.args.get("tab") == "memo" else "diary",
+                           dates=diary_drafts.dates(DRAFT_DIR),
+                           today=datetime.now(APP_TZ).strftime("%Y-%m-%d"), max_len=diary_memos.MAX_LEN)
+
+
+@app.route("/api/journal", methods=["GET"])
+def api_journal():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    ds = diary_drafts.dates(DRAFT_DIR)
+    day = request.args.get("date") or (ds[0] if ds else "")
+    if day not in ds:
+        return jsonify({"ok": True, "dates": ds, "date": "", "draft": None, "final": None, "review": None,
+                        "lessons": diary_drafts.load(DRAFT_DIR, "0000-00-00")["lessons"]})
+    return jsonify(dict(diary_drafts.load(DRAFT_DIR, day), ok=True, dates=ds))
+
+
+@app.route("/api/journal/save", methods=["POST"])
+def api_journal_save():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    body = request.get_json(silent=True) or {}
+    item, err = diary_drafts.save_final(DRAFT_DIR, str(body.get("date") or ""), str(body.get("title") or ""),
+                                        str(body.get("body") or ""), datetime.now(APP_TZ))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "final": item})
 
 
 @app.route("/api/diary", methods=["GET", "POST"])

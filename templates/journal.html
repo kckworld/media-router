@@ -1,0 +1,164 @@
+{% set active_page = 'journal' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .jn-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+    .jn-tabs a { padding: 8px 18px; border-radius: 999px; border: 1px solid var(--line); text-decoration: none; color: var(--text); font-weight: 600; }
+    .jn-tabs a.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .jn-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .jn-kind { font-size: 13px; font-weight: 700; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+    .jn-kind.final { background: var(--accent-soft); color: var(--accent); }
+    .jn-field { margin-top: 14px; }
+    .jn-field label { display: flex; align-items: center; justify-content: space-between; font-weight: 700; margin-bottom: 6px; color: var(--text); }
+    .jn-field input, .jn-field textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 17px; line-height: 1.6;
+      color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+    .jn-field textarea { min-height: 360px; resize: vertical; }
+    .jn-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+    .jn-status { font-weight: 700; font-size: 14px; }
+    .jn-cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+    .jn-cmp > div { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--surface-2); }
+    .jn-cmp h4 { margin: 0 0 6px; font-size: 13px; color: var(--muted); }
+    .jn-cmp pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 14px; line-height: 1.6; color: var(--text); }
+    @media (max-width: 760px) { .jn-cmp { grid-template-columns: 1fr; } }
+    .jn-review { margin-top: 14px; border-left: 4px solid var(--accent); padding: 8px 12px; background: var(--accent-soft); border-radius: 6px; }
+    .jn-review b { display: block; margin-bottom: 4px; }
+    .jn-review ul, .jn-fold ul { margin: 4px 0 0; padding-left: 20px; }
+    .jn-fold { margin-top: 12px; }
+    .jn-fold summary { cursor: pointer; font-weight: 600; color: var(--text); }
+    .jn-fold li { margin: 3px 0; }
+    .jn-empty { color: var(--muted); padding: 12px 2px; }
+    .jn-muted { color: var(--muted); font-size: 13px; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <nav class="jn-tabs" aria-label="일기 화면">
+      <a href="/journal" class="{{ 'on' if tab == 'diary' else '' }}"{% if tab == 'diary' %} aria-current="page"{% endif %}>일기</a>
+      <a href="/journal?tab=memo" class="{{ 'on' if tab == 'memo' else '' }}"{% if tab == 'memo' %} aria-current="page"{% endif %}>메모</a>
+    </nav>
+
+    {% if tab == 'memo' %}
+    <div class="card">
+      {% set autofocus = False %}
+      {% include "_diary_body.html" %}
+    </div>
+    {% else %}
+    <div class="card">
+      <div class="jn-bar">
+        <button type="button" class="btn small" id="prevD" aria-label="이전 날">‹</button>
+        <select id="dateSel" aria-label="날짜">
+          {% for d in dates %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+        </select>
+        <button type="button" class="btn small" id="nextD" aria-label="다음 날">›</button>
+        <span class="jn-kind" id="kind"></span>
+      </div>
+      <div id="jnBody">
+        <div class="jn-field">
+          <label for="title">제목 <button type="button" class="btn small" data-copy="title">제목 복사</button></label>
+          <input type="text" id="title" maxlength="200">
+        </div>
+        <div class="jn-field">
+          <label for="body">본문 <button type="button" class="btn small" data-copy="body">본문 복사</button></label>
+          <textarea id="body" maxlength="20000"></textarea>
+        </div>
+        <div class="jn-actions">
+          <button type="button" class="btn primary" id="saveBtn" data-write>저장</button>
+          <button type="button" class="btn small" id="cmpBtn" aria-expanded="false">초안 보기</button>
+          <span class="jn-status" id="status" role="status" aria-live="polite"></span>
+        </div>
+        <div class="jn-cmp" id="cmp" hidden>
+          <div><h4>처음 초안</h4><pre id="cmpDraft"></pre></div>
+          <div><h4>내가 고친 글</h4><pre id="cmpFinal"></pre></div>
+        </div>
+        <div id="review"></div>
+        <details class="jn-fold" id="photosFold"><summary>사진 참고 <span class="jn-muted" id="photoCount"></span></summary><ul id="photos"></ul></details>
+        <details class="jn-fold"><summary>쌓인 교훈 <span class="jn-muted" id="lessonCount"></span></summary><ul id="lessons"></ul></details>
+      </div>
+      <div class="jn-empty" id="jnEmpty" hidden>아직 일기 초안이 없어요. 밤에 사진 일기가 만들어지면 여기 나와요.</div>
+    </div>
+    {% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if tab != 'memo' %}
+  <script>
+    var DATES = {{ dates | tojson }};
+    var day = DATES[0] || "", cur = null, pollT = null, pollUntil = 0;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function copyText(text, what) {
+      function done() { showToast(what + "을 복사했어요.", "success"); }
+      if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done, fallback); } else { fallback(); }
+      function fallback() {
+        var t = document.createElement("textarea"); t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+        document.body.appendChild(t); t.select();
+        try { document.execCommand("copy"); done(); } catch (e) { showToast("복사하지 못했어요", "error"); }
+        document.body.removeChild(t);
+      }
+    }
+    document.querySelectorAll("[data-copy]").forEach(function(b) {
+      b.onclick = function() { var k = b.dataset.copy; copyText($(k).value, k === "title" ? "제목" : "본문"); };
+    });
+    function render(d) {
+      cur = d;
+      var has = !!d.draft;
+      $("jnBody").hidden = !has; $("jnEmpty").hidden = has;
+      if (!has) return;
+      var src = d.final || d.draft;
+      $("title").value = src.title || ""; $("body").value = src.body || "";
+      $("kind").textContent = d.final ? "내가 고친 글 · " + (d.final.saved_at || "").replace("T", " ").slice(0, 16) : "초안 · " + (d.draft.made_at || "").replace("T", " ").slice(0, 16);
+      $("kind").className = "jn-kind" + (d.final ? " final" : "");
+      $("cmpDraft").textContent = (d.draft.title || "") + "\n\n" + (d.draft.body || "");
+      $("cmpFinal").textContent = d.final ? (d.final.title || "") + "\n\n" + (d.final.body || "") : "(아직 고쳐 저장한 글이 없어요)";
+      var rv = $("review");
+      if (d.review && (d.review.points || []).length) {
+        rv.innerHTML = '<div class="jn-review"><b>이번에 잘못 판단한 점</b><ul>' + d.review.points.map(function(p) { return "<li>" + esc(p) + "</li>"; }).join("") + "</ul></div>";
+      } else if (d.final && !d.review) {
+        rv.innerHTML = '<div class="jn-review"><b>학습 중… 1~2분</b><span class="jn-muted">고친 점을 살펴보고 있어요.</span></div>';
+      } else rv.innerHTML = "";
+      var ph = d.draft.photos || [];
+      $("photoCount").textContent = ph.length + "장";
+      $("photos").innerHTML = ph.map(function(p) {
+        return "<li>" + esc(p.no) + "번 · " + esc((p.time || "").slice(11, 16) || p.time) + (p.who ? " · " + esc(p.who) : "") + (p.place ? " · " + esc(p.place) : "") + "</li>";
+      }).join("") || '<li class="jn-muted">없음</li>';
+      var rules = (d.lessons && d.lessons.rules) || [];
+      $("lessonCount").textContent = rules.length + "개";
+      $("lessons").innerHTML = rules.map(function(r) { return "<li>" + esc(r.text) + (r.count > 1 ? ' <span class="jn-muted">×' + r.count + "</span>" : "") + "</li>"; }).join("") || '<li class="jn-muted">아직 없어요</li>';
+      // 저장 뒤 리뷰를 기다리는 중이면 10초마다 다시 본다(최대 3분)
+      clearTimeout(pollT);
+      if (d.final && !d.review && Date.now() < pollUntil) pollT = setTimeout(function() { load(true); }, 10000);
+    }
+    function load(keepText) {
+      fetch("/api/journal?date=" + encodeURIComponent(day), { cache: "no-store" }).then(mrJson).then(function(res) {
+        if (!res.ok || !res.data.ok) return;
+        if (keepText && cur && cur.final && res.data.final && res.data.final.saved_at === cur.final.saved_at) {
+          var t = $("title").value, b = $("body").value; render(res.data); $("title").value = t; $("body").value = b;   // 고치던 글은 그대로
+        } else render(res.data);
+        $("dateSel").value = day;
+      });
+    }
+    function go(step) { var i = DATES.indexOf(day) - step; if (i >= 0 && i < DATES.length) { day = DATES[i]; load(); } }
+    $("dateSel").onchange = function(e) { day = e.target.value; load(); };
+    $("prevD").onclick = function() { go(-1); };
+    $("nextD").onclick = function() { go(1); };
+    $("cmpBtn").onclick = function() {
+      var open = $("cmp").hidden; $("cmp").hidden = !open; this.setAttribute("aria-expanded", open ? "true" : "false");
+      this.textContent = open ? "초안 닫기" : "초안 보기";
+    };
+    $("saveBtn").onclick = function() {
+      var btn = this; btn.disabled = true; $("status").textContent = "저장하는 중…";
+      fetch("/api/journal/save", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: day, title: $("title").value, body: $("body").value }) })
+        .then(mrJson).then(function(res) {
+          btn.disabled = false;
+          if (!res.ok || !res.data.ok) { $("status").textContent = ""; showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); return; }
+          $("status").textContent = "✅ 저장했어요";
+          setTimeout(function() { $("status").textContent = ""; }, 4000);
+          pollUntil = Date.now() + 180000; load();
+        }).catch(function() { btn.disabled = false; $("status").textContent = ""; showToast("저장하지 못했어요", "error"); });
+    };
+    if (day) load(); else render({});
+  </script>
+{% endif %}
+{% endblock %}
