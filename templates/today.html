@@ -38,6 +38,9 @@
       .check-row { flex-wrap: wrap; padding-right: 12px; }
       .check-side { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; padding: 0 0 0 44px; }
     }
+    .day-nav { display: flex; align-items: center; gap: 8px; }
+    .day-nav p { margin: 0; }
+    .day-nav .btn { min-width: 40px; justify-content: center; font-size: 18px; }
   </style>
 {% endblock %}
 
@@ -45,14 +48,19 @@
   {% macro pattern_text(r) -%}
   {{ r.pattern }}{% if r.pattern2 %} + {{ r.pattern2 }}{% endif %}{% if r.pattern_or %} 또는 {{ r.pattern_or }}{% if r.pattern2_or %} + {{ r.pattern2_or }}{% endif %}{% endif %}
   {%- endmacro %}
-  {% set rel_label = {'two': '그저께', 'yest': '어제', 'today': '오늘'} %}
+  {% set rel_label = rel_names %}{# 실제 오늘 기준 이름: 새벽엔 기준일이 어제라 '어제·그저께·3일 전' (11-03) #}
   <div class="today-head">
-    <p>{{ today_label }} · {{ '그저께부터 오늘까지' if selected_day == '__three__' else selected_day ~ '요일만' }}</p>
+    <div class="day-nav">
+      <a class="btn small" href="/?mode=check&date={{ prev_date }}&day={{ selected_day }}" aria-label="하루 전 방송분 보기">‹</a>
+      <p>{{ today_label }} · {{ (rel_names.two ~ '부터 ' ~ rel_names.today ~ '까지') if selected_day == '__three__' else selected_day ~ '요일만' }}</p>
+      {% if next_date %}<a class="btn small" href="/?mode=check&date={{ next_date }}&day={{ selected_day }}" aria-label="다음날 방송분 보기">›</a>{% endif %}
+    </div>
     <form method="get" action="/">
       <input type="hidden" name="mode" value="check">
+      {% if date_param %}<input type="hidden" name="date" value="{{ date_param }}">{% endif %}
       <label class="muted" for="daySel" style="font-size:13px; margin-right:6px;">요일</label>
       <select id="daySel" name="day" onchange="this.form.submit()">
-        <option value="__three__" {{ 'selected' if selected_day == '__three__' else '' }}>그저께~오늘</option>
+        <option value="__three__" {{ 'selected' if selected_day == '__three__' else '' }}>{{ rel_names.two }}~{{ rel_names.today }}</option>
         {% for d in weekdays %}
           <option value="{{ d }}" {{ 'selected' if selected_day == d else '' }}>{{ d }}요일</option>
         {% endfor %}
@@ -96,9 +104,9 @@
       {% if rules and selected_day == '__three__' %}
       <div class="chip-row" role="group" aria-label="날짜로 거르기">
         <button type="button" class="chip" data-filter="all" aria-pressed="true">전체 <span class="n" data-count="all"></span></button>
-        <button type="button" class="chip" data-filter="two" aria-pressed="false">그저께 ({{ two_days_ago_name }}) <span class="n" data-count="two"></span></button>
-        <button type="button" class="chip" data-filter="yest" aria-pressed="false">어제 ({{ yest_name }}) <span class="n" data-count="yest"></span></button>
-        <button type="button" class="chip" data-filter="today" aria-pressed="false">오늘 ({{ today_name }}) <span class="n" data-count="today"></span></button>
+        <button type="button" class="chip" data-filter="two" aria-pressed="false">{{ rel_names.two }} ({{ two_days_ago_name }}) <span class="n" data-count="two"></span></button>
+        <button type="button" class="chip" data-filter="yest" aria-pressed="false">{{ rel_names.yest }} ({{ yest_name }}) <span class="n" data-count="yest"></span></button>
+        <button type="button" class="chip" data-filter="today" aria-pressed="false">{{ rel_names.today }} ({{ today_name }}) <span class="n" data-count="today"></span></button>
         <button type="button" class="chip" data-filter="gulbang" aria-pressed="false" hidden>결방 <span class="n" data-count="gulbang"></span></button>
       </div>
       {% endif %}
@@ -160,10 +168,10 @@
   </form>
 
   <div class="today-foot" data-write>
-    <form method="post" action="/reset_day" onsubmit="return confirm('어제({{ yest_name }}) 체크한 항목을 모두 다시 미처리로 되돌릴까요?');">
-      <input type="hidden" name="target_day" value="{{ yest_name }}">
+    <form method="post" action="/reset_day" onsubmit="return confirm('어제({{ reset_day_name }}) 체크한 항목을 모두 다시 미처리로 되돌릴까요?');">
+      <input type="hidden" name="target_day" value="{{ reset_day_name }}">
       <input type="hidden" name="day" value="{{ selected_day }}">
-      <button class="btn small" type="submit">어제({{ yest_name }}) 체크 초기화</button>
+      <button class="btn small" type="submit">어제({{ reset_day_name }}) 체크 초기화</button>
     </form>
     <span class="muted">체크하면 그 요일 회차를 받은 것으로 표시해요.</span>
   </div>
@@ -179,6 +187,7 @@
 {% block scripts %}
   <script>
     var DAY_PARAM = {{ selected_day|tojson }};
+    var DATE_PARAM = {{ date_param|tojson }};
 
     function toggleDone(btn) {
       var list = document.getElementById('doneList'), show = list.hidden;
@@ -301,7 +310,7 @@
 
     function loadGulbang() {
       if (!rows().length) { document.getElementById('gbCount').textContent = 0; document.getElementById('gbSub').textContent = '확인할 항목 없음'; return; }
-      fetch('/api/gulbang?day=' + encodeURIComponent(DAY_PARAM))
+      fetch('/api/gulbang?day=' + encodeURIComponent(DAY_PARAM) + (DATE_PARAM ? '&date=' + DATE_PARAM : ''))
         .then(mrJson)
         .then(function (res) {
           if (!res.ok) throw new Error(res.data.error || '확인 실패');

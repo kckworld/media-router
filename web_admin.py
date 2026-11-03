@@ -2594,12 +2594,22 @@ def index():
     rules = cfg.get("rules", [])
 
     if mode == "check":
-        entries, selected_ui = _check_entries(rules, selected_day)
-        done_entries, _ = _check_entries(rules, selected_day, done=True)
+        base = check_base_date(request.args.get("date", ""))
+        real_today = datetime.now(APP_TZ).date()
+        entries, selected_ui = _check_entries(rules, selected_day, base=base)
+        done_entries, _ = _check_entries(rules, selected_day, done=True, base=base)
+        wb = base.weekday()
         return render_template("today.html",
             weekdays=WEEKDAYS, selected_day=selected_ui, rules=entries, done_rules=done_entries,
-            today_name=today_name, yest_name=yest_name, two_days_ago_name=two_days_ago_name,
-            rule_count=len(rules), today_label=_today_label())
+            today_name=WEEKDAYS[wb], yest_name=WEEKDAYS[(wb - 1) % 7], two_days_ago_name=WEEKDAYS[(wb - 2) % 7],
+            reset_day_name=yest_name,     # '어제 체크 초기화'는 실제 어제 기준 그대로
+            rel_names={"two": _rel_day_name(base - timedelta(days=2), real_today),
+                       "yest": _rel_day_name(base - timedelta(days=1), real_today),
+                       "today": _rel_day_name(base, real_today)},
+            base_date=base.isoformat(), prev_date=(base - timedelta(days=1)).isoformat(),
+            next_date=(base + timedelta(days=1)).isoformat() if base < real_today else "",
+            date_param=request.args.get("date", "") if request.args.get("date") else "",
+            rule_count=len(rules), today_label=_today_label(base, real_today))
 
     # 분류 규칙: 목록 필터·정렬·검색은 화면(JS)에서 한다. 처음 필터 값만 넘겨준다.
     listed = [{**r, "_idx": r["id"], "next_episode": get_next_episode(r)} for r in rules]
@@ -2611,16 +2621,46 @@ def index():
         init_show_no_days=(hide_no_days == "0"), edit_id=edit_id)
 
 
-def _today_label() -> str:
+# 체크 목록 기준 날짜(2026-11-03 사용자 요청): 방송은 대부분 오후·밤이라 자정 넘어 새벽엔 '오늘' 방송분이 의미 없다.
+# 이 시각 전(00:00~11:59)엔 어제 방송분을 기본으로 보여 준다. 바꾸려면 이 숫자만.
+CHECK_DAY_CUTOFF_HOUR = 12
+
+
+def check_base_date(override: str = "", now: datetime | None = None):
+    """체크 목록 기준 날짜. ?date=YYYY-MM-DD(최근 14일 안, 미래 불가)가 있으면 그 날, 없으면 기준 시각 전엔 어제."""
+    now = now or datetime.now(APP_TZ)
+    today = now.date()
+    if override:
+        try:
+            d = datetime.strptime(override, "%Y-%m-%d").date()
+            if today - timedelta(days=14) <= d <= today:
+                return d
+        except ValueError:
+            pass
+    return today - timedelta(days=1) if now.hour < CHECK_DAY_CUTOFF_HOUR else today
+
+
+def _rel_day_name(d, real_today) -> str:
+    n = (real_today - d).days
+    return {0: "오늘", 1: "어제", 2: "그저께"}.get(n, f"{n}일 전")
+
+
+def _today_label(base=None, real_today=None) -> str:
     now = datetime.now(APP_TZ)
-    return f"{now.month}월 {now.day}일 {WEEKDAYS[now.weekday()]}요일"
+    base = base or now.date()
+    real_today = real_today or now.date()
+    label = f"{base.month}월 {base.day}일 {WEEKDAYS[base.weekday()]}요일"
+    if base != real_today:
+        label += f" ({_rel_day_name(base, real_today)} 방송분)"
+    return label
 
 
-def _check_entries(rules, selected_day="", done=False):
+def _check_entries(rules, selected_day="", done=False, base=None):
     """체크 목록: 고른 요일(기본은 그저께+어제+오늘)의 미처리 항목을 '요일별 항목'으로 펼친다.
     done=True면 반대로 이미 받음 처리된 항목만 준다(화면의 '받은 것도 보기' 버튼용, 2026-11-01).
+    base: 기준 날짜(check_base_date). 없으면 실제 오늘.
     반환: (항목 목록, 화면에 표시할 선택값)"""
-    w_today = current_weekday()
+    w_today = base.weekday() if base else current_weekday()
     today_name, yest_name = WEEKDAYS[w_today], WEEKDAYS[(w_today-1)%7]
     two_days_ago_name = WEEKDAYS[(w_today-2)%7]
     if selected_day in ("", "__three__"):
@@ -2662,10 +2702,11 @@ def api_gulbang():
     if auth is not True:
         return jsonify({"error": "로그인이 필요합니다."}), 401
     import gulbang
-    entries, _ = _check_entries(load_cfg().get("rules", []), request.args.get("day", "").strip())
+    base = check_base_date(request.args.get("date", ""))       # 체크 목록과 같은 기준 날짜(11-03)
+    entries, _ = _check_entries(load_cfg().get("rules", []), request.args.get("day", "").strip(), base=base)
     items = [{"rkday": e["rkday"], "subfolder": e.get("subfolder", ""), "day": e["day"]} for e in entries]
     try:
-        result = gulbang.check_items(items, today=datetime.now(APP_TZ).date(),
+        result = gulbang.check_items(items, today=base,
                                      cache_file=DATA_DIR / "gulbang_cache.json")
     except Exception as e:
         app.logger.exception("결방 확인 실패")
