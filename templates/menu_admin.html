@@ -1,0 +1,126 @@
+{% set active_page = 'menu' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .mm-group { margin-bottom: 14px; }
+    .mm-group h4 { margin: 0 0 6px; font-size: 14px; color: var(--muted); }
+    .mm-row { display: flex; align-items: center; gap: 8px; padding: 8px 4px; border-bottom: 1px solid var(--line); }
+    .mm-row:last-child { border-bottom: 0; }
+    .mm-name { flex: 1; color: var(--text); font-weight: 600; }
+    .mm-name.off { color: var(--muted); text-decoration: line-through; font-weight: 500; }
+    .mm-tag { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); margin-left: 4px; }
+    .mm-tag.lock { color: var(--accent); background: var(--accent-soft); }
+    .mm-tag.warn { color: var(--danger); }
+    .mm-row .btn { min-width: 32px; }
+    .pt-wrap { overflow-x: auto; }
+    .pt { border-collapse: collapse; min-width: 100%; font-size: 13px; }
+    .pt th, .pt td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; white-space: nowrap; }
+    .pt th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+    .pt td.grp { color: var(--muted); font-size: 12px; padding-top: 12px; }
+    .pt select { font: inherit; font-size: 13px; padding: 3px 6px; }
+    .pt .fixed { color: var(--accent); font-size: 12px; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="section-title">메뉴 보이기 · 순서 <span class="hint">(모든 계정 공통)</span></div>
+      <div class="hint">숨긴 화면은 메뉴와 좌우 넘기기에서 빠져요(권한은 그대로 — 주소로 열면 열려요). 계정·메뉴 관리와 소유자 전용 화면은 숨길 수 없어요.</div>
+      <div id="mmGroups" style="margin-top:10px;"></div>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button type="button" class="btn primary" id="saveLayout" data-write>저장</button>
+        <button type="button" class="btn" id="resetLayout" data-write>처음으로</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">계정별 권한</div>
+      <div class="hint">없음 = 메뉴에 안 보이고 열 수도 없음 · 보기 = 읽기만 · 바꾸기 = 버튼·저장까지. 서버에서도 똑같이 막아요.
+        가계부·일기는 줄 때 한 번 더 물어봐요. 🔒는 소유자 전용(줄 수 없음).</div>
+      <div class="pt-wrap" style="margin-top:10px;"><table class="pt" id="pt"></table></div>
+      <div id="ptEmpty" class="hint" style="margin-top:8px;" hidden>아직 일반 계정이 없어요. 설정 > 계정에서 추가하세요.</div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var DATA = {{ data | tojson }};
+    var LV = { none: "없음", view: "보기", edit: "바꾸기" };
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function renderLayout() {
+      var box = document.getElementById("mmGroups");
+      box.innerHTML = DATA.groups.map(function(g, gi) {
+        return '<div class="mm-group"><h4>' + esc(g.label) + '</h4>' + g.pages.map(function(p, pi) {
+          var tags = (p.owner_only ? '<span class="mm-tag lock">🔒 소유자</span>' : '') + (p.caution ? '<span class="mm-tag warn">개인정보</span>' : '');
+          return '<div class="mm-row"><span class="mm-name' + (p.hidden ? ' off' : '') + '">' + esc(p.label) + tags + '</span>' +
+            '<button type="button" class="btn small" data-write data-g="' + gi + '" data-p="' + pi + '" data-mv="-1" aria-label="' + esc(p.label) + ' 위로"' + (pi === 0 ? ' disabled' : '') + '>▲</button>' +
+            '<button type="button" class="btn small" data-write data-g="' + gi + '" data-p="' + pi + '" data-mv="1" aria-label="' + esc(p.label) + ' 아래로"' + (pi === g.pages.length - 1 ? ' disabled' : '') + '>▼</button>' +
+            (p.fixed_show ? '<span class="hint" style="width:4.5em;text-align:center;">항상</span>' :
+             '<label style="width:4.5em;"><input type="checkbox" data-write data-g="' + gi + '" data-p="' + pi + '" class="mmShow"' + (p.hidden ? '' : ' checked') + '> 보이기</label>') +
+            '</div>';
+        }).join("") + '</div>';
+      }).join("");
+      box.querySelectorAll("button[data-mv]").forEach(function(b) {
+        b.onclick = function() {
+          var arr = DATA.groups[+b.dataset.g].pages, i = +b.dataset.p, j = i + (+b.dataset.mv);
+          var t = arr[i]; arr[i] = arr[j]; arr[j] = t; renderLayout();
+        };
+      });
+      box.querySelectorAll(".mmShow").forEach(function(c) {
+        c.onchange = function() { DATA.groups[+c.dataset.g].pages[+c.dataset.p].hidden = !c.checked; renderLayout(); };
+      });
+    }
+    function post(url, body) {
+      return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(mrJson);
+    }
+    document.getElementById("saveLayout").onclick = function() {
+      var order = [], hidden = [];
+      DATA.groups.forEach(function(g) { g.pages.forEach(function(p) { order.push(p.key); if (p.hidden) hidden.push(p.key); }); });
+      post("/api/menu", { order: order, hidden: hidden }).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast("저장하지 못했어요", "error"); return; }
+        DATA = res.data.data; renderLayout(); showToast("메뉴를 저장했어요. 새로 고치면 메뉴에 반영돼요.", "success");
+      });
+    };
+    document.getElementById("resetLayout").onclick = function() {
+      if (!confirm("메뉴 보이기·순서를 처음 상태로 되돌릴까요? (권한은 그대로)")) return;
+      post("/api/menu", { reset: true }).then(function(res) {
+        if (res.ok && res.data.ok) { DATA = res.data.data; renderLayout(); showToast("처음 상태로 되돌렸어요.", "success"); }
+      });
+    };
+    function renderPerms() {
+      var t = document.getElementById("pt");
+      if (!DATA.users.length) { t.innerHTML = ""; document.getElementById("ptEmpty").hidden = false; return; }
+      var head = '<tr><th>메뉴</th>' + DATA.users.map(function(u) {
+        return '<th>' + esc(u.name || u.id) + (u.disabled ? ' (막힘)' : '') + '<br><button type="button" class="btn small" data-write data-save="' + esc(u.id) + '">저장</button></th>';
+      }).join("") + '</tr>';
+      var rows = DATA.groups.map(function(g) {
+        return '<tr><td class="grp" colspan="' + (DATA.users.length + 1) + '">' + esc(g.label) + '</td></tr>' + g.pages.map(function(p) {
+          return '<tr><td>' + esc(p.label) + (p.caution ? ' <span class="mm-tag warn">개인정보</span>' : '') + '</td>' + DATA.users.map(function(u) {
+            if (p.owner_only) return '<td class="fixed">🔒 소유자만</td>';
+            var cur = u.levels[p.key];
+            return '<td><select data-write data-u="' + esc(u.id) + '" data-k="' + p.key + '" aria-label="' + esc(u.id) + ' ' + esc(p.label) + ' 권한">' +
+              ["none", "view", "edit"].map(function(l) { return '<option value="' + l + '"' + (l === cur ? ' selected' : '') + '>' + LV[l] + '</option>'; }).join("") +
+              '</select></td>';
+          }).join("") + '</tr>';
+        }).join("");
+      }).join("");
+      t.innerHTML = head + rows;
+      t.querySelectorAll("button[data-save]").forEach(function(b) { b.onclick = function() { savePerms(b.dataset.save, false); }; });
+    }
+    function savePerms(uid, confirmed) {
+      var perms = {};
+      document.querySelectorAll('select[data-u="' + uid + '"]').forEach(function(s) { perms[s.dataset.k] = s.value; });
+      post("/api/accounts", { action: "perms", id: uid, perms: perms, confirm: confirmed }).then(function(res) {
+        if (res.data && res.data.need_confirm) {
+          if (confirm("'" + uid + "' 계정에 " + res.data.caution.join("·") + "을(를) 주면 개인정보가 보여요. 그래도 줄까요?")) savePerms(uid, true);
+          return;
+        }
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); return; }
+        showToast("'" + uid + "' 권한을 저장했어요. 그 계정의 다음 화면부터 바로 반영돼요.", "success");
+      });
+    }
+    renderLayout();
+    renderPerms();
+  </script>
+{% endblock %}

@@ -3411,6 +3411,55 @@ def _owner_only():
     return None
 
 
+# ── 설정 > 메뉴 관리 (2026-11-04 3단계): 메뉴 보이기·숨기기·순서(모든 계정 공통) + 계정별 권한 표. 소유자만 ──
+def _menu_admin_data() -> dict:
+    layout = menu.load_layout(MENU_LAYOUT_PATH)
+    hidden, order = set(layout.get("hidden") or []), {k: i for i, k in enumerate(layout.get("order") or [])}
+    groups = []
+    for g in menu.GROUPS:
+        keys = [p["key"] for p in g["pages"]]
+        pages = sorted(g["pages"], key=lambda p: order.get(p["key"], 1000 + keys.index(p["key"])))
+        groups.append({"key": g["key"], "label": g["label"],
+                       "pages": [{"key": p["key"], "label": p["label"], "href": p["href"], "hidden": p["key"] in hidden,
+                                  "owner_only": bool(p.get("owner_only")), "caution": bool(p.get("caution")),
+                                  "fixed_show": p["key"] in ("accounts", "menu") or bool(p.get("owner_only")),
+                                  "default": menu.default_level(p["key"])} for p in pages]})
+    users = [{"id": a["id"], "name": a["name"], "disabled": a["disabled"],
+              "levels": {k: menu.level(a["id"], a["perms"], k) for k in menu.PAGES}}
+             for a in accounts.listing(ACCOUNTS_PATH)]
+    return {"groups": groups, "users": users}
+
+
+@app.route("/menu", methods=["GET"])
+def menu_admin_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    if current_user(request) != accounts.OWNER:
+        return redirect("/?mode=check")
+    resp = make_response(render_template("menu_admin.html", authed=True, data=_menu_admin_data()))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/api/menu", methods=["POST"])
+def api_menu_layout():
+    """{order: [page keys], hidden: [page keys]} 저장, 또는 {reset: true}로 처음 상태로"""
+    blocked = _owner_only()
+    if blocked:
+        return blocked
+    b = request.get_json(silent=True) or {}
+    if b.get("reset"):
+        layout = {"order": [], "hidden": []}
+    else:
+        layout = {"order": [str(k) for k in (b.get("order") or [])][:100],
+                  "hidden": [str(k) for k in (b.get("hidden") or [])][:100]}
+    menu.save_layout(MENU_LAYOUT_PATH, layout)
+    accounts.audit(ACCOUNTS_PATH, accounts.OWNER, "menu_layout", "-",
+                   "처음으로" if b.get("reset") else json.dumps(menu.load_layout(MENU_LAYOUT_PATH), ensure_ascii=False))
+    return jsonify({"ok": True, "data": _menu_admin_data()})
+
+
 @app.route("/accounts", methods=["GET"])
 def accounts_page():
     auth = authed(request)

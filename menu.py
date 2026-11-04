@@ -49,8 +49,8 @@ GROUPS = [
         {"key": "settings", "label": "연동·경로", "href": "/settings", "prefixes": ["/settings"], "owner_only": True},
         {"key": "users", "label": "사용자 매핑", "href": "/users", "prefixes": ["/users", "/api/users"], "owner_only": True},
         {"key": "skills", "label": "Claude", "href": "/skills", "prefixes": ["/skills", "/api/skills"], "owner_only": True},
-        {"key": "accounts", "label": "계정", "href": "/accounts", "prefixes": ["/accounts", "/api/accounts", "/menu", "/api/menu"],
-         "owner_only": True}]},
+        {"key": "accounts", "label": "계정", "href": "/accounts", "prefixes": ["/accounts", "/api/accounts"], "owner_only": True},
+        {"key": "menu", "label": "메뉴 관리", "href": "/menu", "prefixes": ["/menu", "/api/menu"], "owner_only": True}]},
 ]
 PAGES = {p["key"]: dict(p, group=g["key"]) for g in GROUPS for p in g["pages"]}
 # 누구나(로그인한 일반 계정) GET만 되는 공용 주소 — 헤더 PC 상태 등. POST는 페이지 권한으로만
@@ -106,7 +106,7 @@ def load_layout(path: Path) -> dict:
 def save_layout(path: Path, layout: dict) -> None:
     clean = {"order": [k for k in layout.get("order", []) if k in PAGES],
              "hidden": [k for k in layout.get("hidden", []) if k in PAGES and not PAGES[k].get("owner_only")
-                        and k != "accounts"]}
+                        and k not in ("accounts", "menu")]}
     tmp = path.with_name("." + path.name + ".tmp")
     tmp.write_text(json.dumps(clean, ensure_ascii=False, indent=1), encoding="utf-8")
     os.chmod(tmp, 0o600)
