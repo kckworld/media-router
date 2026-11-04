@@ -63,7 +63,7 @@ def test_global_limit_locks_everyone_and_alerts_once(lg):
     for i in range(21):                                                      # 21개 다른 진짜 IP에서 한 번씩
         login(c, "wrong", real=f"203.0.113.{i + 10}")
     assert locked(login(c, "right-pw", real="198.51.100.200"))              # 처음 온 사람도 막힘
-    assert len(sent) == 1 and "모든 로그인을 막았어요" in sent[0]
+    assert len(sent) == 1 and "바깥 로그인을 막았어요" in sent[0]                  # 11-04: 집 LAN은 예외
     login(c, "wrong", real="203.0.113.99")
     assert len(sent) == 1                                                    # 잠금 중엔 알림 반복 안 함
 

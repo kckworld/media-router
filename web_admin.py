@@ -378,7 +378,8 @@ def _handle_telegram_callback(cq: dict) -> None:
     chat_id = (msg.get("chat") or {}).get("id")
     is_movie = action.startswith("mv_")
     ttl = (TG_MOVIE_TTL_SEC if is_movie or action.startswith("re_")
-           else TG_REQUEST_TTL_SEC if action.startswith("rq_") else TG_CONFIRM_TTL_SEC)
+           else TG_REQUEST_TTL_SEC if action.startswith("rq_")
+           else LOGIN_UNLOCK_TTL if action.startswith("lu_") else TG_CONFIRM_TTL_SEC)
     expired = action != "cancel_off" and (not ts.isdigit() or time.time() - int(ts) > ttl)
     key = (chat_id, msg.get("message_id"), action if is_movie else "")
     with _tg_handled["lock"]:
@@ -395,6 +396,9 @@ def _handle_telegram_callback(cq: dict) -> None:
         _tg_call("editMessageReplyMarkup", {"chat_id": chat_id, "message_id": msg["message_id"],
                                             "reply_markup": {"inline_keyboard": []}})
     if expired or action == "dismiss":
+        return
+    if action.startswith("lu_"):          # 로그인 전체 잠금 [잠금 풀기] (11-04)
+        _tg_notify("🔓 로그인 잠금을 풀었어요." if _login_unlock(action[3:]) else "이미 풀었거나 만료된 버튼이에요.")
         return
     if is_movie:
         _tg_movie_download(action[3:])
@@ -677,11 +681,19 @@ def _login_global_blocked_seconds(now: float | None = None) -> int:
         return max(0, int(round(_login_global["locked_until"] - now)))
 
 
+LAN_PREFIX = "192.168.50."     # 집 공유기 대역. 전체 잠금이 걸려도 집 안 직접 접속은 막지 않는다(소유자가 못 들어가는 일 방지)
+
+
+def _is_lan(ip: str) -> bool:
+    """_client_ip 기준 집 LAN 주소인지. 바깥에서 이 값으로 속일 수 없다(nginx X-Real-IP·소켓 주소 기준)"""
+    return (ip or "").startswith(LAN_PREFIX)
+
+
 def _login_blocked_seconds(ip: str) -> int:
-    """이 IP가 잠겨있으면(또는 전체 잠금이면) 남은 초를, 아니면 0을 반환."""
+    """이 IP가 잠겨있으면(또는 전체 잠금이면) 남은 초를, 아니면 0을 반환. 전체 잠금은 LAN이면 건너뜀(IP별 잠금은 그대로)"""
     now = time.time()
     g = _login_global_blocked_seconds(now)
-    if g:
+    if g and not _is_lan(ip):
         return g
     with _login_lock:
         fails = [t for t in _login_failures.get(ip, []) if now - t < LOGIN_WINDOW_SECONDS]
@@ -707,10 +719,32 @@ def _register_login_failure(ip: str) -> None:
             _login_global["locked_until"] = now + LOGIN_GLOBAL_LOCKOUT
             alert = True
     if alert:
+        tok = secrets.token_hex(6)
+        with _login_lock:
+            _login_unlock_tokens[tok] = now + LOGIN_UNLOCK_TTL
+        markup = {"inline_keyboard": [[{"text": "🔓 잠금 풀기", "callback_data": f"lu_{tok}:{int(now)}"}]]}
         threading.Thread(target=lambda: _tg_notify(
             f"🔒 Media Router 로그인 실패가 {LOGIN_GLOBAL_WINDOW // 60}분에 {LOGIN_GLOBAL_MAX}번을 넘어 "
-            f"{LOGIN_GLOBAL_LOCKOUT // 60}분 동안 모든 로그인을 막았어요(마지막 접속 {ip}). 본인이 아니면 비밀번호를 바꿔 주세요."),
+            f"{LOGIN_GLOBAL_LOCKOUT // 60}분 동안 바깥 로그인을 막았어요(마지막 접속 {ip}, 집 안 LAN은 그대로 됨). "
+            "본인이 아니면 비밀번호를 바꿔 주세요. 본인이 틀린 거면 아래 버튼(10분 안)으로 풀 수 있어요.", markup),
             daemon=True).start()
+
+
+LOGIN_UNLOCK_TTL = 600
+_login_unlock_tokens: dict = {}
+
+
+def _login_unlock(tok: str) -> bool:
+    """텔레그램 [잠금 풀기]: 10분 안·한 번만. 전체 잠금과 실패 기록을 지운다(사용자 채팅에서 온 버튼만 여기까지 옴)"""
+    now = time.time()
+    with _login_lock:
+        exp = _login_unlock_tokens.pop(tok, 0)
+        if exp < now:
+            return False
+        _login_global.update(fails=[], locked_until=0.0)
+        _login_failures.clear()
+    accounts.audit(ACCOUNTS_PATH, "owner(텔레그램)", "login_unlock", "*")
+    return True
 
 
 def _clear_login_failures(ip: str) -> None:
@@ -763,14 +797,20 @@ def current_user(req) -> str | None:
         return None
     uid = data.get("u")
     if uid:
-        return uid if uid != accounts.OWNER and accounts.active(ACCOUNTS_PATH, uid) else None
-    if data.get("r") == "viewer":          # 11-04 전 보기 전용 세션: 'viewer' 계정이 살아 있을 때만(옮기기 전이면 그대로)
+        who = uid if uid != accounts.OWNER and accounts.active(ACCOUNTS_PATH, uid) else None
+    elif data.get("r") == "viewer":        # 11-04 전 보기 전용 세션: 'viewer' 계정이 살아 있을 때만(옮기기 전이면 그대로)
         store = accounts.load(ACCOUNTS_PATH)
         acc = store["accounts"].get("viewer")
         if acc is None:
-            return None if store.get("viewer_migrated") else "viewer"     # 옮긴 뒤 지웠으면 무효
-        return None if acc.get("disabled") else "viewer"
-    return accounts.OWNER
+            who = None if store.get("viewer_migrated") else "viewer"     # 옮긴 뒤 지웠으면 무효
+        else:
+            who = None if acc.get("disabled") else "viewer"
+    else:
+        who = accounts.OWNER
+    # 세대 번호: [모든 기기 로그아웃]·계정 삭제 뒤에는 그 전에 받은 세션 무효(인사팀 점검 11-04)
+    if who and int(data.get("g", 0) or 0) != accounts.gen(ACCOUNTS_PATH, who):
+        return None
+    return who
 
 
 def session_role(req):
@@ -1926,14 +1966,17 @@ def people_reauth():
         return redirect("/people?e=locked")
     if not hmac.compare_digest(request.form.get("pw", "").encode(), PASSWORD.encode()):
         _register_login_failure(ip)
+        accounts.log_login(ACCOUNTS_PATH, False, accounts.OWNER, ip, request.headers.get("User-Agent", ""), "검색직 재확인")
         return redirect("/people?e=locked" if _login_blocked_seconds(ip) > 0 else "/people?e=wrong")
     _clear_login_failures(ip)
+    accounts.log_login(ACCOUNTS_PATH, True, accounts.OWNER, ip, request.headers.get("User-Agent", ""), "검색직 재확인")
     try:
         remember = bool(_session_serializer.loads(request.cookies.get("media_admin", ""), max_age=SESSION_MAX_AGE).get("rm"))
     except (BadSignature, SignatureExpired):
         remember = False
     resp = make_response(redirect("/people"))
-    resp.set_cookie("media_admin", _session_serializer.dumps({"a": True, "rm": remember}),
+    resp.set_cookie("media_admin", _session_serializer.dumps({"a": True, "rm": remember,
+                                                              "g": accounts.gen(ACCOUNTS_PATH, accounts.OWNER)}),
                     max_age=30 * 24 * 3600 if remember else 12 * 3600, httponly=True, samesite="Lax", secure=request.is_secure)
     return resp
 
@@ -3468,7 +3511,7 @@ def accounts_page():
     if current_user(request) != accounts.OWNER:
         return redirect("/?mode=check")
     resp = make_response(render_template("accounts.html", authed=True, items=accounts.listing(ACCOUNTS_PATH),
-                                         min_pw=accounts.MIN_PW))
+                                         min_pw=accounts.MIN_PW, login_log=accounts.login_log(ACCOUNTS_PATH)))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -3491,6 +3534,10 @@ def api_accounts():
         err = accounts.set_name(ACCOUNTS_PATH, uid, str(b.get("name") or ""))
     elif act == "delete":
         err = accounts.delete(ACCOUNTS_PATH, uid)
+    elif act == "logout_all":
+        # [모든 기기 로그아웃]: 소유자 포함 모든 세션 무효(세대 번호 올림). 누른 사람도 다시 로그인해야 함
+        accounts.bump_all(ACCOUNTS_PATH)
+        return jsonify({"ok": True, "relogin": True})
     elif act == "perms":
         # 메뉴별 권한(none/view/edit). 소유자 전용(설정·검색직·Claude·계정)은 줄 수 없고, 주의 메뉴(가계부·일기)는 confirm 필요
         raw = b.get("perms") if isinstance(b.get("perms"), dict) else {}
@@ -3547,12 +3594,16 @@ def login():
         resp=make_response(redirect("/"))
         max_age = 30 * 24 * 3600 if remember else 12 * 3600
         # rm: '기억하기' 여부(검색직 비밀번호 다시 입력 때 쿠키 기간을 그대로 두려고, 11-04). u: 일반 계정 아이디
-        token = _session_serializer.dumps({"a": True, "rm": remember} if user == accounts.OWNER
-                                          else {"a": True, "u": user, "rm": remember})
+        # g: 세대 번호([모든 기기 로그아웃]·계정 삭제 때 올라가서 그 전 세션 무효, 11-04)
+        g = accounts.gen(ACCOUNTS_PATH, user)
+        token = _session_serializer.dumps({"a": True, "rm": remember, "g": g} if user == accounts.OWNER
+                                          else {"a": True, "u": user, "rm": remember, "g": g})
         resp.set_cookie("media_admin", token, max_age=max_age, httponly=True, samesite="Lax", secure=request.is_secure)
+        accounts.log_login(ACCOUNTS_PATH, True, user, ip, request.headers.get("User-Agent", ""))
         return resp
 
     _register_login_failure(ip)
+    accounts.log_login(ACCOUNTS_PATH, False, uid or "(아이디 없음)", ip, request.headers.get("User-Agent", ""))
     blocked_for = _login_blocked_seconds(ip)  # 방금 실패로 임계치를 넘겼으면 바로 잠금 안내
     if blocked_for > 0:
         return redirect(f"/login?error=2&wait={blocked_for}")

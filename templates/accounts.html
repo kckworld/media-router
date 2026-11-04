@@ -40,6 +40,27 @@
         <div><button type="submit" class="btn primary" data-write>추가</button></div>
       </form>
     </div>
+
+    <div class="card">
+      <div class="section-title">모든 기기 로그아웃</div>
+      <div class="hint">폰·PC를 잃어버렸거나 이상한 로그인이 보이면 누르세요. 소유자를 포함해 지금 로그인된 모든 기기가 바로 끊겨요(이 화면도 다시 로그인).</div>
+      <button type="button" class="btn" id="logoutAll" data-write style="margin-top:8px;">모든 기기 로그아웃</button>
+    </div>
+
+    <div class="card">
+      <div class="section-title">로그인 기록 <span class="hint">최근 200건</span></div>
+      {% if login_log %}
+      <div style="overflow-x:auto;"><table class="dl-table" style="font-size:13px;">
+        <thead><tr><th>시각</th><th>결과</th><th>계정</th><th>접속</th><th>기기</th><th></th></tr></thead>
+        <tbody>
+        {% for r in login_log %}
+          <tr><td style="white-space:nowrap;">{{ r.at }}</td><td>{{ '✅ 성공' if r.ok else '❌ 실패' }}</td><td>{{ r.user }}</td>
+              <td>{{ r.ip }}</td><td style="white-space:nowrap;">{{ r.ua }}</td><td class="hint">{{ r.note }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}<div class="hint">아직 기록이 없어요.</div>{% endif %}
+    </div>
 {% endblock %}
 
 {% block scripts %}
@@ -89,6 +110,11 @@
         if (ok) { showToast("계정을 추가했어요.", "success"); e.target.reset(); }
       });
     });
+    document.getElementById("logoutAll").onclick = function() {
+      if (!confirm("소유자를 포함한 모든 기기를 로그아웃할까요? 이 화면도 다시 로그인해야 해요.")) return;
+      fetch("/api/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout_all" }) })
+        .then(mrJson).then(function(res) { if (res.ok && res.data.ok) location.href = "/login"; else showToast("하지 못했어요", "error"); });
+    };
     render();
   </script>
 {% endblock %}

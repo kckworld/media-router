@@ -181,6 +181,60 @@ def delete(path: Path, uid: str, by: str = OWNER) -> str | None:
     if uid not in data["accounts"]:
         return "없는 계정이에요."
     del data["accounts"][uid]
+    # 세대 번호를 올려 남겨 둔다: 같은 아이디로 다시 만들어도 지우기 전 세션은 무효(인사팀 점검 11-04)
+    data.setdefault("gen", {})[uid] = int(data.get("gen", {}).get(uid, 0)) + 1
     _save(path, data)
     audit(path, by, "delete", uid)
     return None
+
+
+# ── 세션 세대 번호 (11-04 인사팀 점검): 세션 토큰에 로그인 때의 세대 번호(g)를 넣고, 지금 번호와 다르면 무효 ──
+def gen(path: Path, uid: str) -> int:
+    return int(load(path).get("gen", {}).get(uid, 0))
+
+
+def bump_all(path: Path, by: str = OWNER) -> None:
+    """[모든 기기 로그아웃]: 소유자 포함 모든 계정의 세대 번호를 올린다 → 지금 있는 세션 전부 무효"""
+    data = load(path)
+    g = data.setdefault("gen", {})
+    for uid in set(list(data["accounts"]) + [OWNER] + list(g)):
+        g[uid] = int(g.get(uid, 0)) + 1
+    _save(path, data)
+    audit(path, by, "logout_all", "*")
+
+
+# ── 로그인 기록 (11-04 인사팀 점검): 성공·실패·계정·시각·IP 끝자리·브라우저 요약, 최근 200건, 600 ──
+LOGIN_LOG_MAX = 200
+
+
+def ua_summary(ua: str) -> str:
+    ua = ua or ""
+    dev = ("iPhone" if "iPhone" in ua else "iPad" if "iPad" in ua else "Android" if "Android" in ua
+           else "Windows" if "Windows" in ua else "Mac" if "Macintosh" in ua else "Linux" if "Linux" in ua else "?")
+    br = ("Edge" if "Edg/" in ua else "Samsung" if "SamsungBrowser" in ua else "Chrome" if "Chrome/" in ua
+          else "Firefox" if "Firefox/" in ua else "Safari" if "Safari/" in ua else "curl" if ua.startswith("curl") else "?")
+    return f"{dev} · {br}"
+
+
+def log_login(path: Path, ok: bool, user: str, ip: str, ua: str, note: str = "") -> None:
+    log = path.with_name("login_log.json")
+    try:
+        items = json.loads(log.read_text(encoding="utf-8"))
+        items = items if isinstance(items, list) else []
+    except (OSError, ValueError):
+        items = []
+    tail = re.split(r"[.:]", ip or "")[-1] if ip else ""
+    items.append({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "ok": bool(ok), "user": (user or "")[:20],
+                  "ip": f"…{tail}" if tail else "?", "ua": ua_summary(ua), "note": note[:40]})
+    tmp = log.with_name("." + log.name + ".tmp")
+    tmp.write_text(json.dumps(items[-LOGIN_LOG_MAX:], ensure_ascii=False), encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, log)
+
+
+def login_log(path: Path) -> list[dict]:
+    try:
+        items = json.loads(path.with_name("login_log.json").read_text(encoding="utf-8"))
+        return list(reversed(items)) if isinstance(items, list) else []
+    except (OSError, ValueError):
+        return []
