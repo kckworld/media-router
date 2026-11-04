@@ -1,43 +1,9 @@
 {#- 모든 관리 화면의 공통 껍데기 (2026-10-16 레이아웃 개편).
     자식 템플릿은 {% extends "base.html" %} 앞에서 active_page를 정하고
-    page_css / content / scripts 블록만 채운다. 메뉴 구성은 아래 NAV 하나만 고치면 된다.
-    '생활'(11-03)은 미디어와 상관없는 내 프로그램(가계부·일기 메모…). 새 프로그램은 그 pages에 한 줄 추가(관리자만이면 admin_only). -#}
-{%- set NAV_ALL = [
-  {'key': 'today', 'label': '오늘', 'pages': [
-    {'key': 'check', 'label': '체크 목록', 'href': '/?mode=check'},
-    {'key': 'stats', 'label': '시청 통계', 'href': '/stats'}]},
-  {'key': 'rules', 'label': '규칙', 'pages': [
-    {'key': 'rules', 'label': '분류 규칙', 'href': '/?mode='},
-    {'key': 'rename', 'label': '파일명 치환', 'href': '/rename_rules'},
-    {'key': 'bt4g', 'label': '예능 키워드', 'href': '/bt4g_keywords'},
-    {'key': 'drama', 'label': '드라마 키워드', 'href': '/drama_keywords'}]},
-  {'key': 'ops', 'label': '작업', 'pages': [
-    {'key': 'downloads', 'label': '다운로드', 'href': '/downloads'},
-    {'key': 'youtube', 'label': '유튜브', 'href': '/youtube'},
-    {'key': 'movies', 'label': '영화', 'href': '/movies'},
-    {'key': 'tfdrama', 'label': '드라마', 'href': '/tf/drama'},
-    {'key': 'tfvariety', 'label': '예능', 'href': '/tf/variety'},
-    {'key': 'requests', 'label': '요청', 'href': '/requests', 'admin_only': True},
-    {'key': 'surveys', 'label': '설문', 'href': '/surveys'},
-    {'key': 'batch', 'label': '배치', 'href': '/logs'},
-    {'key': 'encode', 'label': '인코딩', 'href': '/encode_log'}]},
-  {'key': 'life', 'label': '생활', 'pages': [
-    {'key': 'recon', 'label': '가계부', 'href': '/recon', 'admin_only': True},
-    {'key': 'journal', 'label': '일기', 'href': '/journal', 'admin_only': True},
-    {'key': 'people', 'label': '검색직', 'href': '/people', 'admin_only': True}]},
-  {'key': 'settings', 'label': '설정', 'pages': [
-    {'key': 'settings', 'label': '연동·경로', 'href': '/settings', 'admin_only': True},
-    {'key': 'users', 'label': '사용자 매핑', 'href': '/users', 'admin_only': True},
-    {'key': 'skills', 'label': 'Claude', 'href': '/skills', 'admin_only': True},
-    {'key': 'accounts', 'label': '계정', 'href': '/accounts', 'admin_only': True}]},
-] -%}
-{#- 보기 전용 계정에는 admin_only 화면(개인정보·서버 설정)을 메뉴에서 뺀다. 접근 차단은 서버(_readonly_guard)가 한다 -#}
-{%- set nav_ns = namespace(items=[]) -%}
-{%- for g in NAV_ALL -%}
-{%- set pages = (g.pages | rejectattr('admin_only') | list) if viewer else g.pages -%}
-{%- if pages -%}{%- set nav_ns.items = nav_ns.items + [{'key': g.key, 'label': g.label, 'pages': pages}] -%}{%- endif -%}
-{%- endfor -%}
-{%- set NAV = nav_ns.items -%}
+    page_css / content / scripts 블록만 채운다.
+    메뉴는 menu.py(GROUPS) 한 곳에서 정의하고(11-04 계정·메뉴 관리), 서버가 계정 권한·숨김·순서를 반영한
+    nav_all을 넘겨준다. 접근 차단도 같은 목록으로 서버(_readonly_guard)가 한다. -#}
+{%- set NAV = nav_all if nav_all else [{'key': 'today', 'label': '오늘', 'pages': [{'key': 'none', 'label': '볼 수 있는 화면 없음', 'href': '/logout'}]}] -%}
 {%- set ns = namespace(group=NAV[0], page=NAV[0].pages[0]) -%}
 {%- for g in NAV -%}{%- for p in g.pages -%}{%- if p.key == active_page -%}{%- set ns.group = g -%}{%- set ns.page = p -%}{%- endif -%}{%- endfor -%}{%- endfor -%}
 {%- macro icon(name, size=22) -%}
@@ -77,7 +43,7 @@
   <link rel="stylesheet" href="/static/app.css?v=8">
   {% block page_css %}{% endblock %}
 </head>
-<body class="{{ 'readonly' if viewer else '' }}">
+<body class="{{ 'readonly' if not can_edit else '' }}">
   <div class="app">
     <aside class="sidebar">
       <a class="brand" href="/?mode=check" aria-label="Media Router 홈">
@@ -110,7 +76,7 @@
         </div>
         <div class="appbar-actions">
           {% block header_actions %}{% endblock %}
-          {%- if not viewer %}
+          {%- if can_journal %}
           {#- 일기 메모(11-03): 메뉴 탭에 넣으면 스와이프 순서에 끼어 /diary(단독 화면)에서 막혀서 상단 바에 따로 둔다 -#}
           <a class="icon-btn diary-btn" href="/journal" aria-label="일기">{{ icon('diary', 18) }}<span class="diary-btn-text">일기</span></a>
           {%- endif %}

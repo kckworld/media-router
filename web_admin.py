@@ -799,33 +799,71 @@ VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users", "/skills", "/api/
 READONLY_MESSAGE = "읽기 전용 계정이라 바꿀 수 없어요."
 
 
-@app.before_request
-def _readonly_guard():
-    """보기 전용 계정의 변경 요청(GET 외 전부)과 숨긴 화면 접근을 서버에서 막는다.
-    화면에서 버튼을 숨기는 건 보기 좋으라고 하는 것이고, 실제 차단은 여기서 한다."""
-    if session_role(request) != "viewer":
-        return None
-    path = request.path
-    wants_html = "text/html" in (request.headers.get("Accept") or "")
-    if path.startswith(VIEWER_HIDDEN_PREFIXES):
-        if request.method == "GET" and wants_html and not path.startswith("/api/"):
-            return redirect("/?mode=check")
-        return jsonify({"success": False, "ok": False, "error": "보기 전용 계정은 볼 수 없는 화면이에요.",
-                        "message": "보기 전용 계정은 볼 수 없는 화면이에요."}), 403
-    if request.method in ("GET", "HEAD", "OPTIONS") or path in ("/login", "/logout"):
-        return None
+# 계정·메뉴 관리 2단계(11-04): 위 목록 대신 menu.py의 페이지별 주소 + 계정 권한(none/view/edit)으로 서버에서 막는다.
+# (VIEWER_HIDDEN_PREFIXES는 예전 보기 전용 기본값의 기록으로 남김 — menu.py legacy_hidden·owner_only가 같은 화면)
+import menu
+MENU_LAYOUT_PATH = DATA_DIR / "menu.json"
+
+
+def _req_user_perms(req):
+    """(계정 아이디, 권한 dict) — 일반 계정만. 소유자·로그인 안 함은 (None, None)"""
+    if session_role(req) != "viewer":
+        return None, None
+    u = current_user(req)
+    if u in (None, accounts.OWNER):         # 역할이 일반 계정인데 아이디를 모르면(테스트 등) 예전 보기 전용으로 본다 — 소유자로는 절대 안 봄
+        u = "viewer"
+    acc = accounts.get(ACCOUNTS_PATH, u) or {}
+    return u, acc.get("perms") or {}
+
+
+def _deny(msg: str, wants_html: bool):
     if wants_html:
         return make_response(
             "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-            f"<p style='font-family:sans-serif;padding:24px'>{READONLY_MESSAGE} "
+            f"<p style='font-family:sans-serif;padding:24px'>{msg} "
             "<a href='javascript:history.back()'>돌아가기</a></p>", 403)
-    return jsonify({"success": False, "ok": False, "error": READONLY_MESSAGE, "message": READONLY_MESSAGE}), 403
+    return jsonify({"success": False, "ok": False, "error": msg, "message": msg}), 403
+
+
+@app.before_request
+def _readonly_guard():
+    """일반 계정의 권한을 서버에서 강제한다: 요청 주소 → 페이지(menu.page_for) → 계정 권한.
+    없음이면 그 화면·API 전부 403(화면은 볼 수 있는 첫 화면으로), 보기면 GET만, 바꾸기면 POST도.
+    어느 페이지에도 없는 주소는 GET만(공용), POST는 막는다. 화면 버튼 숨김은 보기 좋으라고 하는 것뿐이다."""
+    u, perms = _req_user_perms(request)
+    if u is None:
+        return None
+    path = request.path
+    if path in menu.ALWAYS_OK:
+        return None
+    safe = request.method in ("GET", "HEAD", "OPTIONS")
+    wants_html = "text/html" in (request.headers.get("Accept") or "")
+    page = menu.page_for(path, request.args)
+    if page is None:
+        return None if safe else _deny(READONLY_MESSAGE, wants_html)
+    lvl = menu.level(u, perms, page)
+    if lvl == "none":
+        if request.method == "GET" and wants_html and not path.startswith("/api/"):
+            href = menu.first_href(menu.nav_for(u, perms, menu.load_layout(MENU_LAYOUT_PATH)))
+            if href and href != request.full_path.rstrip("?"):
+                return redirect(href)
+        return _deny("이 계정은 볼 수 없는 화면이에요.", wants_html)
+    if not safe and lvl != "edit":
+        return _deny(READONLY_MESSAGE, wants_html)
+    return None
 
 
 @app.context_processor
 def _inject_role():
     role = session_role(request)
-    return {"viewer": role == "viewer", "has_login": bool(PASSWORD), "processing_pause": processing_pause_state()}
+    u, perms = _req_user_perms(request)
+    who = u or accounts.OWNER
+    layout = menu.load_layout(MENU_LAYOUT_PATH)
+    page = menu.page_for(request.path, request.args)
+    can_edit = role == "admin" or (page is not None and menu.level(who, perms, page) == "edit")
+    return {"viewer": role == "viewer", "has_login": bool(PASSWORD), "processing_pause": processing_pause_state(),
+            "nav_all": menu.nav_for(who, perms, layout), "can_edit": can_edit,
+            "can_journal": menu.level(who, perms, "journal") != "none"}
 
 
 # ── 자동 정리 일시정지 (2026-10-19) ──────────────────────────
@@ -3404,6 +3442,26 @@ def api_accounts():
         err = accounts.set_name(ACCOUNTS_PATH, uid, str(b.get("name") or ""))
     elif act == "delete":
         err = accounts.delete(ACCOUNTS_PATH, uid)
+    elif act == "perms":
+        # 메뉴별 권한(none/view/edit). 소유자 전용(설정·검색직·Claude·계정)은 줄 수 없고, 주의 메뉴(가계부·일기)는 confirm 필요
+        raw = b.get("perms") if isinstance(b.get("perms"), dict) else {}
+        perms, bad = {}, []
+        for k, v in raw.items():
+            if k not in menu.PAGES or v not in menu.LEVELS:
+                continue
+            if menu.PAGES[k].get("owner_only"):
+                if v != "none":
+                    bad.append(menu.PAGES[k]["label"])
+                continue
+            perms[k] = v
+        caution = [menu.PAGES[k]["label"] for k, v in perms.items() if menu.PAGES[k].get("caution") and v != "none"]
+        if bad:
+            err = f"소유자 전용이라 줄 수 없어요: {', '.join(bad)}"
+        elif caution and not b.get("confirm"):
+            return jsonify({"ok": False, "need_confirm": True, "caution": caution,
+                            "error": f"개인정보가 보여요: {', '.join(caution)} — 확인 후 다시 저장해 주세요."}), 409
+        else:
+            err = accounts.set_perms(ACCOUNTS_PATH, uid, perms)
     else:
         err = "모르는 작업이에요."
     if err:
