@@ -21,7 +21,7 @@
     .login h1 { margin: 4px 0 6px; font-size: 22px; }
     .login .sub { margin: 0 0 20px; color: var(--muted); }
     .login label.field { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
-    .login input[type=password] { width: 100%; height: 44px; margin-bottom: 14px; }
+    .login input[type=password], .login input#uid { width: 100%; height: 44px; margin-bottom: 14px; }
     .remember { display: flex; align-items: center; gap: 8px; margin-bottom: 18px; }
     .remember input { width: 18px; height: 18px; margin: 0; }
     .login .btn { width: 100%; height: 46px; font-size: 15px; }
@@ -47,6 +47,8 @@
       </form>
     {% else %}
       <form method="post" action="/login">
+        <label class="field" for="uid">아이디 <span class="hint">(관리자는 비워 두세요)</span></label>
+        <input id="uid" type="text" name="uid" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20">
         <label class="field" for="pw">비밀번호</label>
         <input id="pw" type="password" name="pw" autocomplete="current-password" required autofocus>
 

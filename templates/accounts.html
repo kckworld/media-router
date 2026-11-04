@@ -1,0 +1,94 @@
+{% set active_page = 'accounts' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .ac-list { list-style: none; margin: 0; padding: 0; }
+    .ac-item { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+    .ac-item:last-child { border-bottom: 0; }
+    .ac-main { flex: 1; min-width: 12em; }
+    .ac-id { font-weight: 700; color: var(--text); }
+    .ac-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .ac-badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 999px; margin-left: 6px; }
+    .ac-badge.owner { background: var(--accent-soft); color: var(--accent); }
+    .ac-badge.off { background: var(--surface-2); color: var(--danger); }
+    .ac-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .ac-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; align-items: end; }
+    .ac-form label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px; }
+    .ac-form input { width: 100%; box-sizing: border-box; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="section-title">계정</div>
+      <ul class="ac-list" id="acList">
+        <li class="ac-item">
+          <div class="ac-main"><span class="ac-id">owner</span><span class="ac-badge owner">소유자</span>
+            <div class="ac-sub">지금 관리자. 지우거나 막을 수 없고 모든 메뉴를 바꿀 수 있어요. 비밀번호는 서버 설정(환경 변수)에서 바꿔요. 로그인할 때 아이디는 비워 두면 돼요.</div></div>
+        </li>
+      </ul>
+      <div class="hint" style="margin-top:8px;">일반 계정은 지금은 예전 보기 전용과 같게(읽기만) 보여요. 메뉴별 권한(없음·보기·바꾸기)은 다음 단계에서 붙어요.</div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">계정 추가</div>
+      <form class="ac-form" id="addForm" autocomplete="off">
+        <div><label for="nId">아이디</label><input type="text" id="nId" maxlength="20" placeholder="영문 소문자·숫자·_" autocapitalize="none" spellcheck="false" required></div>
+        <div><label for="nName">이름</label><input type="text" id="nName" maxlength="30" placeholder="예: 아내"></div>
+        <div><label for="nPw">비밀번호 ({{ min_pw }}자 이상)</label><input type="password" id="nPw" autocomplete="new-password" required></div>
+        <div><button type="submit" class="btn primary" data-write>추가</button></div>
+      </form>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var ITEMS = {{ items | tojson }};
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function api(body) {
+      return fetch("/api/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(mrJson)
+        .then(function(res) {
+          if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "하지 못했어요", "error"); return false; }
+          ITEMS = res.data.items; render(); return true;
+        });
+    }
+    function render() {
+      var list = document.getElementById("acList");
+      list.querySelectorAll(".ac-item.user").forEach(function(li) { li.remove(); });
+      ITEMS.forEach(function(a) {
+        var li = document.createElement("li");
+        li.className = "ac-item user";
+        li.innerHTML = '<div class="ac-main"><span class="ac-id">' + esc(a.id) + '</span>' + (a.disabled ? '<span class="ac-badge off">막힘</span>' : '') +
+          '<div class="ac-sub">' + esc(a.name) + (a.legacy_viewer ? ' · 예전 보기 전용 비밀번호에서 옮김' : '') + ' · 만든 때 ' + esc(a.created) +
+          (a.changed ? ' · 바꾼 때 ' + esc(a.changed) : '') + '</div></div>' +
+          '<div class="ac-actions">' +
+          '<button type="button" class="btn small" data-write data-act="password">비밀번호 바꾸기</button>' +
+          '<button type="button" class="btn small" data-write data-act="' + (a.disabled ? 'enable">다시 열기' : 'disable">잠시 막기') + '</button>' +
+          '<button type="button" class="btn small" data-write data-act="delete">삭제</button></div>';
+        li.querySelectorAll("button").forEach(function(b) { b.onclick = function() { act(a, b.dataset.act); }; });
+        list.appendChild(li);
+      });
+    }
+    function act(a, what) {
+      if (what === "password") {
+        var pw = prompt("'" + a.id + "' 새 비밀번호({{ min_pw }}자 이상)");
+        if (!pw) return;
+        api({ action: "password", id: a.id, password: pw }).then(function(ok) { if (ok) showToast("비밀번호를 바꿨어요.", "success"); });
+      } else if (what === "delete") {
+        if (!confirm("'" + a.id + "' 계정을 지울까요? 그 계정의 로그인은 바로 끊겨요.")) return;
+        api({ action: "delete", id: a.id }).then(function(ok) { if (ok) showToast("지웠어요.", "success"); });
+      } else {
+        api({ action: what, id: a.id }).then(function(ok) { if (ok) showToast(what === "disable" ? "막았어요. 그 계정의 로그인은 바로 끊겨요." : "다시 열었어요.", "success"); });
+      }
+    }
+    document.getElementById("addForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      api({ action: "add", id: document.getElementById("nId").value.trim(), name: document.getElementById("nName").value.trim(),
+            password: document.getElementById("nPw").value }).then(function(ok) {
+        if (ok) { showToast("계정을 추가했어요.", "success"); e.target.reset(); }
+      });
+    });
+    render();
+  </script>
+{% endblock %}

@@ -738,20 +738,48 @@ TMDB_API_KEY = get_tmdb_api_key()
 def current_weekday() -> int:
     return datetime.now(APP_TZ).weekday()
 
-def session_role(req):
-    """로그인 역할: "admin"(관리자) / "viewer"(보기 전용) / None(로그인 안 됨).
-    관리자 비밀번호가 없으면(인증 끔) 누구나 관리자."""
-    if not PASSWORD:
-        return "admin"
+# 계정(11-04): 소유자(owner) = 예전 관리자, 그 밖은 data/accounts.json의 일반 계정(비밀번호 해시만). accounts.py 참고
+import accounts
+ACCOUNTS_PATH = DATA_DIR / "accounts.json"
+
+
+def _session_data(req) -> dict | None:
     token = req.cookies.get("media_admin", "")
-    if token:
-        try:
-            data = _session_serializer.loads(token, max_age=SESSION_MAX_AGE)
-            if data.get("a") is True:
-                return "viewer" if data.get("r") == "viewer" else "admin"
-        except (BadSignature, SignatureExpired):
-            pass
-    return None
+    if not token:
+        return None
+    try:
+        data = _session_serializer.loads(token, max_age=SESSION_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return None
+    return data if isinstance(data, dict) and data.get("a") is True else None
+
+
+def current_user(req) -> str | None:
+    """'owner'(소유자) / 일반 계정 아이디 / None. 막히거나 지워진 계정의 세션은 바로 무효"""
+    if not PASSWORD:
+        return accounts.OWNER
+    data = _session_data(req)
+    if not data:
+        return None
+    uid = data.get("u")
+    if uid:
+        return uid if uid != accounts.OWNER and accounts.active(ACCOUNTS_PATH, uid) else None
+    if data.get("r") == "viewer":          # 11-04 전 보기 전용 세션: 'viewer' 계정이 살아 있을 때만(옮기기 전이면 그대로)
+        store = accounts.load(ACCOUNTS_PATH)
+        acc = store["accounts"].get("viewer")
+        if acc is None:
+            return None if store.get("viewer_migrated") else "viewer"     # 옮긴 뒤 지웠으면 무효
+        return None if acc.get("disabled") else "viewer"
+    return accounts.OWNER
+
+
+def session_role(req):
+    """로그인 역할: "admin"(소유자) / "viewer"(일반 계정 — 1단계는 예전 보기 전용과 같게) / None(로그인 안 됨).
+    관리자 비밀번호가 없으면(인증 끔) 누구나 관리자."""
+    u = current_user(req)
+    if u is None:
+        return None
+    return "admin" if u == accounts.OWNER else "viewer"
 
 
 def authed(req):
@@ -766,7 +794,8 @@ VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users", "/skills", "/api/
                           "/diary", "/api/diary",          # 일기 메모(11-02)는 관리자만
                           "/recon", "/api/recon",          # 가계부 대조(11-03): 금융정보
                           "/journal", "/api/journal",      # 생활 > 일기(11-03): 가족 일기
-                          "/people", "/api/people")        # 생활 > 검색직(11-04): 직원 개인정보
+                          "/people", "/api/people",        # 생활 > 검색직(11-04): 직원 개인정보
+                          "/accounts", "/api/accounts")    # 설정 > 계정(11-04): 소유자만
 READONLY_MESSAGE = "읽기 전용 계정이라 바꿀 수 없어요."
 
 
@@ -3333,9 +3362,59 @@ def login_page():
         wait_seconds=wait_seconds,
     )
 
+
+# ── 설정 > 계정 (2026-11-04): 소유자만. 계정 추가·비밀번호 바꾸기·잠시 막기·삭제. 소유자 계정은 목록에만(못 바꿈) ──
+def _owner_only():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if current_user(request) != accounts.OWNER:
+        return jsonify({"ok": False, "error": "소유자만 할 수 있어요."}), 403
+    return None
+
+
+@app.route("/accounts", methods=["GET"])
+def accounts_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    if current_user(request) != accounts.OWNER:
+        return redirect("/?mode=check")
+    resp = make_response(render_template("accounts.html", authed=True, items=accounts.listing(ACCOUNTS_PATH),
+                                         min_pw=accounts.MIN_PW))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/api/accounts", methods=["POST"])
+def api_accounts():
+    """{action: add|password|disable|enable|rename|delete, id, name?, password?}"""
+    blocked = _owner_only()
+    if blocked:
+        return blocked
+    b = request.get_json(silent=True) or {}
+    act, uid = str(b.get("action") or ""), str(b.get("id") or "").strip().lower()
+    if act == "add":
+        err = accounts.add(ACCOUNTS_PATH, uid, str(b.get("name") or ""), str(b.get("password") or ""))
+    elif act == "password":
+        err = accounts.set_password(ACCOUNTS_PATH, uid, str(b.get("password") or ""))
+    elif act in ("disable", "enable"):
+        err = accounts.set_disabled(ACCOUNTS_PATH, uid, act == "disable")
+    elif act == "rename":
+        err = accounts.set_name(ACCOUNTS_PATH, uid, str(b.get("name") or ""))
+    elif act == "delete":
+        err = accounts.delete(ACCOUNTS_PATH, uid)
+    else:
+        err = "모르는 작업이에요."
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "items": accounts.listing(ACCOUNTS_PATH)})
+
+
 @app.route("/login", methods=["POST"])
 def login():
     pw=request.form.get("pw","")
+    uid = (request.form.get("uid") or "").strip().lower()
     remember = request.form.get("remember") == "1"
     if not PASSWORD:
         return redirect("/")
@@ -3345,17 +3424,24 @@ def login():
     if blocked_for > 0:
         return redirect(f"/login?error=2&wait={blocked_for}")
 
-    role = None
-    if hmac.compare_digest(pw.encode(), PASSWORD.encode()):
-        role = "admin"
-    elif VIEWER_PASSWORD and hmac.compare_digest(pw.encode(), VIEWER_PASSWORD.encode()):
-        role = "viewer"
-    if role:
+    # 아이디를 비우거나 owner면 소유자(예전 관리자 비밀번호). 비운 채 예전 보기 전용 비밀번호면 'viewer' 계정(처음 한 번 옮김)
+    user = None
+    if uid in ("", accounts.OWNER):
+        if hmac.compare_digest(pw.encode(), PASSWORD.encode()):
+            user = accounts.OWNER
+        elif uid == "" and VIEWER_PASSWORD and hmac.compare_digest(pw.encode(), VIEWER_PASSWORD.encode()):
+            accounts.migrate_viewer(ACCOUNTS_PATH, VIEWER_PASSWORD)
+            if accounts.verify(ACCOUNTS_PATH, "viewer", pw):
+                user = "viewer"
+    elif accounts.verify(ACCOUNTS_PATH, uid, pw):
+        user = uid
+    if user:
         _clear_login_failures(ip)
         resp=make_response(redirect("/"))
         max_age = 30 * 24 * 3600 if remember else 12 * 3600
-        # rm: '기억하기' 여부(검색직 비밀번호 다시 입력 때 쿠키 기간을 그대로 두려고, 11-04)
-        token = _session_serializer.dumps({"a": True, "rm": remember} if role == "admin" else {"a": True, "r": "viewer", "rm": remember})
+        # rm: '기억하기' 여부(검색직 비밀번호 다시 입력 때 쿠키 기간을 그대로 두려고, 11-04). u: 일반 계정 아이디
+        token = _session_serializer.dumps({"a": True, "rm": remember} if user == accounts.OWNER
+                                          else {"a": True, "u": user, "rm": remember})
         resp.set_cookie("media_admin", token, max_age=max_age, httponly=True, samesite="Lax", secure=request.is_secure)
         return resp
 
