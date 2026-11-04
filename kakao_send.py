@@ -25,6 +25,23 @@ class Fail(Exception):
     pass
 
 
+class Blocker(Fail):
+    """카톡에 인증·로그인·업데이트 같은 창이 떠 있음 - 그 창은 절대 건드리지 않고 멈춘다(11-04)"""
+    def __init__(self, title: str, shot: str = ""):
+        super().__init__(f"카톡에 '{title}' 창이 떠 있어요 - kakao-desktop에서 확인해 주세요 (보내지 않음)")
+        self.title, self.shot = title, shot
+
+
+# 이런 낱말이 든 창(또는 제목 있는 모르는 대화상자)이 보이면 손대지 않고 멈춘다(11-04 사용자: '카카오계정 인증' 창이 떠 있었음)
+BLOCK_WORDS = ("인증", "로그인", "계정", "보안", "업데이트", "login", "log in", "update", "verif", "auth", "security")
+BLOCK_EXCEPT = {"카카오계정"}          # 같은 이름의 채팅방(공식 알림 계정)은 막지 않음 — '카카오계정 인증' 같은 창은 막음
+BLOCKER_PNG = "/volume1/docker/media-router/data/kakao_blocker.png"   # MR 컨테이너에선 /app/data/kakao_blocker.png
+_XWD2PNG = (
+    "import sys,struct\nfrom PIL import Image\nd=sys.stdin.buffer.read()\nh=struct.unpack('>25I',d[:100])\n"
+    "o=h[0]+h[19]*12\nImage.frombuffer('RGBX',(h[4],h[5]),d[o:o+h[12]*h[5]],'raw','BGRX',h[12],1)"
+    ".convert('RGB').save(sys.stdout.buffer,'PNG')\n")
+
+
 def x(*args, stdin: bytes | None = None, timeout: int = 15, check: bool = True) -> str:
     """kakao-desktop 안에서 abc 사용자, DISPLAY=:1로 명령 실행"""
     cmd = DOCKER + ["exec"] + (["-i"] if stdin is not None else []) + ["-u", "abc", "-e", "DISPLAY=:1",
@@ -86,11 +103,50 @@ def _named_new(before: set, main: str) -> list[str]:
     return [w for w in visible_windows() if w not in before and w != main and win_name(w)]
 
 
+def is_blocker(name: str, dialog: bool = False) -> bool:
+    if not name or name == "KakaoTalk" or name in BLOCK_EXCEPT:
+        return False
+    low = name.lower()
+    return any(k in low for k in BLOCK_WORDS) or dialog
+
+
+def _is_dialog(w: str) -> bool:
+    return "DIALOG" in x("xprop", "-id", w, "_NET_WM_WINDOW_TYPE", check=False)
+
+
+def capture(w: str) -> str:
+    """그 창만 찍어 BLOCKER_PNG로(클릭·입력 없이 xwd로 읽기만). 실패하면 ''"""
+    try:
+        raw = subprocess.run(DOCKER + ["exec", "-u", "abc", "-e", "DISPLAY=:1", CONTAINER, "xwd", "-id", w, "-silent"],
+                             capture_output=True, timeout=20).stdout
+        png = subprocess.run(DOCKER + ["exec", "-i", CONTAINER, "/lsiopy/bin/python3", "-c", _XWD2PNG],
+                             input=raw, capture_output=True, timeout=30).stdout
+        if png.startswith(b"\x89PNG"):
+            with open(BLOCKER_PNG, "wb") as f:
+                f.write(png)
+            return BLOCKER_PNG
+    except Exception:
+        pass
+    return ""
+
+
+def check_blockers(rooms: tuple = ()) -> None:
+    """보이는 카톡 창 중 인증·로그인 같은 창(또는 제목 있는 모르는 대화상자)이 있으면 Blocker. 그 창엔 아무것도 안 함"""
+    for w in visible_windows():
+        name = win_name(w)
+        if not name or name in rooms or name == "KakaoTalk":
+            continue
+        if is_blocker(name, _is_dialog(w)):
+            raise Blocker(name, capture(w))
+
+
 def close_window(w: str, keep: str) -> bool:
     """방 창 w를 닫는다: 앞으로 가져와 활성 창이 정말 w이고 이름이 keep(찾는 방)·KakaoTalk이 아닐 때만 Alt+F4"""
     name = win_name(w)
     if not name or name in (keep, "KakaoTalk"):
         return False
+    if is_blocker(name, _is_dialog(w)):
+        raise Blocker(name, capture(w))                  # 인증·로그인 창은 닫지도 않는다
     x("xdotool", "windowactivate", "--sync", w, check=False, timeout=10)
     for _ in range(10):
         if active() == w:
@@ -123,6 +179,7 @@ def open_room(room: str) -> str:
             page = set()
             for y in ROW_YS:
                 tried += 1
+                check_blockers((room,))                          # 새로 뜬 인증 창이 있으면 더 누르지 않음
                 before = set(visible_windows())
                 focus(main, "KakaoTalk")
                 x("xdotool", "mousemove", "--window", main, str(ROW_X), str(y),
@@ -236,6 +293,7 @@ def prepare(room: str) -> dict:
     try:
         if "KakaoTalk.exe" not in x("pgrep", "-af", "KakaoTalk.exe", check=False):
             raise Fail("카톡이 실행 중이 아님")
+        check_blockers((room,))
         try:
             find_room(room)
             return {"ok": True, "message": f"'{room}' 창이 이미 열려 있음"}
@@ -245,6 +303,8 @@ def prepare(room: str) -> dict:
         open_room(room)
         find_room(room)
         return {"ok": True, "message": f"'{room}' 창을 열어 둠"}
+    except Blocker as e:
+        return {"ok": False, "message": str(e), "blocker": e.title, "shot": e.shot}
     except Fail as e:
         return {"ok": False, "message": str(e)}
     except Exception as e:
@@ -267,6 +327,7 @@ def main() -> dict:
     try:
         if "KakaoTalk.exe" not in x("pgrep", "-af", "KakaoTalk.exe", check=False):
             raise Fail("카톡이 실행 중이 아님")
+        check_blockers((room,))
         try:
             w = find_room(room)
         except Fail as e:
@@ -284,8 +345,11 @@ def main() -> dict:
                     raise
                 image_err = f" (포스터는 못 보냄: {e})"
             w = find_room(room)   # 그 사이 창이 닫혔거나 바뀌었으면 여기서 멈춘다
+        check_blockers((room,))                  # 보내기 직전에도 한 번 더
         send_text(w, room, text)
         return {"ok": True, "image": image, "message": f"'{room}'에 보냄" + image_err}
+    except Blocker as e:
+        return {"ok": False, "image": image, "message": str(e), "blocker": e.title, "shot": e.shot}
     except Fail as e:
         return {"ok": False, "image": image, "message": str(e)}
     except Exception as e:

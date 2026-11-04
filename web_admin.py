@@ -1471,6 +1471,38 @@ def _kakao_announce(poster: str, caption: str) -> None:
         _tg_notify(f"⚠ 카톡 '{room}' 방에 글은 보냈는데 {res['message'].split('(', 1)[-1].rstrip(')')}")
 
 
+# 카톡에 인증·로그인·업데이트 같은 창이 떠 있으면(kakao_send.py가 손대지 않고 멈춤) 하루 한 번 텔레그램 + 캡처(11-04)
+KAKAO_BLOCKER_STATE = DATA_DIR / "kakao_blocker_alert.json"
+KAKAO_BLOCKER_PNG = DATA_DIR / "kakao_blocker.png"
+
+
+def _kakao_blocker_alert(res: dict) -> bool:
+    day = datetime.now(APP_TZ).strftime("%Y-%m-%d")
+    try:
+        if json.loads(KAKAO_BLOCKER_STATE.read_text(encoding="utf-8")).get("day") == day:
+            return False
+    except (OSError, ValueError):
+        pass
+    try:
+        KAKAO_BLOCKER_STATE.write_text(json.dumps({"day": day, "title": res.get("blocker", "")}, ensure_ascii=False),
+                                       encoding="utf-8")
+    except OSError:
+        pass
+    text = (f"⚠ 카톡에 '{res.get('blocker', '')}' 창이 떠 있어요 — kakao-desktop에서 확인해 주세요\n"
+            "(카톡 보내기는 멈췄어요. 그 창은 건드리지 않았어요)")
+    tg = _tg_cfg()
+    if res.get("shot") and KAKAO_BLOCKER_PNG.exists() and tg.get("enabled") and tg.get("bot_token") and tg.get("chat_id"):
+        try:
+            with KAKAO_BLOCKER_PNG.open("rb") as f:
+                r = requests.post(f"https://api.telegram.org/bot{tg['bot_token']}/sendPhoto",
+                                  data={"chat_id": tg["chat_id"], "caption": text}, files={"photo": f}, timeout=20).json()
+            if r.get("ok"):
+                return True
+        except Exception as e:
+            app.logger.warning("카톡 창 알림 사진 전송 실패: %s", type(e).__name__)
+    return _tg_notify(text)
+
+
 # ── 내부 카톡 보내기 API (2026-11-03): n8n(날씨 06:00·18:00 등)이 부른다. NAS 안에서만, 비밀 키 헤더, 허용 방만 ──
 INTERNAL_KEY_PATH = DATA_DIR / "internal_api_key"
 # 엉뚱한 방 사고 방지(시험방 "김창기"와 단톡방 "김창기NAS 고객방"처럼 이름이 비슷함): 목록에 있는 방만 보낸다
@@ -1545,6 +1577,8 @@ def _kakao_send(room: str, poster: str, text: str) -> dict:
         return {"ok": False, "message": f"NAS 연결 실패: {e}"}
     try:
         res = json.loads(r.stdout.strip().splitlines()[-1])
+        if isinstance(res, dict) and res.get("blocker"):
+            _kakao_blocker_alert(res)
         return res if isinstance(res, dict) else {"ok": False, "message": "응답 형식이 이상해요"}
     except (ValueError, IndexError):
         return {"ok": False, "message": f"응답을 못 읽었어요 (종료코드 {r.returncode}): {(r.stderr or r.stdout).strip()[:150]}"}
@@ -2161,7 +2195,9 @@ def _kakao_prepare_run(room: str) -> dict:
         except Exception as e:
             res = {"ok": False, "message": f"실행 실패: {type(e).__name__}"}
     app.logger.info("카톡 방 미리 열기 %s: %s", room, "성공" if res.get("ok") else "실패")
-    if not res.get("ok"):
+    if res.get("blocker"):
+        _kakao_blocker_alert(res)
+    elif not res.get("ok"):
         _tg_notify(f"⚠ 카톡 '{room}' 방 창을 미리 열지 못했어요(06:00 날씨가 텔레그램으로 갈 수 있어요)\n{res.get('message', '')}\n"
                    "kakao-desktop 화면에서 카톡을 띄우고 그 방을 열어 두면 돼요.")
     return res

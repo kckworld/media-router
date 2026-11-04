@@ -6,6 +6,28 @@ import pytest
 
 import web_admin
 
+
+def test_blocker_alert_once_a_day_with_photo(monkeypatch, tmp_path):
+    """카톡에 인증 창이 떠 있으면 하루 한 번 텔레그램(캡처 사진, 없으면 글) (11-04)"""
+    monkeypatch.setattr(web_admin, "KAKAO_BLOCKER_STATE", tmp_path / "state.json")
+    monkeypatch.setattr(web_admin, "KAKAO_BLOCKER_PNG", tmp_path / "shot.png")
+    (tmp_path / "shot.png").write_bytes(b"\x89PNG fake")
+    monkeypatch.setattr(web_admin, "_tg_cfg", lambda: {"enabled": True, "bot_token": "t", "chat_id": "1"})
+    photos, texts = [], []
+
+    class R:
+        def json(self):
+            return {"ok": True}
+    monkeypatch.setattr(web_admin.requests, "post", lambda url, data=None, files=None, timeout=None: photos.append(data["caption"]) or R())
+    monkeypatch.setattr(web_admin, "_tg_notify", lambda text, *a, **k: texts.append(text) or True)
+    res = {"ok": False, "blocker": "카카오계정 인증", "shot": "/x.png"}
+    assert web_admin._kakao_blocker_alert(res) is True
+    assert web_admin._kakao_blocker_alert(res) is False                       # 같은 날 두 번째는 안 보냄
+    assert len(photos) == 1 and "'카카오계정 인증' 창이 떠 있어요" in photos[0] and not texts
+    (tmp_path / "state.json").unlink()
+    assert web_admin._kakao_blocker_alert({"ok": False, "blocker": "로그인", "shot": ""})   # 캡처 없으면 글로
+    assert texts and "'로그인'" in texts[0]
+
 LAN = {"REMOTE_ADDR": "172.17.0.5"}       # n8n 도커 브리지에서 온 것처럼
 
 

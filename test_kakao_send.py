@@ -16,9 +16,21 @@ class FakeX:
         self.steal, self.stubborn = steal_after_paste, stubborn
         self.rows = rows or {}          # 채팅 목록 줄 y → 더블클릭하면 열리는 방 이름
         self.next_id = 100
+        self.dialogs = set()            # 대화상자 창 id
+        self.popup_on_row = {}          # 줄 y → 그 줄을 누르면 같이 뜨는 창 이름(인증 창 흉내)
+        self.clicks = []
 
     def __call__(self, *args, stdin=None, timeout=15, check=True):
         a = list(args)
+        if a[0] == "xprop":
+            return "_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_DIALOG" if a[2] in self.dialogs else "_NET_WM_WINDOW_TYPE_NORMAL"
+        if a[:2] == ["xdotool", "mousemove"]:
+            self.clicks.append(a[3:])
+            pop = self.popup_on_row.get(int(a[5])) if len(a) > 5 and a[5].isdigit() and a[-1] == "1" else None
+            if pop:
+                self.next_id += 1
+                self.windows[str(self.next_id)] = pop
+                return ""
         if a[0] == "pgrep":
             return "3958 C:\\Program Files (x86)\\Kakao\\KakaoTalk\\KakaoTalk.exe"
         if a[:2] == ["xdotool", "search"]:
@@ -136,3 +148,60 @@ def test_window_that_will_not_focus(monkeypatch, tmp_path):
 @pytest.mark.parametrize("req", [{"room": "", "text": "a"}, {"room": "김창기", "text": " "}])
 def test_empty_input(monkeypatch, tmp_path, req):
     assert not run(monkeypatch, tmp_path, FakeX({}), req)["ok"]
+
+
+# ── 인증·로그인 같은 창이 떠 있으면 손대지 않고 멈춤 (11-04) ──
+
+def _blk(monkeypatch):
+    shots = []
+    monkeypatch.setattr(ks, "capture", lambda w: shots.append(w) or "/x/kakao_blocker.png")
+    return shots
+
+
+def test_auth_window_stops_before_anything(monkeypatch, tmp_path):
+    shots = _blk(monkeypatch)
+    fake = FakeX({"12": "KakaoTalk", "11": "김창기", "30": "카카오계정 인증"}, active="12")
+    r = run(monkeypatch, tmp_path, fake, {"room": "김창기", "text": "안내"})
+    assert not r["ok"] and r["blocker"] == "카카오계정 인증" and r["shot"].endswith(".png")
+    assert "카카오계정 인증" in r["message"] and shots == ["30"]
+    assert not fake.keys and not fake.clicks                                  # 클릭·입력 전혀 없음
+    assert "30" in fake.windows                                               # 그 창은 그대로
+
+
+def test_kakao_account_chat_room_is_not_blocker(monkeypatch, tmp_path):
+    _blk(monkeypatch)
+    fake = FakeX({"12": "KakaoTalk", "11": "김창기", "31": "카카오계정"}, active="12")
+    r = run(monkeypatch, tmp_path, fake, {"room": "김창기", "text": "안내"})
+    assert r["ok"], r
+
+
+def test_unknown_titled_dialog_and_update_window(monkeypatch, tmp_path):
+    _blk(monkeypatch)
+    fake = FakeX({"12": "KakaoTalk", "11": "김창기", "40": "알림"}, active="12")
+    fake.dialogs.add("40")
+    r = run(monkeypatch, tmp_path, fake, {"room": "김창기", "text": "안내"})
+    assert not r["ok"] and r["blocker"] == "알림"
+    fake2 = FakeX({"12": "KakaoTalk", "11": "김창기", "41": "KakaoTalk Update"}, active="12")
+    assert run(monkeypatch, tmp_path, fake2, {"room": "김창기", "text": "x"})["blocker"] == "KakaoTalk Update"
+
+
+def test_auth_window_popping_up_while_searching(monkeypatch, tmp_path):
+    """방을 찾다가 인증 창이 뜨면 더 누르지 않고, 그 창은 닫지도 않음"""
+    _blk(monkeypatch)
+    fake = FakeX({"12": "KakaoTalk"}, active="12", rows={150: "김창기NAS 고객방", 290: "김창기"})
+    fake.popup_on_row = {150: "로그인"}
+    r = run(monkeypatch, tmp_path, fake, {"room": "김창기", "text": "안내"})
+    assert not r["ok"] and r["blocker"] == "로그인"
+    assert "로그인" in fake.windows.values()
+    assert not any(k[0] == "alt+F4" and k[1] == "로그인" for k in fake.keys)
+    assert ["Return"] not in fake.keys
+
+
+def test_prepare_reports_blocker(monkeypatch, tmp_path):
+    _blk(monkeypatch)
+    fake = FakeX({"12": "KakaoTalk", "30": "보안 인증"}, active="12")
+    monkeypatch.setattr(ks, "x", fake)
+    monkeypatch.setattr(ks.time, "sleep", lambda s: None)
+    monkeypatch.setattr(ks, "LOCK", str(tmp_path / "lock"))
+    r = ks.prepare("건이네가족")
+    assert not r["ok"] and r["blocker"] == "보안 인증" and not fake.clicks
