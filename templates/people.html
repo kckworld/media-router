@@ -1,0 +1,94 @@
+{% set active_page = 'people' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .pp-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .pp-form select { min-width: 6.5em; }
+    .pp-form input { flex: 1; min-width: 12em; font: inherit; font-size: 16px; padding: 9px 12px; border: 1px solid var(--line);
+      border-radius: 10px; background: var(--surface); color: var(--text); }
+    .pp-sum { margin: 10px 2px 6px; color: var(--muted); font-size: 13px; }
+    .pp-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; background: var(--surface); }
+    .pp-name { font-size: 18px; font-weight: 700; color: var(--text); }
+    .pp-org { color: var(--muted); font-size: 13px; margin-top: 2px; }
+    .pp-grid { display: grid; grid-template-columns: 5.5em 1fr; gap: 4px 10px; margin-top: 8px; font-size: 14px; }
+    .pp-grid dt { color: var(--muted); }
+    .pp-grid dd { margin: 0; word-break: break-all; }
+    .pp-grid a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .pp-list { list-style: none; margin: 0; padding: 0; }
+    .pp-list li { border-bottom: 1px solid var(--line); }
+    .pp-list button { width: 100%; text-align: left; background: none; border: 0; padding: 10px 4px; cursor: pointer; color: var(--text);
+      display: grid; grid-template-columns: 5.5em 1fr auto; gap: 8px; font: inherit; font-size: 14px; }
+    .pp-list .sub { color: var(--muted); font-size: 13px; }
+    .pp-empty { color: var(--muted); padding: 12px 2px; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      {% if not ready %}<div class="banner err">직원 데이터를 불러오지 못했어요(검색직 봇 데이터 파일 확인 필요).</div>{% endif %}
+      <form class="pp-form" id="ppForm" autocomplete="off">
+        <select id="mode" aria-label="검색 종류">
+          {% for k, label in modes %}<option value="{{ k }}">{{ label }}</option>{% endfor %}
+        </select>
+        <input type="search" id="q" maxlength="50" placeholder="이름" aria-label="검색어" autocomplete="off" spellcheck="false" autofocus>
+        <button type="submit" class="btn primary">검색</button>
+      </form>
+      <div class="hint" id="hint" style="margin-top:6px;">검색직 봇과 같은 방식이에요. 이름은 10명 이하면 바로 자세히 보여요.</div>
+    </div>
+    <div class="card">
+      <div class="pp-sum" id="sum" role="status" aria-live="polite"></div>
+      <div id="out"><div class="pp-empty">검색어를 넣어 주세요.</div></div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var HINTS = { search_name: "이름", search_org: "소속 (예: 영업)", search_empYmd: "입사일 8자리 (예: 20200302)",
+                  search_birthYear: "생년 (예: 1990)", search_birthMonth: "생월 (예: 3)", search_jikwee: "직위",
+                  search_jikchak: "직책", search_jikgub: "직군" };
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function ymd(v) { v = String(v || ""); return v.length === 8 ? v.slice(0, 4) + "." + v.slice(4, 6) + "." + v.slice(6) : (v || "-"); }
+    function tel(v) { if (!v) return "-"; var n = String(v).replace(/[^0-9+]/g, ""); return '<a href="tel:' + esc(n) + '">' + esc(v) + "</a>"; }
+    function card(e) {
+      var rows = [["소속", esc(e.orignOrgNm || "-")]];
+      if (e.prevOrgNm) rows.push(["이전 소속", esc(e.prevOrgNm)]);
+      rows = rows.concat([["직위", esc(e.jikweeNm || "-")], ["직책", esc(e.jikchakNm || "-")], ["직군", esc(e.jikgubNm || "-")],
+        ["상태", esc(e.statusNm || "-")], ["사번", esc(e.sabun || "-")], ["입사일", ymd(e.empYmd)], ["생년월일", ymd(e.birYmd)],
+        ["연락처", tel(e.handPhone)], ["내선", tel(e.officeTel)],
+        ["이메일", e.mailId ? '<a href="mailto:' + esc(e.mailId) + '">' + esc(e.mailId) + "</a>" : "-"]]);
+      return '<div class="pp-card"><div class="pp-name">' + esc(e.name || "-") + '</div><div class="pp-org">' + esc(e.orignOrgNm || "") +
+        '</div><dl class="pp-grid">' + rows.map(function(r) { return "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>"; }).join("") + "</dl></div>";
+    }
+    function post(url, body) {
+      return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" }).then(mrJson);
+    }
+    $("mode").addEventListener("change", function() { $("q").placeholder = HINTS[this.value] || ""; $("q").focus(); });
+    $("ppForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      var q = $("q").value.trim();
+      if (!q) { $("q").focus(); return; }
+      $("sum").textContent = "찾는 중…";
+      post("/api/people/search", { mode: $("mode").value, q: q }).then(function(res) {
+        if (!res.ok || !res.data.ok) { $("sum").textContent = ""; $("out").innerHTML = '<div class="pp-empty">' + esc((res.data && res.data.error) || "검색하지 못했어요") + "</div>"; return; }
+        var d = res.data;
+        if (!d.total) { $("sum").textContent = "찾는 사람이 없어요."; $("out").innerHTML = ""; return; }
+        if (d.detail) { $("sum").textContent = d.total + "명"; $("out").innerHTML = d.detail.map(card).join(""); return; }
+        $("sum").textContent = d.total + "명" + (d.total > d.list.length ? " (앞 " + d.list.length + "명만)" : "") + " — 눌러서 자세히";
+        $("out").innerHTML = '<ul class="pp-list">' + d.list.map(function(e) {
+          return '<li><button type="button" data-sabun="' + esc(e.sabun) + '"><span>' + esc(e.name || "-") + '</span><span class="sub">' +
+            esc(e.orignOrgNm || "-") + " · " + esc(e.jikgubNm || "-") + '</span><span class="sub">' + ymd(e.birYmd) + "</span></button><div></div></li>";
+        }).join("") + "</ul>";
+      }).catch(function() { $("sum").textContent = "검색하지 못했어요."; });
+    });
+    $("out").addEventListener("click", function(e) {
+      var b = e.target.closest("button[data-sabun]"); if (!b) return;
+      var box = b.nextElementSibling;
+      if (box.innerHTML) { box.innerHTML = ""; return; }
+      post("/api/people/detail", { sabun: b.dataset.sabun }).then(function(res) {
+        box.innerHTML = res.ok && res.data.ok ? card(res.data.detail) : '<div class="pp-empty">' + esc((res.data && res.data.error) || "못 불러왔어요") + "</div>";
+      });
+    });
+  </script>
+{% endblock %}

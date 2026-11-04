@@ -722,7 +722,8 @@ VIEWER_HIDDEN_PREFIXES = ("/settings", "/users", "/api/users", "/skills", "/api/
                           "/requests", "/api/requests",  # 요청 목록엔 단톡방 사람 이름이 있다
                           "/diary", "/api/diary",          # 일기 메모(11-02)는 관리자만
                           "/recon", "/api/recon",          # 가계부 대조(11-03): 금융정보
-                          "/journal", "/api/journal")      # 생활 > 일기(11-03): 가족 일기
+                          "/journal", "/api/journal",      # 생활 > 일기(11-03): 가족 일기
+                          "/people", "/api/people")        # 생활 > 검색직(11-04): 직원 개인정보
 READONLY_MESSAGE = "읽기 전용 계정이라 바꿀 수 없어요."
 
 
@@ -1700,6 +1701,69 @@ def api_surveys_merge():
     if not item:
         return jsonify({"ok": False, "error": "답을 찾지 못했어요. 새로고침해 주세요."}), 404
     return jsonify({"ok": True, "item": item})
+
+
+# ── 생활 > 검색직 (2026-11-04, 사용자 본인만): 검색직 봇과 같은 직원 검색. 직원 개인정보라
+#    관리자만(보기 전용은 위 VIEWER_HIDDEN_PREFIXES로 403, 공개 주소 404), 검색은 POST(접근 로그에 검색어 안 남게),
+#    검색어·결과는 로그·파일·텔레그램 어디에도 안 남김, 분당 30회 제한, 데이터는 읽기 전용 단일 파일 마운트를 메모리에만.
+import employee_search
+EMPLOYEE_JSON = Path(os.getenv("EMPLOYEE_JSON", "/app/ext/employees.json"))
+_people_limit = media_requests.RateLimiter(30, 60)
+
+
+def _people_guard():
+    """관리자만. 보기 전용은 _readonly_guard가 먼저 403을 준다. 여기선 로그인·관리자·횟수만 본다."""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if session_role(request) != "admin":
+        return jsonify({"ok": False, "error": "관리자만 쓸 수 있어요."}), 403
+    if not _people_limit.allow("admin"):
+        return jsonify({"ok": False, "error": "조회가 너무 많아요. 1분 뒤에 다시 해 주세요."}), 429
+    return None
+
+
+def _no_store(resp):
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/people", methods=["GET"])
+def people_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    if session_role(request) != "admin":
+        return redirect("/?mode=check")
+    return _no_store(make_response(render_template("people.html", authed=True, modes=employee_search.MODES,
+                                                   ready=employee_search.load(EMPLOYEE_JSON) is not None)))
+
+
+@app.route("/api/people/search", methods=["POST"])
+def api_people_search():
+    blocked = _people_guard()
+    if blocked:
+        return blocked
+    emps = employee_search.load(EMPLOYEE_JSON)
+    if emps is None:
+        return jsonify({"ok": False, "error": "직원 데이터를 불러오지 못했어요."}), 503
+    body = request.get_json(silent=True) or {}
+    q = str(body.get("q") or "")[:50]
+    return _no_store(jsonify(dict(employee_search.search(emps, str(body.get("mode") or ""), q), ok=True)))
+
+
+@app.route("/api/people/detail", methods=["POST"])
+def api_people_detail():
+    blocked = _people_guard()
+    if blocked:
+        return blocked
+    emps = employee_search.load(EMPLOYEE_JSON)
+    if emps is None:
+        return jsonify({"ok": False, "error": "직원 데이터를 불러오지 못했어요."}), 503
+    d = employee_search.detail(emps, (request.get_json(silent=True) or {}).get("sabun"))
+    if not d:
+        return jsonify({"ok": False, "error": "찾지 못했어요."}), 404
+    return _no_store(jsonify({"ok": True, "detail": d}))
 
 
 # ── 가계부 대조 (2026-11-03): 카드 명세서 ↔ 편한가계부 결과(data/card_recon/YYYY-MM.json, 팀장의 card-recon/recon.py가 만듦)

@@ -90,7 +90,8 @@ def test_life_group_menu_and_swipe_order(dy, monkeypatch):
     assert 'class="icon-btn diary-btn" href="/journal"' in html               # 상단 ✎ 일기 버튼 → 생활 > 일기
     order = re.findall(r'href="([^"]+)"', re.search(r'<nav id="pageOrder".*?</nav>', html, re.S).group(0))
     assert order.index("/encode_log") + 1 == order.index("/recon") and order.index("/recon") + 1 == order.index("/journal")
-    assert order.index("/journal") + 1 == order.index("/settings") and "/diary" not in order
+    assert order.index("/journal") + 1 == order.index("/people") and order.index("/people") + 1 == order.index("/settings")
+    assert "/diary" not in order
     nav = re.search(r'<nav class="bottomnav".*?</nav>', html, re.S).group(0)
     assert ">생활<" in nav.replace("</svg>", ">") and 'href="/recon"' in nav
     assert "tab-swipe.js" in c.get("/journal").get_data(as_text=True)          # 일기 화면에서도 스와이프 됨
