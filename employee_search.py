@@ -16,7 +16,7 @@ MODES = [("search_name", "이름"), ("search_org", "소속"), ("search_empYmd", 
 FIELD_BY_MODE = {"search_name": "name", "search_org": "orignOrgNm", "search_jikwee": "jikweeNm",
                  "search_jikchak": "jikchakNm", "search_jikgub": "jikgubNm"}
 MAX_DETAIL = 10
-MAX_LIST = 300
+MAX_LIST = 100        # 11-04 인사팀 권고·사용자 결정: 300 → 100
 DETAIL_FIELDS = ("name", "orignOrgNm", "prevOrgNm", "jikweeNm", "jikchakNm", "jikgubNm", "statusNm", "sabun",
                  "empYmd", "birYmd", "handPhone", "officeTel", "mailId")
 LIST_FIELDS = ("name", "orignOrgNm", "jikgubNm", "birYmd", "sabun")
@@ -58,7 +58,8 @@ def run_search(employees: list, mode: str, value: str) -> list:
 
 
 def search(employees: list, mode: str, value: str) -> dict:
-    """{total, detail:[...]} (이름 검색이고 10명 이하) 또는 {total, list:[...]} (생년월일 순, 최대 300)"""
+    """{total, detail:[...]} (이름 검색이고 10명 이하) 또는 {total, list:[...]} (생년월일 순, 최대 MAX_LIST)
+    목록 줄의 key는 사번, 사번이 없으면(조직도로 추가된 약 100명) 메일 — 눌러서 상세 볼 때 쓴다"""
     value = (value or "").strip()
     if mode not in dict(MODES):
         mode = "search_name"
@@ -70,14 +71,20 @@ def search(employees: list, mode: str, value: str) -> dict:
     if mode == "search_name" and len(res) <= MAX_DETAIL:
         return {"total": len(res), "mode": mode, "detail": [{k: e.get(k) for k in DETAIL_FIELDS} for e in res]}
     res = sorted(res, key=lambda e: e.get("birYmd") or "")
-    return {"total": len(res), "mode": mode, "list": [{k: e.get(k) for k in LIST_FIELDS} for e in res[:MAX_LIST]]}
+    return {"total": len(res), "mode": mode,
+            "list": [dict({k: e.get(k) for k in LIST_FIELDS}, key=_key(e)) for e in res[:MAX_LIST]]}
 
 
-def detail(employees: list, sabun: str) -> dict | None:
-    sabun = str(sabun or "").strip()
-    if not sabun:
+def _key(e: dict) -> str:
+    return str(e.get("sabun") or e.get("mailId") or "")
+
+
+def detail(employees: list, key: str) -> dict | None:
+    """사번으로, 사번이 없는 사람은 메일로 찾는다"""
+    key = str(key or "").strip()
+    if not key:
         return None
     for e in employees:
-        if str(e.get("sabun") or "") == sabun:
+        if _key(e) == key:
             return {k: e.get(k) for k in DETAIL_FIELDS}
     return None

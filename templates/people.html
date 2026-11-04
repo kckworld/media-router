@@ -25,6 +25,18 @@
 {% endblock %}
 
 {% block content %}
+    {% if reauth %}
+    <div class="card">
+      <div class="section-title">비밀번호 다시 입력</div>
+      <div class="hint">검색직은 직원 개인정보라 로그인한 지 24시간이 지나면 비밀번호를 한 번 더 확인해요.</div>
+      {% if reauth_error == 'wrong' %}<div class="banner err" style="margin-top:8px;">비밀번호가 맞지 않아요.</div>{% endif %}
+      {% if reauth_error == 'locked' %}<div class="banner err" style="margin-top:8px;">너무 많이 틀려서 잠시 잠겼어요. 조금 뒤에 다시 해 주세요.</div>{% endif %}
+      <form class="pp-form" method="post" action="/people/reauth" style="margin-top:10px;">
+        <input type="password" name="pw" aria-label="관리자 비밀번호" autocomplete="current-password" required autofocus>
+        <button type="submit" class="btn primary">확인</button>
+      </form>
+    </div>
+    {% else %}
     <div class="card">
       {% if not ready %}<div class="banner err">직원 데이터를 불러오지 못했어요(검색직 봇 데이터 파일 확인 필요).</div>{% endif %}
       <form class="pp-form" id="ppForm" autocomplete="off">
@@ -40,9 +52,11 @@
       <div class="pp-sum" id="sum" role="status" aria-live="polite"></div>
       <div id="out"><div class="pp-empty">검색어를 넣어 주세요.</div></div>
     </div>
+    {% endif %}
 {% endblock %}
 
 {% block scripts %}
+{% if not reauth %}
   <script>
     var HINTS = { search_name: "이름", search_org: "소속 (예: 영업)", search_empYmd: "입사일 8자리 (예: 20200302)",
                   search_birthYear: "생년 (예: 1990)", search_birthMonth: "생월 (예: 3)", search_jikwee: "직위",
@@ -62,7 +76,11 @@
         '</div><dl class="pp-grid">' + rows.map(function(r) { return "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>"; }).join("") + "</dl></div>";
     }
     function post(url, body) {
-      return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" }).then(mrJson);
+      return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" })
+        .then(mrJson).then(function(res) {
+          if (res.data && res.data.reauth) { location.reload(); }     // 로그인 24시간이 지나면 비밀번호 다시 입력 화면으로
+          return res;
+        });
     }
     $("mode").addEventListener("change", function() { $("q").placeholder = HINTS[this.value] || ""; $("q").focus(); });
     $("ppForm").addEventListener("submit", function(e) {
@@ -77,18 +95,19 @@
         if (d.detail) { $("sum").textContent = d.total + "명"; $("out").innerHTML = d.detail.map(card).join(""); return; }
         $("sum").textContent = d.total + "명" + (d.total > d.list.length ? " (앞 " + d.list.length + "명만)" : "") + " — 눌러서 자세히";
         $("out").innerHTML = '<ul class="pp-list">' + d.list.map(function(e) {
-          return '<li><button type="button" data-sabun="' + esc(e.sabun) + '"><span>' + esc(e.name || "-") + '</span><span class="sub">' +
+          return '<li><button type="button" data-key="' + esc(e.key) + '"><span>' + esc(e.name || "-") + '</span><span class="sub">' +
             esc(e.orignOrgNm || "-") + " · " + esc(e.jikgubNm || "-") + '</span><span class="sub">' + ymd(e.birYmd) + "</span></button><div></div></li>";
         }).join("") + "</ul>";
       }).catch(function() { $("sum").textContent = "검색하지 못했어요."; });
     });
     $("out").addEventListener("click", function(e) {
-      var b = e.target.closest("button[data-sabun]"); if (!b) return;
+      var b = e.target.closest("button[data-key]"); if (!b) return;
       var box = b.nextElementSibling;
       if (box.innerHTML) { box.innerHTML = ""; return; }
-      post("/api/people/detail", { sabun: b.dataset.sabun }).then(function(res) {
+      post("/api/people/detail", { key: b.dataset.key }).then(function(res) {
         box.innerHTML = res.ok && res.data.ok ? card(res.data.detail) : '<div class="pp-empty">' + esc((res.data && res.data.error) || "못 불러왔어요") + "</div>";
       });
     });
   </script>
+{% endif %}
 {% endblock %}

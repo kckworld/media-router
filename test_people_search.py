@@ -26,9 +26,93 @@ def pp(monkeypatch, tmp_path):
     monkeypatch.setattr(web_admin, "_people_limit", media_requests.RateLimiter(30, 60))
     monkeypatch.setattr(web_admin, "authed", lambda req: True)
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
+    monkeypatch.setattr(web_admin, "_people_fresh", lambda req: True)
+    alerts = []
+    monkeypatch.setattr(web_admin, "_people_note_lookup", lambda req: alerts.append(1))
     es._cache.update(mtime=None, data=None)
     web_admin.app.config["TESTING"] = True
     return web_admin.app.test_client(), f
+
+
+def test_stale_session_needs_password_again(pp, monkeypatch):
+    """11-04 사용자 결정: 로그인한 지 24시간 넘은 세션은 검색직에서 비밀번호 다시"""
+    c, f = pp
+    monkeypatch.setattr(web_admin, "_people_fresh", lambda req: False)
+    r = c.post("/api/people/search", json={"q": "홍"})
+    assert r.status_code == 401 and r.get_json()["reauth"] is True
+    html = c.get("/people").get_data(as_text=True)
+    assert "비밀번호 다시 입력" in html and 'id="ppForm"' not in html
+
+
+def test_session_age_from_token(monkeypatch):
+    from werkzeug.test import EnvironBuilder
+    import time as _t
+    monkeypatch.setattr(web_admin, "PASSWORD", "pw")
+    tok = web_admin._session_serializer.dumps({"a": True})
+    req = web_admin.app.request_class(EnvironBuilder(headers={"Cookie": f"media_admin={tok}"}).get_environ())
+    assert web_admin._session_login_age(req) < 5 and web_admin._people_fresh(req)
+    later = _t.time() + 25 * 3600
+    monkeypatch.setattr(web_admin.time, "time", lambda: later)
+    assert not web_admin._people_fresh(req)                                    # 25시간 뒤
+    bad = web_admin.app.request_class(EnvironBuilder(headers={"Cookie": "media_admin=x"}).get_environ())
+    assert web_admin._session_login_age(bad) is None and not web_admin._people_fresh(bad)
+
+
+def test_reauth_flow(pp, monkeypatch):
+    c, f = pp
+    monkeypatch.setattr(web_admin, "PASSWORD", "right-pw")
+    monkeypatch.setattr(web_admin, "_login_failures", {})
+    monkeypatch.setattr(web_admin, "_login_global", {"fails": [], "locked_until": 0.0})
+    r = c.post("/people/reauth", data={"pw": "wrong"})
+    assert r.headers["Location"].endswith("/people?e=wrong")
+    for _ in range(5):
+        r = c.post("/people/reauth", data={"pw": "wrong"})
+    assert r.headers["Location"].endswith("/people?e=locked")                  # 로그인과 같은 잠금
+    monkeypatch.setattr(web_admin, "_login_failures", {})
+    r = c.post("/people/reauth", data={"pw": "right-pw"})
+    assert r.headers["Location"].endswith("/people") and "media_admin=" in r.headers.get("Set-Cookie", "")
+
+
+def test_lookup_alert_batched_without_query(monkeypatch):
+    """조회 알림: 10분 묶음의 첫 번째만 바로, 나머지는 세었다가 한 번에. 검색어·결과는 안 넣음"""
+    from werkzeug.test import EnvironBuilder
+    sent, timers = [], []
+    monkeypatch.setattr(web_admin, "_tg_notify", lambda text, *a, **k: sent.append(text) or True)
+    monkeypatch.setattr(web_admin.threading, "Thread", lambda target, daemon=None: type("T", (), {"start": lambda s: target()})())
+
+    class FakeTimer:
+        def __init__(self, sec, fn):
+            self.fn = fn
+            self.daemon = False
+            timers.append(self)
+
+        def start(self):
+            pass
+    monkeypatch.setattr(web_admin.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(web_admin, "_people_alert", {"until": 0.0, "count": 0, "ip": "", "timer": None})
+    req = web_admin.app.request_class(EnvironBuilder(environ_base={"REMOTE_ADDR": "192.168.50.123"}).get_environ())
+    for _ in range(4):
+        web_admin._people_note_lookup(req)
+    assert len(sent) == 1 and sent[0].startswith("🔎 검색직 조회됨") and "…123" in sent[0] and "192.168" not in sent[0]
+    timers[0].fn()
+    assert len(sent) == 2 and "3번 더 조회됨" in sent[1]
+
+
+def test_list_max_100_and_detail_by_mail(pp):
+    c, f = pp
+    many = [{"name": f"박가짜{i}", "orignOrgNm": "본사", "birYmd": "19900101", "sabun": f"P{i}"} for i in range(150)]
+    many.append({"name": "사번없음", "orignOrgNm": "본사", "mailId": "nosabun@example.com"})
+    f.write_text(json.dumps(FAKE + many, ensure_ascii=False), encoding="utf-8")
+    import os, time
+    os.utime(f, (time.time() + 9, time.time() + 9))
+    r = c.post("/api/people/search", json={"mode": "search_org", "q": "본사"}).get_json()
+    assert r["total"] == 151 and len(r["list"]) == 100
+    r2 = c.post("/api/people/search", json={"mode": "search_name", "q": "사번없음"}).get_json()
+    assert r2["detail"][0]["mailId"] == "nosabun@example.com"
+    lst = c.post("/api/people/search", json={"mode": "search_org", "q": "본"}).get_json()["list"]
+    assert all(row["key"] for row in lst)
+    d = c.post("/api/people/detail", json={"key": "nosabun@example.com"}).get_json()
+    assert d["ok"] and d["detail"]["name"] == "사번없음"                       # 사번 없는 사람도 상세 열림
 
 
 def test_search_like_bot(pp):

@@ -1754,17 +1754,77 @@ def api_surveys_merge():
 import employee_search
 EMPLOYEE_JSON = Path(os.getenv("EMPLOYEE_JSON", "/app/ext/employees.json"))
 _people_limit = media_requests.RateLimiter(30, 60)
+# 11-04 사용자 결정(인사팀 권고): 검색직은 비밀번호를 입력한 지 24시간 안의 세션만(다른 화면은 30일 그대로),
+# 조회마다 텔레그램 알림(검색어·결과 없이, 10분 묶음), 목록 최대 100명(employee_search.MAX_LIST)
+PEOPLE_FRESH_SECONDS = 24 * 3600
+PEOPLE_ALERT_WINDOW = 600
+_people_alert = {"until": 0.0, "count": 0, "ip": "", "timer": None}
+_people_alert_lock = threading.Lock()
+
+
+def _session_login_age(req) -> float | None:
+    """로그인(비밀번호 입력)한 지 몇 초인지 — 세션 토큰은 로그인 때 한 번 서명되므로 서명 시각 = 로그인 시각"""
+    if not PASSWORD:
+        return 0.0
+    token = req.cookies.get("media_admin", "")
+    try:
+        _, ts = _session_serializer.loads(token, max_age=SESSION_MAX_AGE, return_timestamp=True)
+    except (BadSignature, SignatureExpired):
+        return None
+    return time.time() - ts.timestamp()
+
+
+def _people_fresh(req) -> bool:
+    age = _session_login_age(req)
+    return age is not None and age <= PEOPLE_FRESH_SECONDS
+
+
+def _mask_ip(ip: str) -> str:
+    """알림엔 IP 끝자리만(…123)"""
+    tail = re.split(r"[.:]", ip or "")[-1] if ip else ""
+    return f"…{tail}" if tail else "?"
+
+
+def _people_alert_flush() -> None:
+    with _people_alert_lock:
+        n, ip = _people_alert["count"], _people_alert["ip"]
+        _people_alert.update(count=0, timer=None)
+    if n:
+        _tg_notify(f"🔎 검색직 최근 {PEOPLE_ALERT_WINDOW // 60}분 동안 {n}번 더 조회됨 (마지막 접속 {_mask_ip(ip)})")
+
+
+def _people_note_lookup(req) -> None:
+    """검색·상세 한 번마다: 10분 묶음의 첫 조회는 바로 알리고, 그 뒤는 세어 두었다가 10분 뒤 한 번에(검색어·결과는 안 넣음)"""
+    now, ip = time.time(), _client_ip(req)
+    first = False
+    with _people_alert_lock:
+        if now >= _people_alert["until"]:
+            _people_alert.update(until=now + PEOPLE_ALERT_WINDOW, count=0, ip=ip)
+            first = True
+            t = threading.Timer(PEOPLE_ALERT_WINDOW, _people_alert_flush)
+            t.daemon = True
+            _people_alert["timer"] = t
+            t.start()
+        else:
+            _people_alert["count"] += 1
+            _people_alert["ip"] = ip
+    if first:
+        threading.Thread(target=lambda: _tg_notify(
+            f"🔎 검색직 조회됨 — {datetime.now(APP_TZ).strftime('%H:%M')}, 접속 {_mask_ip(ip)}"), daemon=True).start()
 
 
 def _people_guard():
-    """관리자만. 보기 전용은 _readonly_guard가 먼저 403을 준다. 여기선 로그인·관리자·횟수만 본다."""
+    """관리자만. 보기 전용은 _readonly_guard가 먼저 403을 준다. 여기선 로그인·관리자·24시간 안 로그인·횟수를 본다."""
     auth = authed(request)
     if auth is not True:
         return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
     if session_role(request) != "admin":
         return jsonify({"ok": False, "error": "관리자만 쓸 수 있어요."}), 403
+    if not _people_fresh(request):
+        return jsonify({"ok": False, "reauth": True, "error": "비밀번호를 다시 입력해 주세요(검색직은 로그인 24시간까지)."}), 401
     if not _people_limit.allow("admin"):
         return jsonify({"ok": False, "error": "조회가 너무 많아요. 1분 뒤에 다시 해 주세요."}), 429
+    _people_note_lookup(request)
     return None
 
 
@@ -1781,7 +1841,34 @@ def people_page():
     if session_role(request) != "admin":
         return redirect("/?mode=check")
     return _no_store(make_response(render_template("people.html", authed=True, modes=employee_search.MODES,
-                                                   ready=employee_search.load(EMPLOYEE_JSON) is not None)))
+                                                   ready=employee_search.load(EMPLOYEE_JSON) is not None,
+                                                   reauth=not _people_fresh(request),
+                                                   reauth_error=request.args.get("e", ""))))
+
+
+@app.route("/people/reauth", methods=["POST"])
+def people_reauth():
+    """검색직용 비밀번호 다시 입력 — 로그인과 같은 잠금(IP별·전체)을 쓴다. 맞으면 세션을 새로 서명(로그인 시각 갱신)"""
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    if session_role(request) != "admin":
+        return redirect("/?mode=check")
+    ip = _client_ip(request)
+    if _login_blocked_seconds(ip) > 0:
+        return redirect("/people?e=locked")
+    if not hmac.compare_digest(request.form.get("pw", "").encode(), PASSWORD.encode()):
+        _register_login_failure(ip)
+        return redirect("/people?e=locked" if _login_blocked_seconds(ip) > 0 else "/people?e=wrong")
+    _clear_login_failures(ip)
+    try:
+        remember = bool(_session_serializer.loads(request.cookies.get("media_admin", ""), max_age=SESSION_MAX_AGE).get("rm"))
+    except (BadSignature, SignatureExpired):
+        remember = False
+    resp = make_response(redirect("/people"))
+    resp.set_cookie("media_admin", _session_serializer.dumps({"a": True, "rm": remember}),
+                    max_age=30 * 24 * 3600 if remember else 12 * 3600, httponly=True, samesite="Lax", secure=request.is_secure)
+    return resp
 
 
 @app.route("/api/people/search", methods=["POST"])
@@ -1805,7 +1892,8 @@ def api_people_detail():
     emps = employee_search.load(EMPLOYEE_JSON)
     if emps is None:
         return jsonify({"ok": False, "error": "직원 데이터를 불러오지 못했어요."}), 503
-    d = employee_search.detail(emps, (request.get_json(silent=True) or {}).get("sabun"))
+    body = request.get_json(silent=True) or {}
+    d = employee_search.detail(emps, body.get("key") or body.get("sabun"))
     if not d:
         return jsonify({"ok": False, "error": "찾지 못했어요."}), 404
     return _no_store(jsonify({"ok": True, "detail": d}))
@@ -3266,7 +3354,8 @@ def login():
         _clear_login_failures(ip)
         resp=make_response(redirect("/"))
         max_age = 30 * 24 * 3600 if remember else 12 * 3600
-        token = _session_serializer.dumps({"a": True} if role == "admin" else {"a": True, "r": "viewer"})
+        # rm: '기억하기' 여부(검색직 비밀번호 다시 입력 때 쿠키 기간을 그대로 두려고, 11-04)
+        token = _session_serializer.dumps({"a": True, "rm": remember} if role == "admin" else {"a": True, "r": "viewer", "rm": remember})
         resp.set_cookie("media_admin", token, max_age=max_age, httponly=True, samesite="Lax", secure=request.is_secure)
         return resp
 
