@@ -635,26 +635,54 @@ _SESSION_SECRET = _load_or_create_session_secret()
 _session_serializer = URLSafeTimedSerializer(_SESSION_SECRET, salt="media-router-admin-session")
 SESSION_MAX_AGE = 30 * 24 * 3600  # 쿠키 자체 max_age(12h/30d)와 별개로, 서명 토큰이 유효한 상한
 
-# 로그인 브루트포스 방지: IP별로 짧은 시간 내 실패가 누적되면 일정 시간 잠금.
-# (완벽한 방어는 아니지만 - 리버스 프록시 뒤라면 X-Forwarded-For가 스푸핑될 수
-# 있음 - 무차별 대입 스크립트 정도는 충분히 막는다.)
+# 로그인 브루트포스 방지: IP별로 짧은 시간 내 실패가 누적되면 일정 시간 잠금 + IP와 상관없는 전체 한도.
+# 2026-11-04 인사팀 점검: 예전엔 X-Forwarded-For 첫 값을 믿어서 헤더만 바꾸면 IP별 잠금이 안 걸렸다(바깥에서 무한 대입).
 _login_lock = threading.Lock()
 _login_failures = {}  # ip -> 실패 타임스탬프 리스트
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 300   # 이 시간 안에
 LOGIN_LOCKOUT_SECONDS = 60   # 이만큼 잠금
+# 전체 한도: IP를 속이거나 여러 곳에서 와도 10분에 20번 넘게 틀리면 15분 동안 모든 로그인을 막고 텔레그램으로 알린다
+LOGIN_GLOBAL_MAX = 20
+LOGIN_GLOBAL_WINDOW = 600
+LOGIN_GLOBAL_LOCKOUT = 900
+_login_global = {"fails": [], "locked_until": 0.0}
+
+_LOOPBACK_IP = re.compile(r"^(127\.|::1$|::ffff:127\.)")
+_PRIVATE_HOP = re.compile(r"^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|::ffff:127\.)")
 
 
 def _client_ip(req) -> str:
-    fwd = req.headers.get("X-Forwarded-For", "")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return req.remote_addr or "unknown"
+    """접속한 사람의 IP. 사용자가 보낸 X-Forwarded-For는 믿지 않는다(첫 값은 아무나 적을 수 있음).
+    - 소켓 주소(remote_addr)가 로컬(127.x)이면 DSM 리버스 프록시(nginx)를 거친 것: nginx가 매번 덮어쓰는 X-Real-IP를 쓴다.
+      (media·request.kckworld.com은 터널이든 공유기 443이든 DSM nginx → localhost:5080)
+    - 그 바로 앞 주소가 사설망(cloudflared 컨테이너·LAN)일 때만 Cloudflare가 붙인 CF-Connecting-IP를 믿는다.
+      바깥에서 443으로 바로 오면 앞 주소가 공인 IP라 CF-Connecting-IP를 써 보내도 무시된다."""
+    ra = (req.remote_addr or "").strip() or "unknown"
+    hop = ra
+    if _LOOPBACK_IP.match(ra):
+        real = (req.headers.get("X-Real-IP") or "").strip()
+        if real:
+            hop = real
+    if _PRIVATE_HOP.match(hop):
+        cf = (req.headers.get("CF-Connecting-IP") or "").strip()
+        if cf and len(cf) <= 64:
+            return cf
+    return hop
+
+
+def _login_global_blocked_seconds(now: float | None = None) -> int:
+    now = now or time.time()
+    with _login_lock:
+        return max(0, int(round(_login_global["locked_until"] - now)))
 
 
 def _login_blocked_seconds(ip: str) -> int:
-    """이 IP가 잠겨있으면 남은 초를, 아니면 0을 반환."""
+    """이 IP가 잠겨있으면(또는 전체 잠금이면) 남은 초를, 아니면 0을 반환."""
     now = time.time()
+    g = _login_global_blocked_seconds(now)
+    if g:
+        return g
     with _login_lock:
         fails = [t for t in _login_failures.get(ip, []) if now - t < LOGIN_WINDOW_SECONDS]
         _login_failures[ip] = fails
@@ -666,8 +694,23 @@ def _login_blocked_seconds(ip: str) -> int:
 
 
 def _register_login_failure(ip: str) -> None:
+    now = time.time()
+    alert = False
     with _login_lock:
-        _login_failures.setdefault(ip, []).append(time.time())
+        _login_failures.setdefault(ip, []).append(now)
+        if len(_login_failures) > 5000:      # 오래된 IP 정리(메모리)
+            for k in [k for k, v in _login_failures.items() if not v or now - v[-1] > LOGIN_WINDOW_SECONDS]:
+                _login_failures.pop(k, None)
+        g = [t for t in _login_global["fails"] if now - t < LOGIN_GLOBAL_WINDOW] + [now]
+        _login_global["fails"] = g
+        if len(g) > LOGIN_GLOBAL_MAX and _login_global["locked_until"] <= now:
+            _login_global["locked_until"] = now + LOGIN_GLOBAL_LOCKOUT
+            alert = True
+    if alert:
+        threading.Thread(target=lambda: _tg_notify(
+            f"🔒 Media Router 로그인 실패가 {LOGIN_GLOBAL_WINDOW // 60}분에 {LOGIN_GLOBAL_MAX}번을 넘어 "
+            f"{LOGIN_GLOBAL_LOCKOUT // 60}분 동안 모든 로그인을 막았어요(마지막 접속 {ip}). 본인이 아니면 비밀번호를 바꿔 주세요."),
+            daemon=True).start()
 
 
 def _clear_login_failures(ip: str) -> None:
@@ -1289,8 +1332,9 @@ _rq_submit_total = media_requests.RateLimiter(30, 3600)
 
 
 def _public_ip(req) -> str:
-    # cloudflared가 붙이는 실제 접속 IP를 먼저 본다 (DSM 리버스 프록시 뒤라 remote_addr는 127.0.0.1)
-    return req.headers.get("CF-Connecting-IP") or _client_ip(req)
+    # 요청·설문 페이지 제출 제한용. 예전엔 CF-Connecting-IP를 무조건 믿어 공유기 443으로 바로 오면 속일 수 있었다(11-04)
+    # → 로그인과 같은 판단(_client_ip: nginx가 덮어쓰는 X-Real-IP, 앞 주소가 사설망일 때만 CF-Connecting-IP)
+    return _client_ip(req)
 
 
 @app.before_request
@@ -1534,7 +1578,8 @@ def _internal_key() -> str:
 
 def _is_internal_request(req) -> bool:
     """NAS 안에서 직접 온 요청만: 터널·리버스 프록시 흔적이 없고, 주소가 IP(도메인 아님), 보낸 곳이 사설망"""
-    if req.headers.get("CF-Connecting-IP") or req.headers.get("CF-Ray") or req.headers.get("X-Forwarded-For"):
+    if (req.headers.get("CF-Connecting-IP") or req.headers.get("CF-Ray") or req.headers.get("X-Forwarded-For")
+            or req.headers.get("X-Real-IP")):          # DSM nginx를 거치면 X-Real-IP·X-Forwarded-For가 붙는다
         return False
     if not _IP_HOST.match((req.host or "").lower()):
         return False
