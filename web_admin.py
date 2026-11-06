@@ -41,6 +41,9 @@ PASSWORD = os.getenv("MEDIA_ADMIN_PASSWORD", "")
 VIEWER_PASSWORD = os.getenv("MEDIA_VIEWER_PASSWORD", "")
 
 app = Flask(__name__, template_folder=str(BASE / "templates"))
+# 11-07 인사팀 점검: 요청 크기 상한. 가장 큰 건 사용법 그림 올리기(8MB) → 10MB. 공개 주소는 _public_host_guard에서 64KB
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+PUBLIC_MAX_BODY = 64 * 1024
 
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 CATEGORIES = ["드라마", "예능", "애니메이션", "다큐"]
@@ -1458,11 +1461,38 @@ def _public_ip(req) -> str:
     return _client_ip(req)
 
 
+# 11-07 인사팀 점검 ①: 'request.kckworld.com.'(끝 점)·대문자·포트로 공개 판별이 풀렸다(관리 로그인 200).
+# → Host를 정리한 뒤, **관리 Host 허용 목록**에 있을 때만 관리 화면, 나머지 Host는 전부 공개로 본다(모르면 공개 = 404 쪽).
+# 목록: MR 원래 주소(DSM nginx 경유), LAN IP(n8n 등), localhost·127.0.0.1(DSM nginx·스크립트), 172.17.0.1(도커 컨테이너), NAS 이름.
+MR_ADMIN_HOSTS = {"media.kckworld.com", "192.168.50.153", "localhost", "127.0.0.1", "::1", "172.17.0.1", "kckworld"} | {
+    h.strip().lower().rstrip(".") for h in os.getenv("MR_ADMIN_HOSTS", "").split(",") if h.strip()}
+
+
+def _norm_host(raw: str | None) -> str:
+    """소문자, 포트 떼기([IPv6]:포트 포함), 끝 점 떼기. 공백·이상한 글자가 있으면 ''(→ 공개로 취급)"""
+    h = (raw or "").strip().lower()
+    if h.startswith("["):                                     # [::1]:5080
+        h = h[1:].partition("]")[0]
+    elif h.count(":") == 1:
+        h = h.partition(":")[0]
+    h = h.rstrip(".")
+    return h if re.fullmatch(r"[a-z0-9.\-:]{1,253}", h) else ""
+
+
+def _is_admin_host(req=None) -> bool:
+    return _norm_host((req or request).host) in MR_ADMIN_HOSTS
+
+
 @app.before_request
 def _public_host_guard():
-    host = (request.host or "").split(":")[0].lower()
-    if host not in REQUEST_PUBLIC_HOSTS:
+    if _is_admin_host():
         return None
+    if request.method not in ("GET", "HEAD", "OPTIONS"):        # 공개 쪽 본문은 작게(요청·설문·계정 요청 폼뿐)
+        n = request.content_length
+        if n is None and request.headers.get("Transfer-Encoding"):
+            return make_response("Length Required", 411)
+        if (n or 0) > PUBLIC_MAX_BODY:
+            return make_response("Payload Too Large", 413)
     if request.path == "/":
         return redirect("/pub/", 302)                       # 11-07: 공개 사이트 첫 화면(요청은 /request 그대로)
     if request.path in ("/request", "/survey") or request.path.startswith(_REQUEST_PUBLIC_PATHS + ("/pub/",)):
@@ -1514,7 +1544,7 @@ PUB_NAV = [("/pub/", "검색"), ("/pub/auto", "자동으로 받는 것"), ("/pub
 
 
 def _is_public_host() -> bool:
-    return (request.host or "").split(":")[0].lower() in REQUEST_PUBLIC_HOSTS
+    return not _is_admin_host()                              # 11-07: _public_host_guard와 같은 판단(관리 Host 허용 목록)
 
 
 @app.before_request

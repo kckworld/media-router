@@ -312,3 +312,42 @@ def test_guide_image_route(gd, monkeypatch):
     resp = g(c, r["url"])
     assert resp.status_code == 200 and resp.mimetype == "image/png"
     assert g(c, "/pub/guide/img/" + "0" * 20 + ".png").status_code == 404
+
+
+# ── 11-07 인사팀 점검 ①: Host 끝 점·대문자·포트·모르는 Host로 공개 막기가 풀리면 안 됨
+EVIL_HOSTS = ["request.kckworld.com.", "REQUEST.KCKWORLD.COM", "request.kckworld.com:443", "Request.Kckworld.Com.:443",
+              "request.kckworld.com..", "unknown.example", "evil.com", "media.kckworld.com.evil.com", "", "  ",
+              "192.168.50.153.nip.io", "[2001:db8::1]:443", "media.kckworld.com@evil"]
+
+
+@pytest.mark.parametrize("host", EVIL_HOSTS)
+def test_non_admin_hosts_are_public(pub, host):
+    c, tmp = pub
+    for path in ("/login", "/downloads", "/settings", "/api/people/search", "/guides", "/users", "/logs", "/"):
+        r = c.get(path, headers={"Host": host})
+        assert r.status_code in (404, 302), (host, path, r.status_code)
+        if r.status_code == 302:
+            assert path == "/" and r.headers["Location"].endswith("/pub/")
+    assert c.post("/login", data={"pw": "x"}, headers={"Host": host}).status_code == 404
+    r = c.get("/pub/", headers={"Host": host})
+    assert r.status_code in (200, 400) and "미리 보기" not in r.get_data(as_text=True)   # 400 = werkzeug가 이상한 Host 거절
+
+
+@pytest.mark.parametrize("host", ["media.kckworld.com", "MEDIA.kckworld.com.", "media.kckworld.com:443", "192.168.50.153:5080",
+                                  "localhost", "127.0.0.1:5080", "172.17.0.1:5080", "[::1]:5080", "kckworld"])
+def test_admin_hosts_still_admin(pub, host):
+    c, tmp = pub
+    assert c.get("/login", headers={"Host": host}).status_code == 200, host
+
+
+def test_norm_host_and_env(monkeypatch):
+    n = web_admin._norm_host
+    assert n("Request.KCKWorld.com.:443") == "request.kckworld.com" and n("[::1]:5080") == "::1" and n("a b") == ""
+    assert n("media.kckworld.com@evil") == ""
+
+
+def test_public_body_limit(pub):
+    c, tmp = pub
+    r = c.post("/request/submit", data=b"x" * (web_admin.PUBLIC_MAX_BODY + 1), headers={"Host": HOST, "Content-Type": "application/json"})
+    assert r.status_code == 413
+    assert web_admin.app.config["MAX_CONTENT_LENGTH"] == 10 * 1024 * 1024
