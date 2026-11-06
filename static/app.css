@@ -373,6 +373,11 @@ a.tile:hover { border-color: var(--line-strong); }
 .icon-btn { width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; font-size: 18px; }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .diary-btn { width: auto; gap: 4px; padding: 0 10px; color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; }
+/* 우상단 접속 계정(11-07). 휴대폰에선 글자를 짧게 */
+.who-chip { display: inline-flex; align-items: center; gap: 4px; height: 40px; padding: 0 10px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--surface); color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.who-chip .who-text { max-width: 8em; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 760px) { .who-chip { padding: 0 8px; } .who-chip .who-text { max-width: 3.2em; } }
 
 .form-field { display: flex; flex-direction: column; gap: 6px; }
 .form-field > label, .form-field > .label { font-size: 13px; font-weight: 600; color: var(--muted); }

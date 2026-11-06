@@ -105,8 +105,8 @@ def load_layout(path: Path) -> dict:
 
 def save_layout(path: Path, layout: dict) -> None:
     clean = {"order": [k for k in layout.get("order", []) if k in PAGES],
-             "hidden": [k for k in layout.get("hidden", []) if k in PAGES and not PAGES[k].get("owner_only")
-                        and k not in ("accounts", "menu")]}
+             # 11-07: 소유자 전용 화면(검색직 등)도 숨기기는 됨(권한은 그대로 소유자 전용). 계정·메뉴 관리 자신만 못 숨김
+             "hidden": [k for k in layout.get("hidden", []) if k in PAGES and k not in ("accounts", "menu")]}
     tmp = path.with_name("." + path.name + ".tmp")
     tmp.write_text(json.dumps(clean, ensure_ascii=False, indent=1), encoding="utf-8")
     os.chmod(tmp, 0o600)

@@ -903,7 +903,18 @@ def _inject_role():
     can_edit = role == "admin" or (page is not None and menu.level(who, perms, page) == "edit")
     return {"viewer": role == "viewer", "has_login": bool(PASSWORD), "processing_pause": processing_pause_state(),
             "nav_all": menu.nav_for(who, perms, layout), "can_edit": can_edit,
-            "can_journal": menu.level(who, perms, "journal") != "none"}
+            "can_journal": menu.level(who, perms, "journal") != "none",
+            "who_label": _who_label(request, role, u)}
+
+
+def _who_label(req, role, u) -> str:
+    """우상단 접속 계정 표시(11-07): 소유자는 '소유자', 일반 계정은 설정한 이름(없으면 아이디). 로그인 안 했으면 ''"""
+    if role is None or not PASSWORD:
+        return ""
+    if role == "admin":
+        return "소유자"
+    acc = accounts.get(ACCOUNTS_PATH, u) or {}
+    return (acc.get("name") or u or "")[:12]
 
 
 # ── 자동 정리 일시정지 (2026-10-19) ──────────────────────────
@@ -3465,7 +3476,7 @@ def _menu_admin_data() -> dict:
         groups.append({"key": g["key"], "label": g["label"],
                        "pages": [{"key": p["key"], "label": p["label"], "href": p["href"], "hidden": p["key"] in hidden,
                                   "owner_only": bool(p.get("owner_only")), "caution": bool(p.get("caution")),
-                                  "fixed_show": p["key"] in ("accounts", "menu") or bool(p.get("owner_only")),
+                                  "fixed_show": p["key"] in ("accounts", "menu"),
                                   "default": menu.default_level(p["key"])} for p in pages]})
     users = [{"id": a["id"], "name": a["name"], "disabled": a["disabled"],
               "levels": {k: menu.level(a["id"], a["perms"], k) for k in menu.PAGES}}

@@ -171,3 +171,13 @@ def test_nothing_logged(pp, caplog):
     c.post("/api/people/detail", json={"sabun": "A001"})
     text = caplog.text
     assert "홍길동" not in text and "010-0000-0001" not in text and "A001" not in text
+
+
+def test_sort_controls_in_page(pp):
+    # 11-07: 목록은 표 머리(이름·소속·생년월일) 눌러 정렬, 자세히 카드는 정렬 고르기 — 화면 안 JS로만(서버에 정렬값 안 보냄)
+    c, f = pp
+    h = c.get("/people").get_data(as_text=True)
+    assert 'data-sort="\' + key' in h or "headBtn(\"name\"" in h
+    for k in ('"name"', '"org"', '"bir"', '"emp"', '"jikwee"'):
+        assert k in h
+    assert "aria-sort" in h and 'id="ppSort"' in h and "Intl.Collator(\"ko\"" in h

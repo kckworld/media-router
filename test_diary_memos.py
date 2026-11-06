@@ -87,7 +87,7 @@ def test_life_group_menu_and_swipe_order(dy, monkeypatch):
     import re
     c, base = dy
     html = c.get("/downloads").get_data(as_text=True)
-    assert 'class="icon-btn diary-btn" href="/journal"' in html               # 상단 ✎ 일기 버튼 → 생활 > 일기
+    assert 'class="icon-btn diary-btn" href="/journal?tab=memo"' in html      # 상단 ✎ 일기 버튼 → 생활 > 일기 > 메모(11-07)
     order = re.findall(r'href="([^"]+)"', re.search(r'<nav id="pageOrder".*?</nav>', html, re.S).group(0))
     assert order.index("/encode_log") + 1 == order.index("/recon") and order.index("/recon") + 1 == order.index("/journal")
     assert order.index("/journal") + 1 == order.index("/people") and order.index("/people") + 1 == order.index("/settings")

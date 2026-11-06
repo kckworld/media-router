@@ -21,6 +21,14 @@
       display: grid; grid-template-columns: 5.5em 1fr auto; gap: 8px; font: inherit; font-size: 14px; }
     .pp-list .sub { color: var(--muted); font-size: 13px; }
     .pp-empty { color: var(--muted); padding: 12px 2px; }
+    /* 11-07: 표 머리를 눌러 정렬(한 번 더 누르면 반대로) */
+    .pp-head { display: grid; grid-template-columns: 5.5em 1fr auto; gap: 8px; padding: 0 4px 6px; border-bottom: 1px solid var(--line); }
+    .pp-head button { background: none; border: 0; padding: 4px 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--muted);
+      text-align: left; cursor: pointer; }
+    .pp-head button:last-child { text-align: right; }
+    .pp-head button[aria-sort="ascending"], .pp-head button[aria-sort="descending"] { color: var(--accent); }
+    .pp-sortbar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-bottom: 8px; font-size: 13px; color: var(--muted); }
+    .pp-sortbar select { width: auto; min-width: 0; }
   </style>
 {% endblock %}
 
@@ -75,6 +83,47 @@
       return '<div class="pp-card"><div class="pp-name">' + esc(e.name || "-") + '</div><div class="pp-org">' + esc(e.orignOrgNm || "") +
         '</div><dl class="pp-grid">' + rows.map(function(r) { return "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>"; }).join("") + "</dl></div>";
     }
+    // 정렬: 빈 값은 늘 뒤로, 숫자(날짜 8자리·연도)는 숫자로, 글자는 한국어 순서(가나다, 숫자 섞이면 자연 순서)
+    var SORT = { key: "", dir: 1 }, LAST = null;
+    var COLL = window.Intl && Intl.Collator ? new Intl.Collator("ko", { numeric: true, sensitivity: "base" }) : null;
+    var SORT_KEYS = { name: function(e) { return e.name; },
+      org: function(e) { return (e.orignOrgNm || "") + "\u0001" + (e.jikgubNm || ""); },
+      jikwee: function(e) { return e.jikweeNm; }, emp: function(e) { return e.empYmd; }, bir: function(e) { return e.birYmd; } };
+    var SORT_LABELS = [["", "검색 순서"], ["name", "이름"], ["org", "소속"], ["jikwee", "직위"], ["emp", "입사일"], ["bir", "생년월일"]];
+    function cmp(a, b) {
+      a = a == null ? "" : String(a).trim(); b = b == null ? "" : String(b).trim();
+      if (!a || !b) return a ? -1 : (b ? 1 : 0);
+      if (/^\d+$/.test(a) && /^\d+$/.test(b)) return Number(a) - Number(b);
+      return COLL ? COLL.compare(a, b) : (a < b ? -1 : a > b ? 1 : 0);
+    }
+    function sorted(arr) {
+      if (!SORT.key || !SORT_KEYS[SORT.key]) return arr.slice();
+      var f = SORT_KEYS[SORT.key];
+      return arr.map(function(e, i) { return [e, i]; }).sort(function(x, y) {
+        var va = f(x[0]), vb = f(y[0]), ea = !va, eb = !vb;
+        if (ea !== eb) return ea ? 1 : -1;                     // 빈 값은 방향과 상관없이 맨 뒤
+        return (cmp(va, vb) * SORT.dir) || (x[1] - y[1]);      // 같으면 원래 순서
+      }).map(function(x) { return x[0]; });
+    }
+    function headBtn(key, label) {
+      var st = SORT.key === key ? (SORT.dir > 0 ? "ascending" : "descending") : "none";
+      return '<button type="button" data-sort="' + key + '" aria-sort="' + st + '">' + label + (st === "ascending" ? " ▲" : st === "descending" ? " ▼" : "") + "</button>";
+    }
+    function render() {
+      var d = LAST; if (!d) return;
+      if (d.detail) {
+        $("out").innerHTML = (d.detail.length > 1 ? '<div class="pp-sortbar"><label for="ppSort">정렬</label><select id="ppSort">' +
+          SORT_LABELS.map(function(o) { return '<option value="' + o[0] + '"' + (SORT.key === o[0] ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") +
+          '</select><button type="button" class="btn" id="ppDir" aria-label="정렬 방향 바꾸기"' + (SORT.key ? "" : " disabled") + ">" + (SORT.dir > 0 ? "▲ 오름" : "▼ 내림") + "</button></div>" : "") +
+          sorted(d.detail).map(card).join("");
+        return;
+      }
+      $("out").innerHTML = '<div class="pp-head" role="group" aria-label="정렬">' + headBtn("name", "이름") + headBtn("org", "소속 · 직군") + headBtn("bir", "생년월일") +
+        '</div><ul class="pp-list">' + sorted(d.list).map(function(e) {
+          return '<li><button type="button" data-key="' + esc(e.key) + '"><span>' + esc(e.name || "-") + '</span><span class="sub">' +
+            esc(e.orignOrgNm || "-") + " · " + esc(e.jikgubNm || "-") + '</span><span class="sub">' + ymd(e.birYmd) + "</span></button><div></div></li>";
+        }).join("") + "</ul>";
+    }
     function post(url, body) {
       return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" })
         .then(mrJson).then(function(res) {
@@ -91,16 +140,27 @@
       post("/api/people/search", { mode: $("mode").value, q: q }).then(function(res) {
         if (!res.ok || !res.data.ok) { $("sum").textContent = ""; $("out").innerHTML = '<div class="pp-empty">' + esc((res.data && res.data.error) || "검색하지 못했어요") + "</div>"; return; }
         var d = res.data;
+        LAST = null;
         if (!d.total) { $("sum").textContent = "찾는 사람이 없어요."; $("out").innerHTML = ""; return; }
-        if (d.detail) { $("sum").textContent = d.total + "명"; $("out").innerHTML = d.detail.map(card).join(""); return; }
-        $("sum").textContent = d.total + "명" + (d.total > d.list.length ? " (앞 " + d.list.length + "명만)" : "") + " — 눌러서 자세히";
-        $("out").innerHTML = '<ul class="pp-list">' + d.list.map(function(e) {
-          return '<li><button type="button" data-key="' + esc(e.key) + '"><span>' + esc(e.name || "-") + '</span><span class="sub">' +
-            esc(e.orignOrgNm || "-") + " · " + esc(e.jikgubNm || "-") + '</span><span class="sub">' + ymd(e.birYmd) + "</span></button><div></div></li>";
-        }).join("") + "</ul>";
+        LAST = { detail: d.detail || null, list: d.list || [] };
+        if (d.detail) $("sum").textContent = d.total + "명";
+        else $("sum").textContent = d.total + "명" + (d.total > d.list.length ? " (앞 " + d.list.length + "명만 · 정렬도 이 안에서)" : "") + " — 눌러서 자세히";
+        render();
       }).catch(function() { $("sum").textContent = "검색하지 못했어요."; });
     });
+    $("out").addEventListener("change", function(e) {
+      if (e.target.id !== "ppSort") return;
+      SORT.key = e.target.value; SORT.dir = 1; render(); var s = $("ppSort"); if (s) s.focus();
+    });
     $("out").addEventListener("click", function(e) {
+      var h = e.target.closest("button[data-sort]");
+      if (h) {
+        var k = h.dataset.sort;
+        if (SORT.key === k) SORT.dir = -SORT.dir; else { SORT.key = k; SORT.dir = 1; }
+        render(); var nb = document.querySelector('.pp-head button[data-sort="' + k + '"]'); if (nb) nb.focus();
+        return;
+      }
+      if (e.target.closest("#ppDir")) { SORT.dir = -SORT.dir; render(); var db = $("ppDir"); if (db) db.focus(); return; }
       var b = e.target.closest("button[data-key]"); if (!b) return;
       var box = b.nextElementSibling;
       if (box.innerHTML) { box.innerHTML = ""; return; }
