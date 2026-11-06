@@ -1,0 +1,22 @@
+{% extends "public/base.html" %}
+{% block title %}{{ title }} — 사용법{% endblock %}
+{% block css %}
+  .doc { max-width: 760px; }
+  .doc h2 { font-size: 19px; margin: 26px 0 8px; } .doc h3 { font-size: 16px; margin: 20px 0 6px; } .doc h4 { font-size: 15px; margin: 16px 0 6px; }
+  .doc p, .doc li { line-height: 1.7; }
+  .doc img { max-width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); margin: 6px 0; }
+  .doc code { background: var(--line); border-radius: 5px; padding: 1px 5px; font-size: 13px; }
+  .doc pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; }
+  .doc pre code { background: none; padding: 0; }
+  .doc blockquote { margin: 10px 0; padding: 8px 14px; border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 10px 10px 0; }
+  .doc hr { border: 0; border-top: 1px solid var(--line); margin: 20px 0; }
+  .others { margin-top: 30px; font-size: 14px; }
+{% endblock %}
+{% block content %}
+  <p style="margin:0 0 6px;"><a href="/pub/guide">← 사용법 목록</a></p>
+  <h1>{{ title }}</h1>
+  <article class="doc">{{ body|safe }}</article>
+  {% if docs|length > 1 %}
+    <div class="others"><b>다른 안내</b> · {% for d in docs if d.slug != slug %}<a href="/pub/guide/{{ d.slug }}">{{ d.title }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</div>
+  {% endif %}
+{% endblock %}

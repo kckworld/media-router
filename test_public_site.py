@@ -214,3 +214,101 @@ def test_account_admin_api(acc, monkeypatch):
     assert c.get("/api/account_requests", headers={"Host": HOST}).status_code == 404         # 공개 주소에선 없음
     monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
     assert c.post("/api/account_requests", json={"id": iid, "status": "승인"}).status_code == 403
+
+
+import guides
+
+
+@pytest.mark.parametrize("src", [
+    "<script>alert(1)</script>", "<img src=x onerror=alert(1)>", "[눌러](javascript:alert(1))", "![x](javascript:alert(1))",
+    "[a](https://ok.com\" onmouseover=\"alert(1))", "![x](https://evil.com/a.png)", "<iframe src=//evil>", "**<b onclick=x>굵게</b>**",
+    "[a](data:text/html;base64,PHNjcmlwdD4=)", "```\n</code></pre><script>x</script>\n```"])
+def test_render_blocks_dangerous(src):
+    from html.parser import HTMLParser
+    found = []
+
+    class P(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            found.append((tag, dict(attrs)))
+    P().feed(guides.render(src))
+    allowed = {"p", "br", "h2", "h3", "h4", "ul", "ol", "li", "blockquote", "pre", "code", "strong", "em", "hr", "a", "img"}
+    for tag, attrs in found:
+        assert tag in allowed, tag
+        assert not any(k.startswith("on") for k in attrs), attrs
+        assert set(attrs) <= {"href", "src", "alt", "rel", "target", "loading"}, attrs
+        for k in ("href", "src"):
+            v = attrs.get(k)
+            if v is not None:
+                assert v.startswith(("https://", "http://", "/pub/")) and not v.startswith("https://evil"), v
+
+
+def test_render_basics():
+    h = guides.render("# 제목\n\n**굵게** *기울임* `코드`\n- 하나\n- 둘\n\n1. 첫째\n> 인용\n---\n[링크](https://example.com/a?b=1&c=2) [안](/pub/guide/x)\n"
+                      "![그림](/pub/guide/img/" + "a" * 20 + ".png)")
+    assert "<h2>제목</h2>" in h and "<strong>굵게</strong>" in h and "<em>기울임</em>" in h and "<code>코드</code>" in h
+    assert "<ul>\n<li>하나</li>\n<li>둘</li>\n</ul>" in h and "<ol>" in h and "<blockquote>인용</blockquote>" in h and "<hr>" in h
+    assert 'href="https://example.com/a?b=1&amp;c=2" rel="noopener noreferrer nofollow" target="_blank"' in h
+    assert 'href="/pub/guide/x">' in h and 'src="/pub/guide/img/' + "a" * 20 + '.png"' in h
+
+
+def test_image_upload_strips_metadata(tmp_path):
+    from PIL import Image
+    import io
+    im = Image.new("RGB", (3000, 2000), (10, 200, 10))
+    exif = Image.Exif()
+    exif[0x010F] = "FakeCam"                                                  # 카메라·위치 같은 메타데이터
+    exif[0x0131] = "secret-app"
+    b = io.BytesIO()
+    im.save(b, "JPEG", exif=exif)
+    name, err = guides.save_image(tmp_path, b.getvalue())
+    assert not err and guides.IMG_RE.match(name)
+    out = Image.open(tmp_path / "img" / name)
+    assert max(out.size) == 1600 and not out.getexif()
+    assert guides.save_image(tmp_path, b"not an image")[1]
+    assert guides.save_image(tmp_path, b"x" * (guides.MAX_UPLOAD + 1))[1]
+    assert guides.image_path(tmp_path, "../" + name) is None and guides.image_path(tmp_path, name)
+
+
+@pytest.fixture
+def gd(pub, monkeypatch):
+    c, tmp = pub
+    monkeypatch.setattr(web_admin, "GUIDE_DIR", tmp / "guide")
+    return c, tmp
+
+
+def test_guide_admin_and_public(gd, monkeypatch):
+    c, tmp = gd
+    monkeypatch.setattr(web_admin, "authed", lambda req: True)
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
+    assert c.post("/api/guides", json={"action": "save", "slug": "../x", "text": "a"}).status_code == 400
+    r = c.post("/api/guides", json={"action": "save", "slug": "plex-install", "text": "# Plex 설치\n\n앱을 받아요. <script>x</script>"})
+    assert r.get_json()["ok"] and r.get_json()["docs"][0]["title"] == "Plex 설치"
+    assert "<h2>" in c.post("/api/guides", json={"action": "preview", "text": "# a"}).get_json()["html"]
+    h = g(c, "/pub/guide").get_data(as_text=True)
+    assert 'href="/pub/guide/plex-install"' in h and "Plex 설치" in h
+    h = g(c, "/pub/guide/plex-install").get_data(as_text=True)
+    assert "앱을 받아요. &lt;script&gt;" in h and "<script>x" not in h
+    assert g(c, "/pub/guide/없는문서").status_code == 404
+    assert c.post("/api/guides", json={"action": "save"}, headers={"Host": HOST}).status_code == 404   # 공개 주소에서 편집 불가
+    assert c.post("/api/guides", json={"action": "delete", "slug": "plex-install"}).get_json()["ok"]
+    assert list((tmp / "guide" / ".trash").glob("plex-install.*.md"))                                 # 지우면 .trash로
+    monkeypatch.setattr(web_admin, "current_user", lambda req: "someone")
+    assert c.post("/api/guides", json={"action": "preview", "text": "a"}).status_code == 403
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
+    monkeypatch.setattr(web_admin, "current_user", lambda req: web_admin.accounts.OWNER)
+    assert c.post("/api/guides", json={"action": "preview", "text": "a"}).status_code == 403
+
+
+def test_guide_image_route(gd, monkeypatch):
+    c, tmp = gd
+    from PIL import Image
+    import io
+    b = io.BytesIO()
+    Image.new("RGB", (50, 50)).save(b, "PNG")
+    monkeypatch.setattr(web_admin, "authed", lambda req: True)
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
+    r = c.post("/api/guides/image", data={"file": (io.BytesIO(b.getvalue()), "a.png")}, content_type="multipart/form-data").get_json()
+    assert r["ok"] and r["markdown"].startswith("![그림](/pub/guide/img/")
+    resp = g(c, r["url"])
+    assert resp.status_code == 200 and resp.mimetype == "image/png"
+    assert g(c, "/pub/guide/img/" + "0" * 20 + ".png").status_code == 404

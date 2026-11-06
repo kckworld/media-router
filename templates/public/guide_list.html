@@ -1,0 +1,16 @@
+{% extends "public/base.html" %}
+{% block title %}사용법{% endblock %}
+{% block css %}
+  .docs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .docs a { display: block; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; text-decoration: none; color: var(--fg); font-weight: 700; }
+  .docs a span { display: block; color: var(--muted); font-weight: 500; font-size: 12px; margin-top: 4px; }
+{% endblock %}
+{% block content %}
+  <h1>사용법</h1>
+  <p class="lead">Plex·Jellyfin 앱 설치, 자막, 화질 같은 안내예요.</p>
+  {% if docs %}
+    <ul class="docs">{% for d in docs %}<li><a href="/pub/guide/{{ d.slug }}">{{ d.title }}<span>{{ d.updated }} 고침</span></a></li>{% endfor %}</ul>
+  {% else %}
+    <p class="empty">아직 안내 글이 없어요.</p>
+  {% endif %}
+{% endblock %}

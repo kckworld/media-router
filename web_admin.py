@@ -1700,6 +1700,94 @@ def api_account_requests():
     return jsonify({"ok": True, "items": account_requests.listing(ACCOUNT_REQUESTS_PATH)})
 
 
+# ── 사용법 안내 (공개는 읽기만, 편집은 MR 설정 > 공개 사이트 — 소유자만)
+import guides
+GUIDE_DIR = DATA_DIR / "guide"
+
+
+@app.route("/pub/guide", methods=["GET"])
+def pub_guide_list():
+    return _pub_render("public/guide_list.html", active="/pub/guide", docs=guides.listing(GUIDE_DIR))
+
+
+@app.route("/pub/guide/<slug>", methods=["GET"])
+def pub_guide(slug):
+    text = guides.read(GUIDE_DIR, slug)
+    if text is None:
+        return make_response("Not Found", 404)
+    return _pub_render("public/guide.html", active="/pub/guide", title=guides.title_of(text, slug),
+                       body=guides.render(text), docs=guides.listing(GUIDE_DIR), slug=slug)
+
+
+@app.route("/pub/guide/img/<name>", methods=["GET"])
+def pub_guide_img(name):
+    p = guides.image_path(GUIDE_DIR, name)
+    if not p:
+        return make_response("Not Found", 404)
+    resp = send_file(p, mimetype="image/png" if name.endswith(".png") else "image/jpeg", max_age=86400)
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+def _guides_owner():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if current_user(request) != accounts.OWNER or session_role(request) != "admin":
+        return jsonify({"ok": False, "error": "소유자만 바꿀 수 있어요."}), 403
+    return None
+
+
+@app.route("/guides", methods=["GET"])
+def guides_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    if current_user(request) != accounts.OWNER:
+        return redirect("/?mode=check")
+    return render_template("guides.html", authed=True, docs=guides.listing(GUIDE_DIR),
+                           public_hosts=sorted(REQUEST_PUBLIC_HOSTS))
+
+
+@app.route("/api/guides", methods=["GET", "POST"])
+def api_guides():
+    blocked = _guides_owner()
+    if blocked:
+        return blocked
+    if request.method == "GET":
+        slug = request.args.get("slug") or ""
+        if slug:
+            text = guides.read(GUIDE_DIR, slug)
+            return (jsonify({"ok": True, "slug": slug, "text": text}) if text is not None
+                    else (jsonify({"ok": False, "error": "그 문서가 없어요."}), 404))
+        return jsonify({"ok": True, "docs": guides.listing(GUIDE_DIR)})
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    if action == "preview":
+        return jsonify({"ok": True, "html": guides.render(str(body.get("text") or "")[:guides.MAX_DOC])})
+    slug = str(body.get("slug") or "").strip()
+    if action == "save":
+        err = guides.save(GUIDE_DIR, slug, str(body.get("text") or ""))
+        return jsonify({"ok": not err, "error": err, "docs": guides.listing(GUIDE_DIR)}), (400 if err else 200)
+    if action == "delete":
+        ok = guides.delete(GUIDE_DIR, slug)
+        return jsonify({"ok": ok, "error": "" if ok else "그 문서가 없어요.", "docs": guides.listing(GUIDE_DIR)}), (200 if ok else 404)
+    return jsonify({"ok": False, "error": "모르는 동작이에요."}), 400
+
+
+@app.route("/api/guides/image", methods=["POST"])
+def api_guides_image():
+    blocked = _guides_owner()
+    if blocked:
+        return blocked
+    f = request.files.get("file")
+    data = f.read(guides.MAX_UPLOAD + 1) if f else b""
+    name, err = guides.save_image(GUIDE_DIR, data)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "url": f"/pub/guide/img/{name}", "markdown": f"![그림](/pub/guide/img/{name})"})
+
+
 @app.route("/request/search", methods=["GET"])
 def media_request_search():
     if not _rq_search_limit.allow(_public_ip(request)):

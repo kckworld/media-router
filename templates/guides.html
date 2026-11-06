@@ -1,0 +1,129 @@
+{% set active_page = 'guides' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .gd-wrap { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; }
+    .gd-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    .gd-list button { width: 100%; text-align: left; font: inherit; background: none; border: 1px solid transparent; border-radius: 10px; padding: 8px 10px; cursor: pointer; color: var(--text); }
+    .gd-list button.on { border-color: var(--accent); background: var(--accent-light); }
+    .gd-list small { display: block; color: var(--muted); font-size: 11px; }
+    .gd-edit textarea { width: 100%; min-height: 420px; font: 14px/1.6 ui-monospace, Menlo, Consolas, monospace; padding: 12px; border: 1px solid var(--line);
+      border-radius: 10px; background: var(--surface); color: var(--text); resize: vertical; }
+    .gd-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+    .gd-bar input[type=text] { flex: 1 1 200px; min-width: 0; }
+    .gd-prev { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; background: var(--surface); min-height: 80px; }
+    .gd-prev img { max-width: 100%; height: auto; border-radius: 8px; }
+    .gd-prev pre { background: var(--bg-solid); padding: 10px; border-radius: 8px; overflow-x: auto; }
+    .gd-prev blockquote { margin: 8px 0; padding: 6px 12px; border-left: 4px solid var(--accent); background: var(--accent-light); }
+    .gd-links { display: flex; gap: 8px; flex-wrap: wrap; }
+    @media (max-width: 760px) { .gd-wrap { grid-template-columns: 1fr; } .gd-edit textarea { min-height: 300px; } }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="section-title">공개 사이트 <span class="hint">{{ public_hosts|join(', ') }} — 보기는 누구나, 요청은 코드</span></div>
+      <div class="hint">공개 주소 연결(cloudflared)은 팀장이 보안 점검 뒤에 해요. 여기서 미리 볼 수 있어요(소유자만).</div>
+      <div class="gd-links" style="margin-top:8px;">
+        <a class="btn small" href="/pub/" target="_blank" rel="noopener">검색 ↗</a>
+        <a class="btn small" href="/pub/auto" target="_blank" rel="noopener">자동으로 받는 것 ↗</a>
+        <a class="btn small" href="/pub/recent" target="_blank" rel="noopener">최근 추가 ↗</a>
+        <a class="btn small" href="/pub/account" target="_blank" rel="noopener">계정 요청 ↗</a>
+        <a class="btn small" href="/pub/guide" target="_blank" rel="noopener">사용법 ↗</a>
+        <a class="btn small" href="/requests">요청·계정 요청 목록</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">사용법 문서</div>
+      <div class="gd-wrap">
+        <div>
+          <ul class="gd-list" id="gdList"></ul>
+          <button type="button" class="btn small" style="margin-top:8px;" onclick="newDoc()" data-write>＋ 새 문서</button>
+        </div>
+        <div class="gd-edit">
+          <div class="gd-bar">
+            <label class="muted" for="gdSlug" style="font-size:13px;">문서 이름(주소)</label>
+            <input type="text" id="gdSlug" maxlength="40" placeholder="예: plex-install" autocomplete="off" spellcheck="false">
+          </div>
+          <textarea id="gdText" spellcheck="false" placeholder="# 제목&#10;&#10;내용 (마크다운)"></textarea>
+          <div class="gd-bar">
+            <button type="button" class="btn primary" onclick="saveDoc()" data-write>저장</button>
+            <button type="button" class="btn" onclick="preview()">미리 보기</button>
+            <label class="btn" style="cursor:pointer;" data-write>그림 올리기<input type="file" id="gdImg" accept="image/png,image/jpeg,image/webp,image/gif" hidden onchange="upload(this)"></label>
+            <a class="btn" id="gdOpen" href="#" target="_blank" rel="noopener" style="display:none;">공개 화면 ↗</a>
+            <button type="button" class="btn danger" id="gdDel" onclick="delDoc()" style="display:none;" data-write>삭제</button>
+            <span class="hint" id="gdMsg" role="status" aria-live="polite"></span>
+          </div>
+          <div class="hint" style="margin-bottom:6px;">쓸 수 있는 것: # 제목 · **굵게** · *기울임* · - 목록 · 1. 목록 · &gt; 인용 · `코드` · ```코드 묶음``` · [글자](https://주소) · 올린 그림. HTML은 글자로 보여요.</div>
+          <div class="gd-prev" id="gdPrev"><span class="hint">미리 보기를 누르면 공개 화면처럼 보여요.</span></div>
+        </div>
+      </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var DOCS = {{ docs|tojson }}, CUR = "";
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function post(url, body) {
+      return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(mrJson);
+    }
+    function msg(t) { $("gdMsg").textContent = t; }
+    function renderList() {
+      $("gdList").innerHTML = DOCS.length ? DOCS.map(function(d) {
+        return '<li><button type="button" class="' + (d.slug === CUR ? "on" : "") + '" data-slug="' + esc(d.slug) + '">' + esc(d.title) +
+          '<small>' + esc(d.slug) + ' · ' + esc(d.updated) + '</small></button></li>';
+      }).join("") : '<li class="hint">아직 문서가 없어요.</li>';
+    }
+    function setCur(slug) {
+      CUR = slug;
+      $("gdSlug").value = slug; $("gdSlug").readOnly = !!slug;
+      $("gdOpen").style.display = slug ? "" : "none"; $("gdOpen").href = "/pub/guide/" + encodeURIComponent(slug);
+      $("gdDel").style.display = slug ? "" : "none";
+      renderList();
+    }
+    $("gdList").addEventListener("click", function(e) {
+      var b = e.target.closest("button[data-slug]"); if (!b) return;
+      fetch("/api/guides?slug=" + encodeURIComponent(b.dataset.slug), { cache: "no-store" }).then(mrJson).then(function(res) {
+        if (!res.ok || !res.data.ok) { msg("못 불러왔어요"); return; }
+        $("gdText").value = res.data.text; setCur(res.data.slug); msg(""); preview();
+      });
+    });
+    function newDoc() { setCur(""); $("gdText").value = "# 새 안내\n\n"; $("gdSlug").focus(); msg("문서 이름을 정하고 저장하세요."); }
+    function saveDoc() {
+      var slug = $("gdSlug").value.trim();
+      post("/api/guides", { action: "save", slug: slug, text: $("gdText").value }).then(function(res) {
+        if (!res.data.ok) { msg("⚠ " + (res.data.error || "저장 못 했어요")); return; }
+        DOCS = res.data.docs; setCur(slug); msg("저장했어요.");
+      });
+    }
+    function delDoc() {
+      if (!CUR || !confirm(CUR + " 문서를 지울까요? (data/guide/.trash로 옮겨져요)")) return;
+      post("/api/guides", { action: "delete", slug: CUR }).then(function(res) {
+        if (!res.data.ok) { msg("⚠ " + (res.data.error || "못 지웠어요")); return; }
+        DOCS = res.data.docs; $("gdText").value = ""; setCur(""); msg("지웠어요.");
+      });
+    }
+    function preview() {
+      post("/api/guides", { action: "preview", text: $("gdText").value }).then(function(res) {
+        if (res.data.ok) $("gdPrev").innerHTML = res.data.html || '<span class="hint">(비어 있음)</span>';    // 서버가 이스케이프한 HTML
+      });
+    }
+    function upload(input) {
+      var f = input.files && input.files[0]; if (!f) return;
+      var fd = new FormData(); fd.append("file", f);
+      msg("올리는 중…");
+      fetch("/api/guides/image", { method: "POST", body: fd }).then(mrJson).then(function(res) {
+        input.value = "";
+        if (!res.data.ok) { msg("⚠ " + (res.data.error || "못 올렸어요")); return; }
+        var ta = $("gdText"), pos = ta.selectionStart || ta.value.length;
+        ta.value = ta.value.slice(0, pos) + "\n" + res.data.markdown + "\n" + ta.value.slice(pos);
+        msg("그림을 넣었어요. 저장해야 공개 화면에 보여요."); preview();
+      });
+    }
+    renderList();
+  </script>
+{% endblock %}
