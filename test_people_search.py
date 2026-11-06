@@ -23,6 +23,8 @@ def pp(monkeypatch, tmp_path):
     f = tmp_path / "employees.json"
     f.write_text(json.dumps(FAKE, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(web_admin, "EMPLOYEE_JSON", f)
+    monkeypatch.setattr(web_admin, "PEOPLE_LOG_PATH", tmp_path / "people_search_log.jsonl")
+    monkeypatch.setattr(web_admin, "BOT_SEARCH_LOG", tmp_path / "bot" / "search_log.jsonl")
     monkeypatch.setattr(web_admin, "_people_limit", media_requests.RateLimiter(30, 60))
     monkeypatch.setattr(web_admin, "authed", lambda req: True)
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
@@ -165,12 +167,16 @@ def test_rate_limit_30_per_minute(pp):
 
 
 def test_nothing_logged(pp, caplog):
+    # 11-07부터 검색어는 검색 로그 파일에만(앱 로그엔 여전히 아무것도), 결과 내용은 어디에도 없음
     c, f = pp
     caplog.set_level(logging.DEBUG)
     c.post("/api/people/search", json={"q": "홍길동"})
     c.post("/api/people/detail", json={"sabun": "A001"})
     text = caplog.text
     assert "홍길동" not in text and "010-0000-0001" not in text and "A001" not in text
+    log = web_admin.PEOPLE_LOG_PATH.read_text(encoding="utf-8")
+    assert "010-0000-0001" not in log and "hong@ex.com" not in log and "A001" not in log and "영업1팀" not in log
+    assert log.count("\n") == 1                                               # 상세 보기는 검색이 아니라 안 남김
 
 
 def test_sort_controls_in_page(pp):

@@ -21,6 +21,23 @@
       display: grid; grid-template-columns: 5.5em 1fr auto; gap: 8px; font: inherit; font-size: 14px; }
     .pp-list .sub { color: var(--muted); font-size: 13px; }
     .pp-empty { color: var(--muted); padding: 12px 2px; }
+    .pp-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+    .pp-tabs a { padding: 8px 18px; border-radius: 999px; border: 1px solid var(--line); text-decoration: none; color: var(--text); font-weight: 600; }
+    .pp-tabs a.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    /* 11-07: 검색 로그 */
+    .lg-form input { flex: 1 1 9em; min-width: 9em; }
+    .lg-form input[type=date] { flex: 1 1 9em; min-width: 0; }
+    .lg-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 13px; }
+    .lg-table td { white-space: nowrap; }
+    .lg-table th, .lg-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .lg-table thead th { color: var(--muted); font-weight: 600; font-size: 12px; white-space: nowrap; }
+    .lg-table td.t, .lg-table td.n { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .lg-table td.n { text-align: right; }
+    .lg-table td.q { white-space: normal; word-break: break-all; min-width: 10em; }
+    .lg-src { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; border: 1px solid var(--line); color: var(--muted); }
+    .lg-src.bot { color: var(--accent); border-color: var(--accent); }
+    .lg-note { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 700; color: var(--danger, #b3261e); }
+    .lg-sub { color: var(--muted); font-size: 12px; }
     /* 11-07: 표 머리를 눌러 정렬(한 번 더 누르면 반대로) */
     .pp-head { display: grid; grid-template-columns: 5.5em 1fr auto; gap: 8px; padding: 0 4px 6px; border-bottom: 1px solid var(--line); }
     .pp-head button { background: none; border: 0; padding: 4px 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--muted);
@@ -45,6 +62,30 @@
       </form>
     </div>
     {% else %}
+    {% if can_log %}
+    <nav class="pp-tabs" aria-label="검색직 화면">
+      <a href="/people" class="{{ 'on' if tab != 'log' else '' }}"{% if tab != 'log' %} aria-current="page"{% endif %}>검색</a>
+      <a href="/people?tab=log" class="{{ 'on' if tab == 'log' else '' }}"{% if tab == 'log' %} aria-current="page"{% endif %}>로그</a>
+    </nav>
+    {% endif %}
+    {% if tab == 'log' %}
+    <div class="card">
+      <form class="pp-form lg-form" id="lgForm" method="post" action="/api/people/log.csv" autocomplete="off">
+        <input type="date" name="from" id="lgFrom" aria-label="시작 날짜">
+        <input type="date" name="to" id="lgTo" aria-label="끝 날짜">
+        <select name="source" id="lgSrc" aria-label="출처"><option value="">봇+MR</option><option value="bot">봇</option><option value="MR">MR</option></select>
+        <input type="search" name="person" id="lgPerson" maxlength="40" placeholder="사람" aria-label="사람" spellcheck="false">
+        <input type="search" name="q" id="lgQ" maxlength="50" placeholder="검색어" aria-label="검색어" spellcheck="false">
+        <button type="submit" class="btn primary" id="lgShow">보기</button>
+        <button type="submit" class="btn" id="lgCsv" name="csv" value="1">CSV 받기</button>
+      </form>
+      <div class="hint" style="margin-top:6px;">검색직 봇과 MR에서 누가·언제·무슨 검색어로 찾았는지예요(결과 내용은 안 남김, 180일 보관). 최근 순, 화면엔 500줄까지 · CSV는 거른 것 전부.</div>
+    </div>
+    <div class="card">
+      <div class="pp-sum" id="lgSum" role="status" aria-live="polite"></div>
+      <div id="lgOut" style="overflow-x:auto;"></div>
+    </div>
+    {% else %}
     <div class="card">
       {% if not ready %}<div class="banner err">직원 데이터를 불러오지 못했어요(검색직 봇 데이터 파일 확인 필요).</div>{% endif %}
       <form class="pp-form" id="ppForm" autocomplete="off">
@@ -61,10 +102,46 @@
       <div id="out"><div class="pp-empty">검색어를 넣어 주세요.</div></div>
     </div>
     {% endif %}
+    {% endif %}
 {% endblock %}
 
 {% block scripts %}
-{% if not reauth %}
+{% if not reauth and tab == 'log' %}
+  <script>
+    (function() {
+      function $(id) { return document.getElementById(id); }
+      function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+      var NOTES = { not_approved: "승인 안 됨", rate_limited: "횟수 제한", data_error: "데이터 못 읽음" };
+      function body() { return { from: $("lgFrom").value, to: $("lgTo").value, source: $("lgSrc").value, person: $("lgPerson").value.trim(), q: $("lgQ").value.trim() }; }
+      function row(r) {
+        var who = esc(r.name || "-") + (r.username ? ' <span class="lg-sub">@' + esc(r.username) + "</span>" : "");
+        var note = r.allowed === false || r.note ? '<span class="lg-note">' + esc(NOTES[r.note] || (r.allowed === false ? "승인 안 됨" : r.note)) + "</span>" : "";
+        // 휴대폰에선 옆으로 밀어야 보이므로 중요한 칸부터: 시각·사람·검색어·결과 수·종류·출처
+        return '<tr><td class="t">' + esc(String(r.time || "").slice(2, 16)) + "</td><td>" + who + '</td><td class="q">' + esc(r.query || "") + note +
+          '</td><td class="n">' + (r.result_count == null ? "-" : esc(r.result_count)) + "</td><td>" + esc(r.mode || "-") +
+          '</td><td><span class="lg-src ' + (r.source === "bot" ? "bot" : "") + '">' + (r.source === "bot" ? "봇" : "MR") + "</span></td></tr>";
+      }
+      function load() {
+        $("lgSum").textContent = "불러오는 중…";
+        fetch("/api/people/log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body()), cache: "no-store" })
+          .then(mrJson).then(function(res) {
+            if (res.data && res.data.reauth) { location.reload(); return; }
+            if (!res.ok || !res.data.ok) { $("lgSum").textContent = (res.data && res.data.error) || "못 불러왔어요."; $("lgOut").innerHTML = ""; return; }
+            var d = res.data, f = d.files || {};
+            $("lgSum").textContent = d.total + "건" + (d.total > d.rows.length ? " (최근 " + d.rows.length + "건만 보임 · 전부는 CSV)" : "") +
+              (f.bot ? "" : " · 봇 로그는 아직 없음(첫 검색 때 생김)");
+            $("lgOut").innerHTML = d.rows.length ? '<table class="lg-table"><thead><tr><th>시각</th><th>사람</th><th>검색어</th><th>결과 수</th><th>종류</th><th>출처</th></tr></thead><tbody>' +
+              d.rows.map(row).join("") + "</tbody></table>" : '<div class="pp-empty">기록이 없어요.</div>';
+          }).catch(function() { $("lgSum").textContent = "못 불러왔어요."; });
+      }
+      $("lgForm").addEventListener("submit", function(e) {
+        if (e.submitter && e.submitter.id === "lgCsv") return;       // CSV는 폼 그대로 POST → 내려받기
+        e.preventDefault(); load();
+      });
+      load();
+    })();
+  </script>
+{% elif not reauth %}
   <script>
     var HINTS = { search_name: "이름", search_org: "소속 (예: 영업)", search_empYmd: "입사일 8자리 (예: 20200302)",
                   search_birthYear: "생년 (예: 1990)", search_birthMonth: "생월 (예: 3)", search_jikwee: "직위",

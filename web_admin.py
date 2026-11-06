@@ -1868,7 +1868,8 @@ def api_surveys_merge():
 
 # ── 생활 > 검색직 (2026-11-04, 사용자 본인만): 검색직 봇과 같은 직원 검색. 직원 개인정보라
 #    관리자만(보기 전용은 위 VIEWER_HIDDEN_PREFIXES로 403, 공개 주소 404), 검색은 POST(접근 로그에 검색어 안 남게),
-#    검색어·결과는 로그·파일·텔레그램 어디에도 안 남김, 분당 30회 제한, 데이터는 읽기 전용 단일 파일 마운트를 메모리에만.
+#    결과는 로그·파일·텔레그램 어디에도 안 남김(11-07부터 검색어는 검색 로그 파일에만 — 아래 people_log), 분당 30회 제한,
+#    데이터는 읽기 전용 단일 파일 마운트를 메모리에만.
 import employee_search
 EMPLOYEE_JSON = Path(os.getenv("EMPLOYEE_JSON", "/app/ext/employees.json"))
 _people_limit = media_requests.RateLimiter(30, 60)
@@ -1958,7 +1959,10 @@ def people_page():
         return auth
     if session_role(request) != "admin":
         return redirect("/?mode=check")
+    can_log = current_user(request) == accounts.OWNER
     return _no_store(make_response(render_template("people.html", authed=True, modes=employee_search.MODES,
+                                                   tab="log" if can_log and request.args.get("tab") == "log" else "search",
+                                                   can_log=can_log,
                                                    ready=employee_search.load(EMPLOYEE_JSON) is not None,
                                                    reauth=not _people_fresh(request),
                                                    reauth_error=request.args.get("e", ""))))
@@ -2002,7 +2006,74 @@ def api_people_search():
         return jsonify({"ok": False, "error": "직원 데이터를 불러오지 못했어요."}), 503
     body = request.get_json(silent=True) or {}
     q = str(body.get("q") or "")[:50]
-    return _no_store(jsonify(dict(employee_search.search(emps, str(body.get("mode") or ""), q), ok=True)))
+    res = employee_search.search(emps, str(body.get("mode") or ""), q)
+    _people_log_search(res.get("mode") or "", q, res.get("total"))
+    return _no_store(jsonify(dict(res, ok=True)))
+
+
+# ── 검색직 검색 로그 (2026-11-07, 사용자 결정 11-05 — 11-04의 '검색어 서버에 안 남김'을 바꿈).
+#    MR 검색은 data/people_search_log.jsonl(600), 봇 검색은 인사팀 로그 폴더(state/search_log/, 읽기 전용 폴더 마운트).
+#    결과 내용은 안 남김(시각·사람·종류·검색어·결과 수만). 보기·CSV는 소유자만(menu owner_only + 아래 검사), 공개 주소 404.
+import people_log
+PEOPLE_LOG_PATH = DATA_DIR / "people_search_log.jsonl"
+BOT_SEARCH_LOG = Path(os.getenv("BOT_SEARCH_LOG", "/app/ext/search_log/search_log.jsonl"))
+PEOPLE_LOG_SHOW = 500
+
+
+def _people_log_search(mode: str, q: str, total) -> None:
+    if not q.strip():
+        return
+    u = current_user(request) or accounts.OWNER
+    name = "소유자" if u == accounts.OWNER else ((accounts.get(ACCOUNTS_PATH, u) or {}).get("name") or u)
+    try:
+        people_log.append(PEOPLE_LOG_PATH, {"source": "MR", "user_id": u, "name": name,
+                                            "mode": dict(employee_search.MODES).get(mode, mode), "query": q,
+                                            "result_count": total if isinstance(total, int) else None, "allowed": True},
+                          datetime.now(APP_TZ))
+    except OSError as e:
+        app.logger.warning("검색직 로그 기록 실패: %s", type(e).__name__)      # 검색어는 앱 로그에 안 남김
+
+
+def _people_log_rows(src: dict) -> tuple[list[dict], dict]:
+    rows, st = people_log.read_all(PEOPLE_LOG_PATH, BOT_SEARCH_LOG)
+    src = src or {}
+    source = str(src.get("source") or "")
+    rows = people_log.filter_rows(rows, str(src.get("from") or ""), str(src.get("to") or ""), str(src.get("person") or "")[:40],
+                                  str(src.get("q") or "")[:50], source if source in ("MR", "bot") else "")
+    return rows, st
+
+
+def _people_log_guard():
+    blocked = _people_guard()
+    if blocked:
+        return blocked
+    if current_user(request) != accounts.OWNER:
+        return jsonify({"ok": False, "error": "소유자만 볼 수 있어요."}), 403
+    return None
+
+
+@app.route("/api/people/log", methods=["POST"])
+def api_people_log():
+    """로그 보기(최근 순, 화면엔 앞 500줄). 거르기 값도 POST 본문으로(접근 로그에 검색어 안 남게)"""
+    blocked = _people_log_guard()
+    if blocked:
+        return blocked
+    rows, st = _people_log_rows(request.get_json(silent=True) or {})
+    return _no_store(jsonify({"ok": True, "total": len(rows), "rows": rows[:PEOPLE_LOG_SHOW], "files": st}))
+
+
+@app.route("/api/people/log.csv", methods=["POST"])
+def api_people_log_csv():
+    """CSV 내려받기(거른 결과 전부). 폼 POST라 실패하면 JSON 대신 짧은 글"""
+    blocked = _people_log_guard()
+    if blocked:
+        return blocked
+    rows, _ = _people_log_rows(request.form)
+    resp = make_response(people_log.to_csv(rows))
+    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+    resp.headers["Content-Disposition"] = (f"attachment; filename=people_search_log_"
+                                           f"{datetime.now(APP_TZ).strftime('%Y%m%d_%H%M')}.csv")
+    return _no_store(resp)
 
 
 @app.route("/api/people/detail", methods=["POST"])

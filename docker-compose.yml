@@ -29,6 +29,9 @@ services:
       # 생활 > 검색직(2026-11-04, 본인만): 검색직 봇 직원 데이터 파일 하나만 읽기 전용(폴더 통째 X — 백업·state 노출 방지).
       # 인사팀 도구가 제자리 덮어쓰기라 단일 파일 마운트로도 바뀐 내용이 바로 보임
       - /volume1/docker/employee-bot/data/output.json:/app/ext/employees.json:ro
+      # 검색직 봇 검색 로그(2026-11-07): 인사팀 전용 폴더 state/search_log/ 하나만 읽기 전용. state/ 통째는 금지
+      # (allowed_users.json·seen_users.json 노출). 봇이 정리할 때 폴더 안에서 rename하므로 폴더 마운트여야 늘 최신
+      - /volume1/docker/employee-bot/state/search_log:/app/ext/search_log:ro
       # 예능 일괄 재인코딩(2026-10-27): queue.json·로그 읽기, 일시정지(STOP 파일). Drive 파일은 건드리지 않음
       - /volume1/docker/reencode:/volume1/docker/reencode
     environment:
