@@ -21,6 +21,12 @@
     .rc-nums span { color: var(--muted); display: block; font-size: 12px; }
     .rc-nums b { font-variant-numeric: tabular-nums; color: var(--text); }
     .rc-nums .bad b { color: var(--danger, #b3261e); }
+    /* 11-07: 신한·우리 청구할인 합계(명세서) vs 가계부 마이너스 합 */
+    .rc-disc { grid-column: 1 / -1; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .rc-disc b { color: var(--text); }
+    .rc-disc .ok { color: var(--success, #188038); font-weight: 700; }
+    .rc-hint { grid-column: 1 / -1; font-size: 13px; font-weight: 700; color: var(--text); background: var(--warn-soft, #fff4ce);
+      border: 1px solid var(--warn-line, #f0c36d); border-radius: 8px; padding: 6px 10px; }
     .rc-body { padding: 0 14px 12px; font-size: 13px; }
     .rc-body h4 { margin: 10px 0 4px; font-size: 13px; }
     .rc-list { list-style: none; margin: 0; padding: 0; }
@@ -73,6 +79,15 @@
           '</span><span class="amt">' + won(amt) + '</span></li>';
       }).join("") + '</ul>';
     }
+    // 청구할인: 필드가 있는 카드(신한·우리)만. 옛 JSON·현대·KB는 아무것도 안 그림
+    function discLine(g) {
+      if (g.discount_total == null) return "";
+      var dt = Number(g.discount_total) || 0, ld = Number(g.ledger_discount) || 0;
+      var s = '<div class="rc-disc">청구할인 <b>' + won(dt) + '</b>' + (g.discount_lines ? " (" + Number(g.discount_lines) + "건)" : "") +
+        ' · 가계부 할인 <b>' + won(ld) + '</b>' + (dt === ld ? ' <span class="ok">✓</span>' : "") + '</div>';
+      if (g.discount_hint) s += '<div class="rc-hint">💡 ' + esc(g.discount_hint) + '</div>';
+      return s;
+    }
     function render(d) {
       var warn = document.getElementById("rcWarn"), cards = document.getElementById("rcCards"), foot = document.getElementById("rcFoot");
       if (!d) { warn.innerHTML = ""; cards.innerHTML = '<div class="rc-empty">이 달 대조 결과가 없어요.</div>'; foot.textContent = ""; return; }
@@ -98,7 +113,7 @@
         return '<details class="rc-card"' + (g.status === "diff" || g.status === "error" ? " open" : "") + '><summary>' +
           '<span class="rc-name">' + esc(g.name) + '</span><span class="rc-state ' + esc(g.status) + '">' + (STATE[g.status] || esc(g.status)) + '</span>' +
           '<div class="rc-nums"><div><span>출금액</span><b>' + won(g.compare_total) + '</b></div><div><span>가계부</span><b>' + won(g.ledger_total) + '</b></div>' +
-          '<div class="' + (hasDiff ? "bad" : "") + '"><span>차이</span><b>' + (g.diff == null ? "-" : won(g.diff)) + '</b></div></div></summary>' +
+          '<div class="' + (hasDiff ? "bad" : "") + '"><span>차이</span><b>' + (g.diff == null ? "-" : won(g.diff)) + '</b></div></div>' + discLine(g) + '</summary>' +
           '<div class="rc-body">' + (body || '<p class="rc-foot">더 볼 내용이 없어요.</p>') + '</div></details>';
       }).join("") || '<div class="rc-empty">카드가 없어요.</div>';
       foot.textContent = "기준 가계부 백업: " + (d.mmbak_time || "-") + " · 비교한 때: " + (d.made_at || "-");

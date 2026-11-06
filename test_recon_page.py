@@ -70,3 +70,13 @@ def test_run_calls_host_once(rc, monkeypatch, tmp_path):
     assert calls == ["card-recon 2026-10"]
     run = rc.get("/api/recon").get_json()["run"]
     assert run["ok"] is True and not run["running"] and run["month"] == "2026-10"
+
+
+def test_discount_fields_shown(rc):
+    # 11-07: 청구할인 합계·가계부 할인·안내는 필드 있는 카드만(현대·KB·옛 JSON은 안 그림) — 그리는 건 화면 JS
+    d = rc.get("/api/recon").get_json()["data"]
+    assert "discount_total" not in d["groups"][0]                            # 옛 JSON 그대로 통과(안 깨짐)
+    html = rc.get("/recon").get_data(as_text=True)
+    assert "function discLine(g)" in html and "g.discount_total == null" in html and "g.discount_hint" in html
+    assert "청구할인" in html and "가계부 할인" in html
+    assert html.count("discLine(g)") == 2                                      # 정의 + 카드 줄에서 호출
