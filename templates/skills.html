@@ -49,7 +49,53 @@
     .sess-meta { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
     .sess-live { font-size: 12px; font-weight: 600; color: var(--success-hover); white-space: nowrap; }
     .sess-item .btn { white-space: nowrap; }
+    /* 11-07: [작업] 탭 — 작업 기록부(ai-shared/work.json) */
+    .wk-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+    .wk-tabs a { padding: 8px 18px; border-radius: 999px; border: 1px solid var(--line); text-decoration: none; color: var(--text); font-weight: 600; }
+    .wk-tabs a.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .wk-sum { display: grid; gap: 10px; }
+    .wk-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .wk-row > span.lbl { font-size: 12px; color: var(--muted); font-weight: 600; min-width: 4.5em; }
+    .wk-chip { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--bg-solid); color: var(--text); border-radius: 999px;
+      padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+    .wk-chip b { font-variant-numeric: tabular-nums; }
+    .wk-chip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+    .wk-chip.need { border-color: var(--danger, #b3261e); color: var(--danger, #b3261e); font-weight: 700; }
+    .wk-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .wk-tools select { flex: 0 1 9em; min-width: 0; width: auto; }
+    .wk-tools input[type=search] { flex: 1 1 12em; min-width: 0; }
+    .wk-tools label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; white-space: nowrap; }
+    .wk-list { display: flex; flex-direction: column; gap: 8px; }
+    .wk-item { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .wk-item.s-need { border-color: var(--danger, #b3261e); box-shadow: 0 0 0 1px var(--danger, #b3261e) inset; }
+    .wk-item > summary { list-style: none; cursor: pointer; padding: 10px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
+    .wk-item > summary::-webkit-details-marker { display: none; }
+    .wk-title { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+    .wk-chips { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; align-items: flex-start; }
+    .wk-meta { grid-column: 1 / -1; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+    .wk-note { grid-column: 1 / -1; font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+    .wk-st, .wk-cat { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; background: var(--bg-solid); color: var(--muted); border: 1px solid var(--line); }
+    .wk-st.st-need { background: var(--danger-light, #fde8e7); color: var(--danger, #b3261e); border-color: transparent; }
+    .wk-st.st-doing { background: var(--accent-light); color: var(--accent-hover, var(--accent)); border-color: transparent; }
+    .wk-st.st-hold { background: var(--warn-soft); color: var(--warn); border-color: var(--warn-line); }
+    .wk-st.st-done { background: var(--success-light); color: var(--success-hover); border-color: transparent; }
+    .wk-st.st-cancel { text-decoration: line-through; }
+    .wk-body { padding: 0 14px 12px; font-size: 13px; }
+    .wk-body h4 { margin: 10px 0 4px; font-size: 13px; }
+    .wk-hist { list-style: none; margin: 0; padding: 0; }
+    .wk-hist li { display: grid; grid-template-columns: 6.5em 5.5em minmax(0, 1fr); gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+    .wk-hist li:last-child { border-bottom: 0; }
+    .wk-sec { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-solid); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 0; font: inherit; font-size: 12.5px; line-height: 1.5; }
+    .wk-sess { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+    .wk-sess li { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: var(--bg-solid); font-size: 13px; }
+    .wk-sess .nm { font-weight: 600; overflow-wrap: anywhere; }
+    .wk-sess .on { color: var(--success-hover); font-weight: 700; }
+    .wk-sess .off { color: var(--muted); }
+    .wk-sess .jobs { color: var(--muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+    .wk-empty { color: var(--muted); padding: 10px 2px; }
     @media (max-width: 640px) {
+      .wk-hist li { grid-template-columns: 5.5em minmax(0, 1fr); }
+      .wk-hist li span:nth-child(2) { display: none; }
       .set-card { padding: 18px 16px; }
       .set-actions { width: 100%; margin-top: 0; }
     }
@@ -57,6 +103,38 @@
 {% endblock %}
 
 {% block content %}
+    {% if can_work %}
+    <nav class="wk-tabs" aria-label="Claude 화면">
+      <a href="/skills" class="{{ 'on' if tab != 'work' else '' }}"{% if tab != 'work' %} aria-current="page"{% endif %}>로그인·세션·스킬</a>
+      <a href="/skills?tab=work" class="{{ 'on' if tab == 'work' else '' }}"{% if tab == 'work' %} aria-current="page"{% endif %}>작업</a>
+    </nav>
+    {% endif %}
+    {% if tab == 'work' %}
+    <div class="card">
+      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+        <span>작업 기록부 <span class="hint" id="wkUpdated"></span></span>
+        <button type="button" class="btn small" id="wkReload">↻ 새로 고침</button>
+      </div>
+      <div class="wk-sum" id="wkSum"><div class="wk-empty">불러오는 중...</div></div>
+    </div>
+    <div class="card">
+      <div class="section-title">세션 · 하는 일</div>
+      <ul class="wk-sess" id="wkSess"><li class="wk-empty">확인 중...</li></ul>
+      <div class="hint" style="margin-top:6px;">세션 이름이 맡은 곳(팀장·미디어 팀·인사팀·HA 팀)으로 시작하면 그 팀의 진행 중·확인 필요 일을 같이 보여 줘요. 켜고 끄기는 [로그인·세션·스킬] 탭에서.</div>
+    </div>
+    <div class="card">
+      <div class="wk-tools">
+        <select id="wkCat" aria-label="분류"><option value="">분류 전체</option></select>
+        <select id="wkOwner" aria-label="맡은 곳"><option value="">맡은 곳 전체</option></select>
+        <select id="wkEngine" aria-label="엔진"><option value="">엔진 전체</option></select>
+        <input type="search" id="wkQ" placeholder="검색 (제목·메모·ID)" aria-label="검색" autocomplete="off" spellcheck="false">
+        <label><input type="checkbox" id="wkDone"> 완료·취소도 보기</label>
+      </div>
+      <div class="hint" id="wkCount" role="status" aria-live="polite" style="margin-bottom:8px;"></div>
+      <div class="wk-list" id="wkList"></div>
+      <div class="hint" style="margin-top:8px;">기록은 각 세션이 <code>ai-shared/work.py</code>로 남겨요. 여기는 읽기만 해요. 줄을 누르면 바뀐 기록과 작업 파일의 '결과'·'확인 필요'가 보여요.</div>
+    </div>
+    {% else %}
     {# Claude 로그인·세션 (10-27 설정 > 연동·경로에서 옮김) #}
     <div class="settings-wrap">
       <section class="card set-card">
@@ -170,9 +248,132 @@
         <div class="hint" style="margin-top:6px;">플러그인은 Claude에서 <code>/plugin</code>, claude.ai 스킬은 claude.ai 설정 &gt; 기능에서 켜고 꺼요. Claude Code 기본 스킬(code-review 등)은 프로그램에 들어 있어 여기 안 보여요.</div>
       </details>
     </div>
+    {% endif %}
 {% endblock %}
 
 {% block scripts %}
+{% if tab == 'work' %}
+  <script>
+    (function() {
+      function $(id) { return document.getElementById(id); }
+      function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+      var ORDER = { "확인 필요": 0, "진행 중": 1, "대기": 2, "보류": 3, "완료": 4, "취소": 5 };
+      var ST_CLS = { "확인 필요": "st-need", "진행 중": "st-doing", "보류": "st-hold", "완료": "st-done", "취소": "st-cancel" };
+      var CATS = ["MR", "미디어", "생활", "보안", "NAS", "HA", "Claude", "기타"], OWNERS = ["팀장", "미디어 팀", "인사팀", "HA 팀", "사용자"],
+          ENGINES = ["Claude", "agy", "없음", "사용자"];
+      var ITEMS = [], SESS = null;
+      function closed(it) { return it.status === "완료" || it.status === "취소"; }
+      function when(v) { var m = /^\d{4}-(\d{2})-(\d{2})(?:T(\d{2}:\d{2}))?/.exec(v || ""); return m ? m[1] + "-" + m[2] + (m[3] ? " " + m[3] : "") : (v ? esc(v) : "-"); }
+      function weekAgoIso() { var d = new Date(Date.now() - 7 * 864e5); return d.toISOString().slice(0, 10); }
+      function count(list, key) { var o = {}; list.forEach(function(it) { var k = it[key] || "-"; o[k] = (o[k] || 0) + 1; }); return o; }
+      function chips(label, obj, order, filterId) {
+        var keys = order.filter(function(k) { return obj[k]; }).concat(Object.keys(obj).filter(function(k) { return order.indexOf(k) < 0; }));
+        if (!keys.length) return "";
+        var cur = filterId ? $(filterId).value : "";
+        return '<div class="wk-row"><span class="lbl">' + label + "</span>" + keys.map(function(k) {
+          return '<button type="button" class="wk-chip' + (cur === k ? " on" : "") + (k === "확인 필요" ? " need" : "") + '"' +
+            (filterId ? ' data-f="' + filterId + '" data-v="' + esc(k) + '"' : ' data-st="' + esc(k) + '"') + ">" + esc(k) + " <b>" + obj[k] + "</b></button>";
+        }).join("") + "</div>";
+      }
+      function renderSum() {
+        var open = ITEMS.filter(function(it) { return !closed(it); }), wk = weekAgoIso();
+        var st = count(open, "status");
+        var weekDone = ITEMS.filter(function(it) { return it.status === "완료" && String(it.done || it.updated || "").slice(0, 10) >= wk; }).length;
+        if (weekDone) st["이번 주 완료"] = weekDone;
+        $("wkSum").innerHTML = chips("상태", st, ["확인 필요", "진행 중", "대기", "보류", "이번 주 완료"], null) +
+          chips("맡은 곳", count(open, "owner"), OWNERS, "wkOwner") + chips("엔진", count(open, "engine"), ENGINES, "wkEngine") ||
+          '<div class="wk-empty">진행 중인 일이 없어요.</div>';
+      }
+      function item(it) {
+        var cls = ST_CLS[it.status] || "";
+        return '<details class="wk-item' + (it.status === "확인 필요" ? " s-need" : "") + '" data-id="' + esc(it.id) + '"><summary>' +
+          '<span class="wk-title">' + esc(it.title || it.id) + '</span><span class="wk-chips"><span class="wk-cat">' + esc(it.cat || "기타") +
+          '</span><span class="wk-st ' + cls + '">' + esc(it.status || "-") + "</span></span>" +
+          '<span class="wk-meta">' + esc(it.owner || "-") + " · " + esc(it.engine || "-") + (it.session && it.session !== it.owner ? " (" + esc(it.session) + ")" : "") +
+          " · 시킨 날 " + when(it.requested) + " · 마지막 변경 " + when(it.updated) + (it.done ? " · 끝 " + when(it.done) : "") + " · " + esc(it.id) + "</span>" +
+          (it.note ? '<span class="wk-note">' + esc(it.note) + "</span>" : "") + '</summary><div class="wk-body"></div></details>';
+      }
+      function renderList() {
+        var cat = $("wkCat").value, own = $("wkOwner").value, eng = $("wkEngine").value, q = $("wkQ").value.trim().toLowerCase(), done = $("wkDone").checked;
+        var list = ITEMS.filter(function(it) {
+          if (!done && closed(it)) return false;
+          if (cat && it.cat !== cat) return false;
+          if (own && it.owner !== own) return false;
+          if (eng && it.engine !== eng) return false;
+          if (q && [it.title, it.note, it.id, it.task, it.session].join(" ").toLowerCase().indexOf(q) < 0) return false;
+          return true;
+        }).sort(function(a, b) {
+          var oa = ORDER[a.status] == null ? 9 : ORDER[a.status], ob = ORDER[b.status] == null ? 9 : ORDER[b.status];
+          if (oa !== ob) return oa - ob;
+          var ta = String(a.done || a.updated || ""), tb = String(b.done || b.updated || "");
+          return ta < tb ? 1 : ta > tb ? -1 : 0;                                   // 같은 상태 안에선 최근에 바뀐 것부터
+        });
+        var hidden = done ? 0 : ITEMS.filter(closed).length;
+        $("wkCount").textContent = list.length + "건" + (hidden ? " · 완료·취소 " + hidden + "건은 숨김" : "");
+        $("wkList").innerHTML = list.length ? list.map(item).join("") : '<div class="wk-empty">조건에 맞는 일이 없어요.</div>';
+      }
+      function renderSess() {
+        var el = $("wkSess");
+        if (SESS === null) return;
+        if (!SESS.length) { el.innerHTML = '<li class="wk-empty">세션 정보를 못 받았어요.</li>'; return; }
+        var open = ITEMS.filter(function(it) { return it.status === "진행 중" || it.status === "확인 필요"; });
+        el.innerHTML = SESS.map(function(s) {
+          var nm = s.name || "(이름 없음)", owner = OWNERS.filter(function(o) { return nm.indexOf(o) === 0; })[0] || "";
+          var jobs = owner ? open.filter(function(it) { return it.owner === owner; }) : [];
+          return '<li><div class="nm">' + esc(nm) + ' <span class="' + (s.running ? "on" : "off") + '">' + (s.running ? "● 켜짐" : "○ 꺼짐") + "</span></div>" +
+            (owner ? '<div class="jobs">' + (jobs.length ? "진행 중·확인 필요 " + jobs.length + "건: " + jobs.slice(0, 3).map(function(it) { return esc(it.title); }).join(" / ") +
+              (jobs.length > 3 ? " …" : "") : "지금 맡은 일 없음") + "</div>" : "") + "</li>";
+        }).join("");
+      }
+      function fill(id, arr) {
+        var sel = $(id), have = {};
+        ITEMS.forEach(function(it) { var k = { wkCat: "cat", wkOwner: "owner", wkEngine: "engine" }[id]; if (it[k]) have[it[k]] = 1; });
+        var keys = arr.concat(Object.keys(have).filter(function(k) { return arr.indexOf(k) < 0; }));
+        var cur = sel.value;
+        sel.innerHTML = sel.options[0].outerHTML + keys.map(function(k) { return '<option value="' + esc(k) + '">' + esc(k) + "</option>"; }).join("");
+        sel.value = cur;
+      }
+      function load() {
+        fetch("/api/skills/work", { cache: "no-store" }).then(function(r) { return r.json(); }).then(function(d) {
+          if (!d.ok) { $("wkSum").innerHTML = '<div class="wk-empty">작업 기록부(work.json)를 읽지 못했어요.</div>'; ITEMS = []; }
+          else { ITEMS = d.items || []; $("wkUpdated").textContent = d.updated ? "· " + when(d.updated) + " 기준" : ""; }
+          fill("wkCat", CATS); fill("wkOwner", OWNERS); fill("wkEngine", ENGINES);
+          renderSum(); renderList(); renderSess();
+        }).catch(function() { $("wkSum").innerHTML = '<div class="wk-empty">불러오지 못했어요.</div>'; });
+        fetch("/settings/claude_sessions", { cache: "no-store" }).then(function(r) { return r.json(); })
+          .then(function(d) { SESS = d.ok ? (d.sessions || []) : []; renderSess(); }).catch(function() { SESS = []; renderSess(); });
+      }
+      ["wkCat", "wkOwner", "wkEngine", "wkDone"].forEach(function(id) { $(id).addEventListener("change", function() { renderSum(); renderList(); }); });
+      $("wkQ").addEventListener("input", renderList);
+      $("wkReload").addEventListener("click", load);
+      $("wkSum").addEventListener("click", function(e) {
+        var b = e.target.closest("button.wk-chip"); if (!b) return;
+        if (b.dataset.f) { var sel = $(b.dataset.f); sel.value = sel.value === b.dataset.v ? "" : b.dataset.v; }
+        else if (b.dataset.st === "이번 주 완료") { $("wkDone").checked = true; }
+        renderSum(); renderList();
+      });
+      $("wkList").addEventListener("toggle", function(e) {
+        var d = e.target; if (!d.open || !d.classList || !d.classList.contains("wk-item")) return;
+        var body = d.querySelector(".wk-body"); if (body.dataset.loaded) return;
+        body.dataset.loaded = "1";
+        var it = ITEMS.filter(function(x) { return x.id === d.dataset.id; })[0] || {};
+        var hist = (it.history || []).slice().reverse();
+        body.innerHTML = (hist.length ? "<h4>바뀐 기록</h4><ul class=\"wk-hist\">" + hist.map(function(h) {
+          return "<li><span>" + when(h.at) + "</span><span>" + esc(h.status || "") + "</span><span>" + esc(h.note || "") + "</span></li>"; }).join("") + "</ul>" : "") +
+          '<div class="wk-task">' + (it.task ? '<h4>작업 파일</h4><div class="hint">' + esc(it.task) + " 불러오는 중...</div>" : "") + "</div>";
+        if (!it.task) return;
+        fetch("/api/skills/work/task?id=" + encodeURIComponent(it.id), { cache: "no-store" }).then(function(r) { return r.json(); }).then(function(t) {
+          var box = body.querySelector(".wk-task");
+          if (!t.ok) { box.innerHTML = '<h4>작업 파일</h4><div class="hint">' + esc(t.error || "못 불러왔어요") + "</div>"; return; }
+          box.innerHTML = "<h4>작업 파일 <span class=\"hint\">" + esc(t.file) + "</span></h4>" + (t.missing ? '<div class="hint">파일을 찾지 못했어요.</div>' :
+            (t.sections.length ? t.sections.map(function(sc) { return '<div class="st-sub" style="font-size:12px;font-weight:700;margin:6px 0 4px;">## ' + esc(sc.title) +
+              '</div><pre class="wk-sec">' + esc(sc.body || "(비어 있음)") + "</pre>"; }).join("") : '<div class="hint">\'결과\'·\'확인 필요\' 부분이 아직 없어요.</div>'));
+        }).catch(function() { body.querySelector(".wk-task").innerHTML = '<div class="hint">못 불러왔어요.</div>'; });
+      }, true);
+      load();
+    })();
+  </script>
+{% else %}
   <script>
     function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
     function post(url, body) {
@@ -489,4 +690,5 @@
     loadClaudeSessions();
     loadInstalled().then(function() { loadGuide(); loadCatalog(false); });
   </script>
+{% endif %}
 {% endblock %}

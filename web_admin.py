@@ -2754,7 +2754,43 @@ def skills_page():
     auth = authed(request)
     if auth is not True:
         return auth
-    return render_template("skills.html", authed=True)
+    tab = "work" if request.args.get("tab") == "work" and current_user(request) == accounts.OWNER else "setup"
+    return render_template("skills.html", authed=True, tab=tab, can_work=current_user(request) == accounts.OWNER)
+
+
+# ── 설정 > Claude > [작업] (2026-11-07): 팀장의 작업 기록부(ai-shared/work.json)를 읽기만. 소유자만(menu owner_only + 아래 검사)
+import work_board
+WORK_JSON = Path(os.getenv("WORK_JSON", "/app/ext/work.json"))
+WORK_TASKS_DIR = Path(os.getenv("WORK_TASKS_DIR", "/app/ext/tasks"))
+
+
+def _work_guard():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if current_user(request) != accounts.OWNER or session_role(request) != "admin":
+        return jsonify({"ok": False, "error": "소유자만 볼 수 있어요."}), 403
+    return None
+
+
+@app.route("/api/skills/work", methods=["GET"])
+def api_skills_work():
+    blocked = _work_guard()
+    if blocked:
+        return blocked
+    return _no_store(jsonify(work_board.load(WORK_JSON)))
+
+
+@app.route("/api/skills/work/task", methods=["GET"])
+def api_skills_work_task():
+    blocked = _work_guard()
+    if blocked:
+        return blocked
+    d = work_board.load(WORK_JSON)
+    res = work_board.task_sections(WORK_TASKS_DIR, d["items"], str(request.args.get("id") or "")[:40])
+    if res is None:
+        return jsonify({"ok": False, "error": "그 작업을 찾지 못했어요."}), 404
+    return _no_store(jsonify(dict(res, ok=True)))
 
 
 @app.route("/api/skills", methods=["GET"])
