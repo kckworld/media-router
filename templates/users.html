@@ -211,13 +211,50 @@
         '<div class="divider"></div>' +
         '<div style="font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:12px;">계정 추가</div>' +
         '<div class="form-row">' +
-          '<div class="form-group"><label class="field-label">서비스</label><select id="newService"><option value="jellyfin">Jellyfin</option><option value="plex">Plex</option></select></div>' +
-          '<div class="form-group"><label class="field-label">사용자명</label><input type="text" id="newUsername" placeholder="서비스 내 표시 이름"></div>' +
+          '<div class="form-group"><label class="field-label">서비스</label><select id="newService" onchange="loadServiceUsers()"><option value="jellyfin">Jellyfin</option><option value="plex">Plex</option></select></div>' +
+          '<div class="form-group"><label class="field-label">서버 사용자 고르기</label><select id="newPick" onchange="pickServiceUser()" aria-label="서버 사용자 고르기"><option value="">불러오는 중...</option></select></div>' +
+        '</div>' +
+        '<div class="hint" id="newPickHint" style="margin:-4px 0 8px;"></div>' +
+        '<div class="form-row">' +
+          '<div class="form-group"><label class="field-label">사용자명 <span class="muted">(고르면 채워짐 · 직접 입력도 돼요)</span></label><input type="text" id="newUsername" placeholder="서비스 내 표시 이름"></div>' +
         '</div>' +
         '<div class="form-row">' +
           '<div class="form-group"><label class="field-label">User ID <span class="muted">(서비스 내부 ID)</span></label><input type="text" id="newUserId" placeholder="UUID 또는 숫자 ID"></div>' +
         '</div>' +
         '<button class="btn primary" onclick="addAccount(' + person.id + ')">계정 연결</button>';
+      loadServiceUsers();
+    }
+
+    // 11-07: 서비스 서버(Jellyfin /Users · Plex /accounts)의 사용자 목록 드롭다운. 이미 맵핑된 건 '→ 이름'으로 표시하고 못 고르게
+    let SVC_USERS = {};
+    async function loadServiceUsers() {
+      const svc = document.getElementById('newService'), pick = document.getElementById('newPick'), hint = document.getElementById('newPickHint');
+      if (!svc || !pick) return;
+      const service = svc.value;
+      pick.innerHTML = '<option value="">불러오는 중...</option>'; hint.textContent = '';
+      try {
+        const res = await fetch('/api/users/service_users?service=' + encodeURIComponent(service), { cache: 'no-store' });
+        const d = await res.json();
+        if (svc.value !== service) return;                       // 그 사이 서비스를 바꿨으면 버림
+        if (!d.ok) throw new Error(d.error || '목록을 못 불러왔어요');
+        SVC_USERS[service] = d.users || [];
+        const free = SVC_USERS[service].filter(u => !u.mapped_to).length;
+        pick.innerHTML = '<option value="">— 고르기 (' + free + '명 남음 / 전체 ' + SVC_USERS[service].length + ') —</option>' +
+          SVC_USERS[service].map((u, i) => '<option value="' + i + '"' + (u.mapped_to ? ' disabled' : '') + '>' + escapeHtml(u.username) +
+            (u.mapped_to ? ' → ' + escapeHtml(u.mapped_to) : '') + '</option>').join('');
+      } catch (e) {
+        if (svc.value !== service) return;
+        pick.innerHTML = '<option value="">목록 없음 — 아래에 직접 입력</option>';
+        hint.textContent = '⚠ ' + e.message;
+      }
+    }
+    function pickServiceUser() {
+      const service = document.getElementById('newService').value, v = document.getElementById('newPick').value;
+      const u = v === '' ? null : (SVC_USERS[service] || [])[+v];
+      if (!u) return;
+      document.getElementById('newUsername').value = u.username;
+      document.getElementById('newUserId').value = u.user_id;
+      document.getElementById('newPickHint').textContent = 'ID ' + u.user_id + ' — [계정 연결]을 누르면 저장돼요.';
     }
 
     function showAddPerson() {

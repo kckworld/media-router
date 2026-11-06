@@ -4962,6 +4962,8 @@ def downloads_pending():
         cfg = load_cfg()
         items = pending_downloads.scan((cfg.get("paths") or {}).get("sources") or [], cfg.get("rules") or [],
                                        cfg.get("base_paths") or {}, paused=bool(processing_pause_state().get("paused")))
+        items = sorted(items + pending_downloads.scan_drive(DRIVE_ROOT_PATH),            # 11-07: 시놀로지 드라이브(읽기만)
+                       key=lambda x: x["mtime"], reverse=True)[:pending_downloads.LIMIT]
     except Exception as e:
         app.logger.exception("안 옮겨진 파일 확인 실패")
         return jsonify({"success": False, "message": f"폴더를 읽지 못했어요: {e}"}), 500
@@ -5100,6 +5102,34 @@ def api_users_persons_delete(person_id):
     with _stats_db() as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM persons WHERE id=%s", (person_id,))
     return jsonify({"ok": True})
+
+
+import media_servers
+
+
+@app.route("/api/users/service_users", methods=["GET"])
+def api_users_service_users():
+    """사용자 맵핑 드롭다운(11-07): 서비스 서버의 사용자 목록 + 이미 누구에게 맵핑됐는지(이름만)"""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    service = (request.args.get("service") or "").strip()
+    try:
+        users = media_servers.list_users(service, refresh=request.args.get("refresh") == "1")
+    except media_servers.ServerError as e:
+        return jsonify({"ok": False, "error": f"서버 목록을 못 불러왔어요({e}). 직접 입력해 주세요."}), 502
+    mapped = {}
+    try:
+        with _stats_db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT sa.user_id, sa.username, p.name FROM service_accounts sa JOIN persons p ON p.id = sa.person_id "
+                        "WHERE sa.service = %s", (service,))
+            for uid, uname, pname in cur.fetchall():
+                mapped[str(uid)] = pname
+                mapped.setdefault("name:" + str(uname), pname)
+    except Exception:
+        app.logger.exception("맵핑 목록 확인 실패")
+    out = [dict(u, mapped_to=mapped.get(u["user_id"]) or mapped.get("name:" + u["username"])) for u in users]
+    return jsonify({"ok": True, "service": service, "users": out})
 
 
 @app.route("/api/users/accounts", methods=["POST"])

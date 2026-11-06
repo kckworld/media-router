@@ -68,3 +68,38 @@ def test_route(monkeypatch, tmp_path):
     assert d["success"] and d["items"][0]["name"] == "런닝맨.E825.261101.mp4"
     html = c.get("/downloads").get_data(as_text=True)
     assert 'id="pendBody"' in html and "아직 안 옮겨진 파일" in html
+
+
+def test_scan_drive_read_only(tmp_path):
+    # 11-07: 시놀로지 드라이브 — drama_name.sh가 옮기는 확장자만, 인코딩·보관·@eaDir 제외, 파일은 안 건드림
+    now = 2_000_000_000
+    d = tmp_path / "Drive"
+    _f(d / "새영화.mkv", 30, now)
+    _f(d / "JD" / "예능.E01.mp4", 1800, now)
+    _f(d / "오래된.srt", 7200, now)
+    _f(d / "이상한.avi", 100, now)
+    _f(d / "받는중.mkv.part", 100, now)
+    _f(d / "문서" / "보고서.pdf", 100, now)
+    _f(d / "인코딩" / "Program" / "a.mkv", 100, now)
+    _f(d / "보관" / "b.mp4", 100, now)
+    _f(d / "@eaDir" / "c.mp4", 100, now)
+    before = sorted(str(p) for p in d.rglob("*"))
+    items = pd.scan_drive(d, now=now)
+    got = {x["rel"]: x["kind"] for x in items}
+    assert got == {"새영화.mkv": "soon", "JD/예능.E01.mp4": "soon", "오래된.srt": "stuck", "이상한.avi": "norule"}
+    assert all(x["source"] == "drive" and x["folder"] == "드라이브" for x in items)
+    assert "1분 뒤" in next(x["reason"] for x in items if x["name"] == "새영화.mkv")
+    assert sorted(str(p) for p in d.rglob("*")) == before
+    assert pd.scan_drive(tmp_path / "없음", now=now) == []
+
+
+def test_route_includes_drive(monkeypatch, tmp_path):
+    _f(tmp_path / "dl" / "a.E01.mp4", 10, 2_000_000_000)
+    _f(tmp_path / "Drive" / "b.mkv", 5, 2_000_000_000)
+    monkeypatch.setattr(web_admin, "load_cfg", lambda: {"paths": {"sources": [str(tmp_path / "dl")]}, "rules": RULES, "base_paths": BASE})
+    monkeypatch.setattr(web_admin, "processing_pause_state", lambda: {"paused": False})
+    monkeypatch.setattr(web_admin, "DRIVE_ROOT_PATH", tmp_path / "Drive")
+    monkeypatch.setattr(web_admin, "authed", lambda req: True)
+    web_admin.app.config["TESTING"] = True
+    items = web_admin.app.test_client().get("/downloads/pending").get_json()["items"]
+    assert [x["name"] for x in items] == ["b.mkv", "a.E01.mp4"] and items[0]["source"] == "drive"

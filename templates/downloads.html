@@ -251,7 +251,10 @@
           if (!items.length) { body.innerHTML = '<tr><td colspan="4" class="hint">안 옮겨진 파일이 없어요.</td></tr>'; return; }
           body.innerHTML = items.map(function(x) {
             var sub = x.rel !== x.name ? x.folder + "/" + x.rel.slice(0, x.rel.length - x.name.length) : x.folder + "/";
-            return '<tr><td><div style="word-break:break-all;">' + esc(x.name) + '</div><div class="hint">' + esc(sub) + '</div></td>' +
+            // 11-07: 시놀로지 드라이브 쪽은 출처 칩으로 구분(옮기기는 호스트 drama_name.sh가 함, 여기선 보기만)
+            var src = x.source === "drive" ? '<span class="status-badge unknown" style="margin-right:6px;">☁ 드라이브</span>' : "";
+            if (x.source === "drive") sub = x.rel !== x.name ? x.rel.slice(0, x.rel.length - x.name.length) : "";
+            return '<tr><td><div style="word-break:break-all;">' + esc(x.name) + '</div><div class="hint">' + src + esc(sub) + '</div></td>' +
               '<td style="white-space:nowrap;">' + fmtBytes(x.size) + '</td>' +
               '<td style="white-space:nowrap;" title="' + esc(new Date(x.mtime * 1000).toLocaleString()) + '">' + fmtAgo(x.mtime) + '</td>' +
               '<td><span class="status-badge ' + (PEND_COLOR[x.kind] || "unknown") + '" style="white-space:normal;">' + esc(x.reason) + '</span></td></tr>';

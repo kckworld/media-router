@@ -89,3 +89,48 @@ def scan(sources: list[str], rules: list[dict], base_paths: dict, paused: bool =
                         "mtime": int(st.st_mtime), "reason": reason, "kind": kind})
     out.sort(key=lambda x: x["mtime"], reverse=True)
     return out[:LIMIT]
+
+
+# ── 시놀로지 드라이브 (2026-11-07): PC(D:\SynologyDrive)에서 받은 영상이 Drive에 올라오면 호스트 예약작업
+#    /volume1/web/video_auto/drama_name.sh가 'Drive 전체(인코딩·보관 제외)'의 아래 확장자를 /volume1/video/임시/download로 옮긴다.
+#    그 전까지 남아 있는 파일을 보여 준다. 컨테이너는 Drive를 읽기만(/app/drive_root:ro) — 만들거나 지우면 PC와 어긋남.
+DRIVE_LABEL = "드라이브"
+DRIVE_MOVED_EXT = {".mp4", ".mkv", ".srt", ".smi", ".ass", ".mp44"}        # drama_name.sh exts
+DRIVE_OTHER_VIDEO = {".avi", ".ts", ".m4v", ".webm", ".mov", ".wmv", ".flv", ".m2ts"}
+DRIVE_SKIP_TOP = {"인코딩", "보관"}                                          # drama_name.sh가 건너뛰는 폴더
+DRIVE_STABLE_SECONDS = 60                                                     # drama_name.sh STABLE_MTIME_SEC
+
+
+def scan_drive(root: Path, now: float | None = None) -> list[dict]:
+    now = now or time.time()
+    out = []
+    if not root.is_dir():
+        return out
+    for p in root.rglob("*"):
+        rel = p.relative_to(root)
+        if rel.parts and rel.parts[0] in DRIVE_SKIP_TOP:
+            continue
+        if any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts):
+            continue
+        ext = p.suffix.lower()
+        if ext not in DRIVE_MOVED_EXT and ext not in DRIVE_OTHER_VIDEO:
+            continue
+        try:
+            if not p.is_file():
+                continue
+            st = p.stat()
+        except OSError:
+            continue
+        age = now - st.st_mtime
+        if ext in DRIVE_OTHER_VIDEO:
+            reason, kind = f"드라이브 정리(drama_name.sh)가 안 옮기는 확장자({ext}) - 손으로 옮기세요", "norule"
+        elif age < DRIVE_STABLE_SECONDS:
+            reason, kind = "드라이브에 막 올라옴 - 1분 뒤 다음 드라이브 정리 때 옮겨짐", "soon"
+        elif age > STALE_SECONDS:
+            reason, kind = "드라이브에 1시간 넘게 남음 - drama_name.sh 예약작업·로그 확인", "stuck"
+        else:
+            reason, kind = "드라이브 → 임시/download, 다음 드라이브 정리 때 옮겨짐", "soon"
+        out.append({"name": p.name, "folder": DRIVE_LABEL, "rel": str(rel), "size": st.st_size,
+                    "mtime": int(st.st_mtime), "reason": reason, "kind": kind, "source": "drive"})
+    out.sort(key=lambda x: x["mtime"], reverse=True)
+    return out[:LIMIT]
