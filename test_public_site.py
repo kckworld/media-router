@@ -147,3 +147,70 @@ def test_recent_page(pub):
     c, tmp = pub
     h = g(c, "/pub/recent").get_data(as_text=True)
     assert h.index("11월 5일") < h.index("11월 1일") and "3편 추가" in h and "가짜 영화" in h
+
+
+@pytest.fixture
+def acc(pub, monkeypatch, tmp_path):
+    c, tmp = pub
+    monkeypatch.setattr(web_admin, "ACCOUNT_REQUESTS_PATH", tmp / "acc.json")
+    monkeypatch.setattr(web_admin, "_request_code", lambda: "1234")
+    monkeypatch.setattr(web_admin, "_acc_ip_limit", web_admin.media_requests.RateLimiter(3, 86400))
+    monkeypatch.setattr(web_admin, "_acc_total_limit", web_admin.media_requests.RateLimiter(10, 86400))
+    monkeypatch.setattr(web_admin, "_rq_code_fail_limit", web_admin.media_requests.RateLimiter(10, 3600))
+    sent = []
+    monkeypatch.setattr(web_admin, "_tg_notify", lambda text, markup=None, token=None: sent.append((text, markup)) or True)
+
+    class T:                                                 # 알림 스레드를 바로 돌림
+        def __init__(self, target, args=(), daemon=None): self.f, self.a = target, args
+        def start(self): self.f(*self.a)
+    monkeypatch.setattr(web_admin.threading, "Thread", T)
+    return c, tmp, sent
+
+
+def post_acc(c, **form):
+    data = {"name": "가짜이름", "services": ["plex"], "code": "1234"}
+    data.update(form)
+    return c.post("/pub/account", data=data, headers={"Host": HOST})
+
+
+def test_account_request_flow(acc):
+    c, tmp, sent = acc
+    h = g(c, "/pub/account").get_data(as_text=True)
+    assert 'name="code"' in h and 'name="website"' in h
+    assert post_acc(c, code="0000").status_code == 403
+    assert post_acc(c, services=[]).status_code == 400
+    r = post_acc(c, contact="카톡 가짜", memo="TV로 봐요", services=["plex", "jellyfin"])
+    assert r.status_code == 200 and "요청을 보냈어요" in r.get_data(as_text=True) and r.headers["Cache-Control"] == "no-store"
+    it = json.loads((tmp / "acc.json").read_text(encoding="utf-8"))["items"][0]
+    assert it["status"] == "대기" and it["services"] == ["plex", "jellyfin"] and it["name"] == "가짜이름"
+    import os, stat
+    assert stat.S_IMODE(os.stat(tmp / "acc.json").st_mode) == 0o600
+    text, markup = sent[-1]
+    assert "가짜이름" in text and "Plex·Jellyfin" in text
+    btns = [b["callback_data"] for b in markup["inline_keyboard"][0]]
+    assert btns[0].startswith(f"ar_ok_{it['id']}:") and btns[1].startswith(f"ar_no_{it['id']}:")
+    web_admin._tg_account_decide(btns[0].split(":")[0])                               # [승인] 버튼 처리
+    assert json.loads((tmp / "acc.json").read_text(encoding="utf-8"))["items"][0]["status"] == "승인"
+    assert "직접 만들어" in sent[-1][0]
+
+
+def test_account_request_limits_and_honeypot(acc):
+    c, tmp, sent = acc
+    assert "요청을 보냈어요" in post_acc(c, website="bot").get_data(as_text=True)
+    assert not (tmp / "acc.json").exists()                                            # 봇 칸 채우면 저장 안 함
+    for _ in range(3):
+        assert post_acc(c).status_code == 200
+    assert post_acc(c).status_code == 429                                              # 접속지당 하루 3건
+
+
+def test_account_admin_api(acc, monkeypatch):
+    c, tmp, sent = acc
+    post_acc(c)
+    iid = json.loads((tmp / "acc.json").read_text(encoding="utf-8"))["items"][0]["id"]
+    monkeypatch.setattr(web_admin, "authed", lambda req: True)
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
+    assert c.get("/api/account_requests").get_json()["items"][0]["id"] == iid
+    assert c.post("/api/account_requests", json={"id": iid, "status": "거절"}).get_json()["item"]["status"] == "거절"
+    assert c.get("/api/account_requests", headers={"Host": HOST}).status_code == 404         # 공개 주소에선 없음
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
+    assert c.post("/api/account_requests", json={"id": iid, "status": "승인"}).status_code == 403

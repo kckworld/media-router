@@ -85,7 +85,8 @@ def test_default_like_old_viewer(pm):
 
 def test_every_route_belongs_to_a_page_or_is_public():
     """새 화면을 만들고 menu.py에 안 넣으면 여기서 걸린다(일반 계정 권한 검사에서 빠지지 않게)"""
-    public = ("/", "/request", "/survey", "/popular", "/login", "/logout", "/health", "/static", "/favicon.ico",
+    # /pub = 공개 사이트(11-07, 자체 문지기 _pub_gate가 MR 주소에선 소유자만)
+    public = ("/", "/request", "/survey", "/popular", "/pub", "/login", "/logout", "/health", "/static", "/favicon.ico",
               "/apple-touch-icon", "/api/internal/kakao-send", "/pc_status", "/schedule_pc_shutdown/status",
               "/people/reauth")
     missing = []

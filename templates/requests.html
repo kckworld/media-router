@@ -61,6 +61,12 @@
       </div>
       <ul class="rq-list" id="rqList"><li class="rq-empty">불러오는 중…</li></ul>
     </div>
+
+    {#- 11-07: 공개 사이트(/pub/account) 계정 요청. 계정은 자동으로 안 만듦 — 승인 뒤 Plex·Jellyfin에서 직접 #}
+    <div class="card">
+      <div class="section-title">계정 요청 <span class="hint">공개 사이트에서 들어온 Plex·Jellyfin 계정 요청 · 승인해도 계정은 직접 만들어요</span></div>
+      <ul class="rq-list" id="acList"><li class="rq-empty">불러오는 중…</li></ul>
+    </div>
 {% endblock %}
 
 {% block scripts %}
@@ -139,7 +145,33 @@
         showToast("보냈어요. 카톡에서 확인해 주세요.", "success");
       });
     }
+    function accEsc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    var ACC_SVC = { plex: "Plex", jellyfin: "Jellyfin" };
+    function loadAcc() {
+      fetch("/api/account_requests", { cache: "no-store" }).then(mrJson).then(function(res) {
+        var el = document.getElementById("acList");
+        if (!res.ok || !res.data.ok) { el.innerHTML = '<li class="rq-empty">못 불러왔어요.</li>'; return; }
+        var items = res.data.items || [];
+        el.innerHTML = items.length ? items.slice(0, 50).map(function(it) {
+          var acts = it.status === "대기"
+            ? '<button type="button" class="btn small primary" data-write onclick="setAcc(\'' + accEsc(it.id) + '\', \'승인\')">승인</button> ' +
+              '<button type="button" class="btn small" data-write onclick="setAcc(\'' + accEsc(it.id) + '\', \'거절\')">거절</button>'
+            : '<span class="hint">' + accEsc(it.status) + ' · ' + accEsc(it.decided_at) + '</span>';
+          return '<li class="rq-item"><div><b>' + accEsc(it.name) + '</b> · ' + (it.services || []).map(function(x) { return ACC_SVC[x] || accEsc(x); }).join("·") +
+            '<div class="hint">' + accEsc(it.at) + (it.contact ? ' · 연락 ' + accEsc(it.contact) : '') + (it.memo ? ' · ' + accEsc(it.memo) : '') + '</div></div>' +
+            '<div>' + acts + '</div></li>';
+        }).join("") : '<li class="rq-empty">계정 요청이 없어요.</li>';
+      }).catch(function() {});
+    }
+    function setAcc(id, status) {
+      post("/api/account_requests", { id: id, status: status }).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast("바꾸지 못했어요", "error"); return; }
+        showToast(status === "승인" ? "승인했어요. 계정은 Plex·Jellyfin에서 직접 만들어 주세요." : "거절했어요.", "success");
+        loadAcc();
+      });
+    }
     load();
-    setInterval(function() { if (!document.hidden) load(); }, 30000);
+    loadAcc();
+    setInterval(function() { if (!document.hidden) { load(); loadAcc(); } }, 30000);
   </script>
 {% endblock %}

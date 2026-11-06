@@ -1,0 +1,43 @@
+{% extends "public/base.html" %}
+{% block title %}계정 요청{% endblock %}
+{% block css %}
+  label { display: block; font-weight: 700; font-size: 14px; margin: 16px 0 6px; }
+  label:first-child { margin-top: 0; }
+  .req { color: var(--danger); } .opt { color: var(--muted); font-weight: 500; }
+  .checks { display: flex; gap: 16px; flex-wrap: wrap; font-weight: 600; }
+  .checks label { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: 600; }
+  .err { color: var(--danger); font-weight: 700; margin: 0 0 12px; }
+  .ok { color: var(--ok); font-weight: 700; }
+  .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  form.card { max-width: 560px; }
+{% endblock %}
+{% block content %}
+  <h1>Plex · Jellyfin 계정 요청</h1>
+  <p class="lead">NAS 영상을 보려면 계정이 있어야 해요. 아래를 보내면 관리자가 확인한 뒤 계정을 만들어 알려 드려요(바로 만들어지지 않아요).
+    단톡방에서 받은 <b>코드</b>가 필요해요. 쓰는 법은 <a href="/pub/guide">사용법</a>을 봐 주세요.</p>
+  {% if done %}
+    <div class="card"><p class="ok">요청을 보냈어요. 관리자가 확인하면 연락드릴게요.</p><p><a href="/pub/">처음으로</a></p></div>
+  {% elif not open %}
+    <div class="card"><p class="err">지금은 요청을 받지 않아요.</p></div>
+  {% else %}
+    <form class="card" method="post" action="/pub/account" autocomplete="off">
+      {% if error %}<p class="err" role="alert">{{ error }}</p>{% endif %}
+      <label for="acName">이름(닉네임) <span class="req">*</span></label>
+      <input type="text" id="acName" name="name" maxlength="20" required value="{{ form.name or '' }}">
+      <div class="label" style="font-weight:700;font-size:14px;margin:16px 0 6px;">원하는 서비스 <span class="req">*</span></div>
+      <div class="checks">
+        {% for k, v in services.items() %}
+          <label><input type="checkbox" name="services" value="{{ k }}"{% if k in (form.services or []) %} checked{% endif %}> {{ v }}</label>
+        {% endfor %}
+      </div>
+      <label for="acContact">연락 방법 <span class="opt">(선택 · 카톡 이름 등)</span></label>
+      <input type="text" id="acContact" name="contact" maxlength="50" value="{{ form.contact or '' }}">
+      <label for="acMemo">메모 <span class="opt">(선택 · 쓰는 기기 등)</span></label>
+      <textarea id="acMemo" name="memo" maxlength="200">{{ form.memo or '' }}</textarea>
+      <div class="hp" aria-hidden="true"><label for="acWeb">비워 두세요</label><input type="text" id="acWeb" name="website" tabindex="-1"></div>
+      <label for="acCode">단톡방 코드 <span class="req">*</span></label>
+      <input type="text" id="acCode" name="code" maxlength="40" required autocomplete="off">
+      <p style="margin:16px 0 0;"><button type="submit">요청 보내기</button></p>
+    </form>
+  {% endif %}
+{% endblock %}

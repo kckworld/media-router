@@ -33,7 +33,7 @@ GROUPS = [
         {"key": "movies", "label": "영화", "href": "/movies", "prefixes": ["/movies", "/api/movies"]},
         {"key": "tfdrama", "label": "드라마", "href": "/tf/drama", "prefixes": ["/tf/drama", "/api/tf/drama"]},
         {"key": "tfvariety", "label": "예능", "href": "/tf/variety", "prefixes": ["/tf/variety", "/api/tf/variety"]},
-        {"key": "requests", "label": "요청", "href": "/requests", "prefixes": ["/requests", "/api/requests"],
+        {"key": "requests", "label": "요청", "href": "/requests", "prefixes": ["/requests", "/api/requests", "/api/account_requests"],
          "legacy_hidden": True},
         {"key": "surveys", "label": "설문", "href": "/surveys", "prefixes": ["/surveys", "/surveys.csv", "/api/surveys"]},
         {"key": "batch", "label": "배치", "href": "/logs", "prefixes": ["/logs", "/run_batch", "/api/processing_pause"]},

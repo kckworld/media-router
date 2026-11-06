@@ -378,7 +378,7 @@ def _handle_telegram_callback(cq: dict) -> None:
     chat_id = (msg.get("chat") or {}).get("id")
     is_movie = action.startswith("mv_")
     ttl = (TG_MOVIE_TTL_SEC if is_movie or action.startswith("re_")
-           else TG_REQUEST_TTL_SEC if action.startswith("rq_")
+           else TG_REQUEST_TTL_SEC if action.startswith(("rq_", "ar_"))
            else LOGIN_UNLOCK_TTL if action.startswith("lu_") else TG_CONFIRM_TTL_SEC)
     expired = action != "cancel_off" and (not ts.isdigit() or time.time() - int(ts) > ttl)
     key = (chat_id, msg.get("message_id"), action if is_movie else "")
@@ -399,6 +399,9 @@ def _handle_telegram_callback(cq: dict) -> None:
         return
     if action.startswith("lu_"):          # 로그인 전체 잠금 [잠금 풀기] (11-04)
         _tg_notify("🔓 로그인 잠금을 풀었어요." if _login_unlock(action[3:]) else "이미 풀었거나 만료된 버튼이에요.")
+        return
+    if action[:6] in ("ar_ok_", "ar_no_"):    # 공개 사이트 계정 요청 [승인]/[거절] (11-07, 계정은 직접 만듦)
+        _tg_account_decide(action)
         return
     if is_movie:
         _tg_movie_download(action[3:])
@@ -1518,8 +1521,8 @@ def _is_public_host() -> bool:
 def _pub_gate():
     if not request.path.startswith("/pub/") and not (request.path == "/" and _is_public_host()):
         return None
-    if not _is_public_host():                                # MR 주소: 관리자 미리 보기만
-        if authed(request) is not True or session_role(request) != "admin":
+    if not _is_public_host():                                # MR 주소: 소유자 미리 보기만
+        if authed(request) is not True or session_role(request) != "admin" or current_user(request) != accounts.OWNER:
             return make_response("Not Found", 404)
     ip = _public_ip(request)
     poster = request.path.startswith("/pub/poster/") or request.path.startswith("/pub/guide/img/")
@@ -1615,6 +1618,86 @@ def pub_recent():
         days[-1][1].append(dict(idx[r["id"]], count=r["count"]))
     return _pub_render("public/recent.html", active="/pub/recent", days=days, ready=d is not None,
                        recent_days=public_catalog.RECENT_DAYS)
+
+
+# ── 계정 요청 (공개, 코드 필요). 계정은 자동으로 안 만들고 텔레그램 [승인]/[거절] + MR 요청 화면 목록만
+import account_requests
+ACCOUNT_REQUESTS_PATH = DATA_DIR / "account_requests.json"
+_acc_ip_limit = media_requests.RateLimiter(3, 86400)        # 접속지당 하루 3건
+_acc_total_limit = media_requests.RateLimiter(10, 86400)    # 전체 하루 10건
+
+
+def _notify_account_request(it: dict) -> None:
+    lines = [f"🆕 계정 요청 — {it['name']}", f"원하는 서비스: {account_requests.label(it['services'])}"]
+    if it.get("contact"):
+        lines.append(f"연락: {it['contact']}")
+    if it.get("memo"):
+        lines.append(f"메모: {it['memo']}")
+    lines.append("(계정은 자동으로 안 만들어요. 승인 뒤 직접 만들어 주세요.)")
+    ts = int(time.time())
+    _tg_notify("\n".join(lines), {"inline_keyboard": [[{"text": "✅ 승인", "callback_data": f"ar_ok_{it['id']}:{ts}"},
+                                                       {"text": "❌ 거절", "callback_data": f"ar_no_{it['id']}:{ts}"}]]})
+
+
+def _tg_account_decide(action: str) -> None:
+    status = "승인" if action.startswith("ar_ok_") else "거절"
+    it = account_requests.set_status(ACCOUNT_REQUESTS_PATH, action[6:], status, datetime.now(APP_TZ))
+    _tg_notify(f"{'✅' if status == '승인' else '❌'} {it['name']}님 계정 요청 {status}"
+               + (" — Plex·Jellyfin 계정은 직접 만들어 주세요." if status == "승인" else "") if it else "그 요청을 찾지 못했어요.")
+
+
+@app.route("/pub/account", methods=["GET", "POST"])
+def pub_account():
+    ctx = {"active": "/pub/account", "open": bool(_request_code()), "services": account_requests.SERVICES,
+           "form": {}, "error": "", "done": False}
+    if request.method == "GET":
+        return _pub_render("public/account.html", **ctx)
+    form = request.form
+    ip = _public_ip(request)
+    ctx["form"] = {"name": form.get("name", "")[:20], "contact": form.get("contact", "")[:50], "memo": form.get("memo", "")[:200],
+                   "services": form.getlist("services")}
+    if form.get("website"):                                   # 사람은 못 보는 칸
+        ctx["done"] = True
+        return _pub_render("public/account.html", **ctx)
+    code = _request_code()
+    if not code:
+        ctx["error"] = "지금은 요청을 받지 않아요."
+        return _pub_render("public/account.html", **ctx), 403
+    if not hmac.compare_digest(str(form.get("code") or "").strip().encode(), code.encode()):
+        if not (_rq_code_fail_limit.allow(ip) and _rq_code_fail_total.allow("*")):
+            ctx["error"] = "잠시 뒤에 다시 해 주세요."
+            return _pub_render("public/account.html", **ctx), 429
+        ctx["error"] = "단톡방 코드가 맞지 않아요."
+        return _pub_render("public/account.html", **ctx), 403
+    data, err = account_requests.validate(form)
+    if err:
+        ctx["error"] = err
+        return _pub_render("public/account.html", **ctx), 400
+    if not (_acc_ip_limit.allow(ip) and _acc_total_limit.allow("*")):
+        ctx["error"] = "오늘은 계정 요청을 더 받을 수 없어요. 내일 다시 해 주세요."
+        return _pub_render("public/account.html", **ctx), 429
+    it = account_requests.add(ACCOUNT_REQUESTS_PATH, data, datetime.now(APP_TZ))
+    threading.Thread(target=_notify_account_request, args=(it,), daemon=True).start()
+    ctx.update(done=True, form={})
+    return _pub_render("public/account.html", **ctx)
+
+
+@app.route("/api/account_requests", methods=["GET", "POST"])
+def api_account_requests():
+    """MR 작업 > 요청 화면의 계정 요청 목록·[승인]/[거절] (관리자)"""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if request.method == "POST":
+        if session_role(request) != "admin":
+            return jsonify({"ok": False, "error": READONLY_MESSAGE}), 403
+        body = request.get_json(silent=True) or {}
+        it = account_requests.set_status(ACCOUNT_REQUESTS_PATH, str(body.get("id") or ""), str(body.get("status") or ""),
+                                         datetime.now(APP_TZ))
+        if not it:
+            return jsonify({"ok": False, "error": "그 요청을 찾지 못했어요."}), 404
+        return jsonify({"ok": True, "item": it})
+    return jsonify({"ok": True, "items": account_requests.listing(ACCOUNT_REQUESTS_PATH)})
 
 
 @app.route("/request/search", methods=["GET"])

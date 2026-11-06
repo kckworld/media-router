@@ -118,7 +118,8 @@ def test_public_host_only_serves_request_page(rq, monkeypatch):
     c, _, _ = rq
     monkeypatch.setattr(web_admin, "REQUEST_PUBLIC_HOSTS", {"request.kckworld.com"})
     h = {"Host": "request.kckworld.com"}
-    assert "영상 요청" in c.get("/", headers=h).get_data(as_text=True)
+    assert c.get("/", headers=h).headers["Location"].endswith("/pub/")          # 11-07: 첫 화면은 공개 사이트
+    assert "영상 요청" in c.get("/request", headers=h).get_data(as_text=True)
     for path in ("/login", "/settings", "/movies", "/api/movies", "/requests", "/api/requests", "/downloads/data"):
         assert c.get(path, headers=h).status_code == 404, path
     assert c.post("/run_batch", headers=h).status_code == 404
