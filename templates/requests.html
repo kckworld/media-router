@@ -28,11 +28,11 @@
     <div class="card">
       <div class="section-title">요청 페이지</div>
       <div class="hint">
-        단톡방에 아래 주소와 코드를 알려 주세요. 코드를 비우면 요청을 받지 않아요.<br>
+        단톡방에 아래 주소와 코드를 알려 주세요. 코드는 6~20자, 비우면 요청을 받지 않아요.<br>
         {% for h in public_hosts %}<code>https://{{ h }}</code> (리버스 프록시 등록 후) · {% endfor %}<code>https://media.kckworld.com/request</code>
       </div>
       <div class="rq-code" style="margin-top:10px;">
-        <input type="text" id="rqCode" value="{{ code }}" maxlength="20" placeholder="단톡방 코드" data-write>
+        <input type="text" id="rqCode" value="{{ code }}" minlength="6" maxlength="20" placeholder="단톡방 코드 (6자 이상)" data-write>
         <button type="button" class="btn small primary" data-write onclick="saveCode()">코드 저장</button>
         <span class="hint" id="codeState">{{ '요청 받는 중' if code else '⚠ 코드가 없어서 요청을 안 받고 있어요' }}</span>
       </div>

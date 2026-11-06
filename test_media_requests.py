@@ -139,7 +139,10 @@ def test_admin_list_and_update(rq, monkeypatch):
     assert c.get("/api/requests").get_json()["items"][0]["id"] == rid
     assert c.post(f"/api/requests/{rid}", json={"status": "done"}).get_json()["ok"]
     assert saved(tmp_path)[0]["status"] == "done"
-    assert c.post("/api/requests/code", json={"code": "9999"}).get_json()["code"] == "9999"
+    assert c.post("/api/requests/code", json={"code": "999999"}).get_json()["code"] == "999999"
+    assert c.post("/api/requests/code", json={"code": "12345"}).status_code == 400      # 11-07: 6자 미만 거절
+    assert c.post("/api/requests/code", json={"code": "  "}).get_json()["code"] == ""   # 비우기(요청 닫기)는 됨
+    assert c.post("/api/requests/code", json={"code": "123456"}).get_json()["ok"]
     assert c.post(f"/api/requests/{rid}", json={"delete": True}).get_json()["ok"]
     assert saved(tmp_path) == []
     monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")

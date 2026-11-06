@@ -2610,6 +2610,9 @@ def api_media_request_update(req_id):
     return jsonify({"ok": ok}), (200 if ok else 404)
 
 
+REQUEST_CODE_MIN = 6       # 저장할 때만 검사 — 이미 저장된 짧은 코드는 사용자가 바꿀 때까지 그대로 동작
+
+
 @app.route("/api/requests/code", methods=["POST"])
 def api_media_request_code():
     auth = authed(request)
@@ -2618,6 +2621,8 @@ def api_media_request_code():
     code = str((request.get_json(silent=True) or {}).get("code") or "").strip()
     if len(code) > 20:
         return jsonify({"ok": False, "error": "코드는 20자까지예요."}), 400
+    if code and len(code) < REQUEST_CODE_MIN:                 # 11-07 사용자 결정: 6자 이상(빈 값 = 요청 닫기는 그대로)
+        return jsonify({"ok": False, "error": f"코드는 {REQUEST_CODE_MIN}자 이상으로 해 주세요(비우면 요청을 닫아요)."}), 400
     _save_request_settings(code=code)
     return jsonify({"ok": True, "code": code})
 

@@ -38,7 +38,9 @@ def test_kakao_on_sends_same_poster_and_caption(rq, monkeypatch):
     assert c.post("/api/requests/kakao", json={"on": True, "room": " 김창기 "}).get_json()["ok"]
     st = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
     assert st == {"code": "1234", "kakao_on": True, "kakao_room": "김창기"}            # 코드는 그대로
-    assert c.post("/api/requests/code", json={"code": "1234"}).get_json()["ok"]
+    r = c.post("/api/requests/code", json={"code": "1234"})                          # 11-07: 새로 저장은 6자 이상
+    assert r.status_code == 400 and "6자 이상" in r.get_json()["error"]
+    assert web_admin._request_code() == "1234"                                        # 이미 있던 4자리는 그대로 동작
     assert web_admin._request_settings()["kakao_room"] == "김창기"                      # 코드 저장이 카톡 설정을 안 지움
     _done(c, sent, tmp_path, monkeypatch)
     photo = [p for m, p in sent if m == "sendPhoto"][0]
