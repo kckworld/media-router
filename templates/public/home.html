@@ -1,0 +1,26 @@
+{% extends "public/base.html" %}
+{% set active = "/pub/" %}
+{% block title %}NAS 미디어 검색{% endblock %}
+{% block content %}
+  <h1>NAS에 있는지 찾아보기</h1>
+  <p class="lead">제목으로 찾으면 NAS(Plex·Jellyfin)에 있는지, 시즌·화수가 얼마나 있는지 보여 줘요.{% if total %} 지금 {{ "{:,}".format(total) }}편.{% endif %}</p>
+  <form class="search" method="get" action="/pub/" role="search">
+    <input type="search" name="q" value="{{ q }}" maxlength="60" placeholder="제목 (예: 런닝맨)" aria-label="제목" autocomplete="off">
+    <button type="submit">찾기</button>
+  </form>
+  {% if not ready %}
+    <p class="empty">목록을 준비하는 중이에요. 잠시 뒤에 다시 열어 주세요.</p>
+  {% elif q %}
+    <h2>"{{ q }}" 찾은 결과 {{ hits|length }}편{% if hits|length >= 40 %}(앞 40편){% endif %}</h2>
+    {% if hits %}
+      <div class="grid">{% for it in hits %}{% with extra="" %}{% include "public/_tile.html" %}{% endwith %}{% endfor %}</div>
+    {% else %}
+      <p class="empty">NAS에 없어요. <a href="/request">영상 요청</a>에서 받아 달라고 할 수 있어요(코드 필요).</p>
+    {% endif %}
+  {% else %}
+    {% if recent %}
+      <h2>최근 추가 <a href="/pub/recent" style="font-size:14px;font-weight:600;">더 보기</a></h2>
+      <div class="grid">{% for it in recent %}{% with extra=it.date[5:].replace('-', '/') ~ ' 추가' ~ (' · ' ~ it.count ~ '편' if it.count > 1 else '') %}{% include "public/_tile.html" %}{% endwith %}{% endfor %}</div>
+    {% endif %}
+  {% endif %}
+{% endblock %}

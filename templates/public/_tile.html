@@ -1,0 +1,15 @@
+{#- 포스터 칸 하나: it = 목록 항목(public_catalog), extra = 아래 한 줄 #}
+<div class="tile">
+  {%- if it.poster %}<img src="/pub/poster/{{ it.id }}" alt="" loading="lazy" width="200" height="300">
+  {%- elif it.poster_url %}<img src="{{ it.poster_url }}" alt="" loading="lazy" width="200" height="300" referrerpolicy="no-referrer">
+  {%- else %}<div class="ph">{{ it.name }}</div>{% endif %}
+  <div class="tx">
+    <div class="nm">{{ it.name }}</div>
+    {%- if it.kind %}<span class="chip">{{ it.kind }}</span>{% endif %}
+    {%- if it.type == 'series' and it.seasons %}<span class="chip g">시즌 {{ it.seasons }}</span>{% endif %}
+    {%- if it.type == 'series' and it.episodes %}<span class="chip g">{{ it.episodes }}화</span>{% endif %}
+    {%- if it.status %}<span class="chip g">{{ it.status }}</span>{% endif %}
+    {%- if it.year and it.type != 'series' %}<span class="chip g">{{ it.year }}</span>{% endif %}
+    {%- if extra %}<div class="muted" style="margin-top:4px;font-size:12px;">{{ extra }}</div>{% endif %}
+  </div>
+</div>

@@ -1461,8 +1461,8 @@ def _public_host_guard():
     if host not in REQUEST_PUBLIC_HOSTS:
         return None
     if request.path == "/":
-        return media_request_page()
-    if request.path in ("/request", "/survey") or request.path.startswith(_REQUEST_PUBLIC_PATHS):
+        return redirect("/pub/", 302)                       # 11-07: 공개 사이트 첫 화면(요청은 /request 그대로)
+    if request.path in ("/request", "/survey") or request.path.startswith(_REQUEST_PUBLIC_PATHS + ("/pub/",)):
         return None
     return make_response("Not Found", 404)
 
@@ -1492,6 +1492,85 @@ def _request_code() -> str:
 def media_request_page():
     return render_template("request.html", categories=media_requests.CATEGORIES,
                            platforms=media_requests.PLATFORMS, open=bool(_request_code()))
+
+
+# ── 공개 사이트 (2026-11-07, W-20261107-09): request.kckworld.com — 보기는 누구나, 요청은 코드(/request·계정 요청).
+#    공개 주소에선 위 _public_host_guard가 /pub/·/request·/survey·/static만 열고 나머지(로그인·관리·API) 404.
+#    MR 주소에서 /pub/는 로그인한 관리자만(미리 보기). 화면은 서버에서 다 그려 JS 없음 → CSP로 스크립트 전부 막음.
+#    공개로 나가는 건 제목·종류·연도·시즌/화수·추가일·포스터뿐(경로·서버 주소·IP·용량·사용자 이름·토큰 없음).
+import public_catalog
+PUB_CATALOG_PATH = DATA_DIR / "pub_catalog.json"
+PUB_POSTER_DIR = DATA_DIR / "pub_posters"
+_pub_limit = media_requests.RateLimiter(120, 60)            # 화면: 접속지당 1분 120번
+_pub_total = media_requests.RateLimiter(3000, 60)           # 전체
+_pub_poster_limit = media_requests.RateLimiter(600, 60)
+PUB_CSP = ("default-src 'none'; img-src 'self' https://image.tmdb.org; style-src 'self' 'unsafe-inline'; "
+           "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+PUB_NAV = [("/pub/", "검색"), ("/pub/auto", "자동으로 받는 것"), ("/pub/recent", "최근 추가"),
+           ("/request", "영상 요청"), ("/pub/account", "계정 요청"), ("/pub/guide", "사용법")]
+
+
+def _is_public_host() -> bool:
+    return (request.host or "").split(":")[0].lower() in REQUEST_PUBLIC_HOSTS
+
+
+@app.before_request
+def _pub_gate():
+    if not request.path.startswith("/pub/") and not (request.path == "/" and _is_public_host()):
+        return None
+    if not _is_public_host():                                # MR 주소: 관리자 미리 보기만
+        if authed(request) is not True or session_role(request) != "admin":
+            return make_response("Not Found", 404)
+    ip = _public_ip(request)
+    poster = request.path.startswith("/pub/poster/") or request.path.startswith("/pub/guide/img/")
+    if not (_pub_poster_limit if poster else _pub_limit).allow(ip) or not _pub_total.allow("all"):
+        return make_response("요청이 너무 많아요. 잠시 뒤에 다시 해 주세요.", 429)
+    return None
+
+
+@app.after_request
+def _pub_headers(r):
+    if request.path.startswith("/pub/") or (request.path == "/" and _is_public_host()):
+        r.headers["Content-Security-Policy"] = PUB_CSP
+        r.headers["X-Frame-Options"] = "DENY"
+        r.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        r.headers.setdefault("Cache-Control", "no-store" if request.method != "GET" else "public, max-age=120")
+        r.headers.pop("Server", None)
+    return r
+
+
+def _pub_render(tpl: str, **kw):
+    return render_template(tpl, nav=PUB_NAV, preview=not _is_public_host(), **kw)
+
+
+def _pub_catalog():
+    return public_catalog.get(PUB_CATALOG_PATH, background=not app.config.get("TESTING"))
+
+
+@app.route("/pub/", methods=["GET"])
+def pub_home():
+    d = _pub_catalog()
+    q = (request.args.get("q") or "").strip()[:60]
+    hits = public_catalog.search(d, q) if q else []
+    recent = []
+    if d and not q:
+        idx = public_catalog.by_id(d)
+        recent = [dict(idx[r["id"]], date=r["date"], count=r["count"]) for r in (d.get("recent") or [])[:12] if r["id"] in idx]
+    return _pub_render("public/home.html", q=q, hits=hits, recent=recent, ready=d is not None,
+                       total=len((d or {}).get("items") or []))
+
+
+@app.route("/pub/poster/<item_id>", methods=["GET"])
+def pub_poster(item_id):
+    try:
+        p = public_catalog.poster_file(PUB_POSTER_DIR, _pub_catalog(), item_id)
+    except public_catalog.CatalogError:
+        p = None
+    if not p:
+        return make_response("Not Found", 404)
+    resp = send_file(p, mimetype="image/jpeg", max_age=86400)
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 
 @app.route("/request/search", methods=["GET"])

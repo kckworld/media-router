@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{% block title %}NAS 미디어{% endblock %}</title>
+{#- 11-07 공개 사이트: 스크립트 없음(CSP default-src 'none'), 스타일만 안에 #}
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #fff; --fg: #1d2129; --muted: #6b7280; --line: #e3e6eb;
+    --accent: #2f6fed; --accent-soft: #e8f0fe; --danger: #d93025; --ok: #188038; --warn-bg: #fff4ce;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15171c; --card: #1f2229; --fg: #e8eaed; --muted: #9aa0a6; --line: #333842;
+            --accent: #7aa7ff; --accent-soft: #23314d; --danger: #f28b82; --ok: #81c995; --warn-bg: #3a3220; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  a { color: var(--accent); }
+  header { background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
+  .hd { max-width: 1040px; margin: 0 auto; padding: 10px 16px 0; }
+  .brand { font-weight: 800; font-size: 17px; color: var(--fg); text-decoration: none; }
+  nav { display: flex; gap: 4px; overflow-x: auto; padding: 8px 0 0; scrollbar-width: none; }
+  nav a { flex: none; padding: 8px 12px; border-radius: 10px 10px 0 0; text-decoration: none; color: var(--muted); font-weight: 600; font-size: 14px; border-bottom: 3px solid transparent; }
+  nav a.on { color: var(--accent); border-bottom-color: var(--accent); }
+  main { max-width: 1040px; margin: 0 auto; padding: 18px 16px 48px; }
+  h1 { font-size: 21px; margin: 2px 0 6px; }
+  h2 { font-size: 17px; margin: 22px 0 10px; }
+  .lead { color: var(--muted); margin: 0 0 14px; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .preview { background: var(--warn-bg); border-radius: 10px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px; }
+  form.search { display: flex; gap: 8px; }
+  input[type=text], input[type=search], select, textarea { width: 100%; font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  textarea { min-height: 80px; resize: vertical; }
+  button, .btn { font: inherit; font-weight: 700; border: 0; border-radius: 10px; padding: 10px 16px; background: var(--accent); color: #fff; cursor: pointer; text-decoration: none; white-space: nowrap; display: inline-block; }
+  .muted { color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .tile .ph { aspect-ratio: 2 / 3; background: var(--line); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; text-align: center; padding: 6px; }
+  .tile img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; display: block; background: var(--line); }
+  .tile .tx { padding: 8px 10px 10px; font-size: 13px; }
+  .tile .nm { font-weight: 700; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+  .chip { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin: 3px 3px 0 0; }
+  .chip.g { background: var(--line); color: var(--muted); }
+  .empty { color: var(--muted); padding: 14px 2px; }
+  footer { max-width: 1040px; margin: 0 auto; padding: 0 16px 30px; color: var(--muted); font-size: 12px; }
+  @media (max-width: 480px) { .grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; } .tile .tx { padding: 6px 8px 8px; } }
+  {% block css %}{% endblock %}
+</style>
+</head>
+<body>
+<header><div class="hd">
+  <a class="brand" href="/pub/">🎬 NAS 미디어</a>
+  <nav aria-label="메뉴">{% for href, label in nav %}<a href="{{ href }}"{% if href == active %} class="on" aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</nav>
+</div></header>
+<main>
+  {% if preview %}<div class="preview">미리 보기(관리자) — 공개 주소에선 이 줄이 안 보여요.</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+<footer>가족·지인용 NAS 미디어 안내예요. 요청은 단톡방에서 받은 코드가 있어야 해요.</footer>
+</body>
+</html>
