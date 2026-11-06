@@ -118,3 +118,32 @@ def test_catalog_search_and_kinds():
     assert pc.kind_of("1.movie") == "영화" and pc.kind_of("4-1.Animation-Serise") == "애니" and pc.kind_of("x") == "기타"
     assert [i["name"] for i in pc.search(CAT, "런닝 맨")] == ["런닝맨"]
     assert pc.find_title(CAT, "런닝맨")["id"] == A and pc.find_title(CAT, "없음") is None
+
+
+def test_auto_list(pub, monkeypatch):
+    c, tmp = pub
+    v, d = tmp / "v.txt", tmp / "d.txt"
+    v.write_text("런닝맨\n# 주석\n나혼자산다 720p\n", encoding="utf-8")
+    d.write_text("가짜드라마 | Sniper\n", encoding="utf-8")
+    monkeypatch.setattr(web_admin, "BT4G_KEYWORDS_PATH", v)
+    monkeypatch.setattr(web_admin, "DRAMA_KEYWORDS_PATH", d)
+    monkeypatch.setattr(web_admin, "PUB_TMDB_CACHE", tmp / "tmdb.json")
+    monkeypatch.setattr(web_admin, "TMDB_API_KEY", "k")
+    monkeypatch.setitem(web_admin._pub_rules_cache, "at", time.time())
+    monkeypatch.setitem(web_admin._pub_rules_cache, "rules", {
+        "예능": {"enabled": True, "mustContain": "720p-NEXT"}, "먼작귀": {"enabled": True, "mustContain": "^\\[ToonsHub\\] Chiikawa"},
+        "꺼진것": {"enabled": False}})
+    monkeypatch.setattr(web_admin, "_pub_tmdb_lookup",
+                        lambda n: {"poster": "https://image.tmdb.org/t/p/w342/x.jpg"} if n == "먼작귀" else {"poster": "http://evil/x.jpg"})
+    h = g(c, "/pub/auto").get_data(as_text=True)
+    assert "런닝맨" in h and "나혼자산다" in h and "720p" not in h and "가짜드라마" in h and "Sniper" not in h
+    assert "먼작귀" in h and "꺼진것" not in h and "ToonsHub" not in h and "NEXT" not in h
+    assert f"/pub/poster/{A}" in h                                                       # NAS에 있는 건 NAS 포스터
+    assert "https://image.tmdb.org/t/p/w342/x.jpg" in h and "evil" not in h             # TMDB 주소만
+    assert "아직 NAS에 없음" in h
+
+
+def test_recent_page(pub):
+    c, tmp = pub
+    h = g(c, "/pub/recent").get_data(as_text=True)
+    assert h.index("11월 5일") < h.index("11월 1일") and "3편 추가" in h and "가짜 영화" in h

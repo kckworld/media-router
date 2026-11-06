@@ -1,0 +1,18 @@
+{% extends "public/base.html" %}
+{% block title %}자동으로 받는 프로그램{% endblock %}
+{% block content %}
+  <h1>자동으로 받는 프로그램</h1>
+  <p class="lead">새 회차가 나오면 NAS가 알아서 받아 두는 프로그램이에요({{ total }}개). 보통 방송 다음 날 안에 올라와요. 여기 없는 건 <a href="/request">영상 요청</a>으로.</p>
+  {% for kind, rows in groups %}
+    <h2>{{ kind }} <span class="muted" style="font-size:14px;font-weight:600;">{{ rows|length }}</span></h2>
+    <div class="grid">
+      {% for it in rows %}
+        {% with extra=(('매주 ' ~ it.days) if it.days else '') ~ ('' if it.in_nas else ((' · ' if it.days else '') ~ '아직 NAS에 없음')) %}
+          {% include "public/_tile.html" %}
+        {% endwith %}
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty">지금 자동으로 받는 프로그램이 없어요.</p>
+  {% endfor %}
+{% endblock %}

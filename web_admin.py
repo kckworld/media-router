@@ -1573,6 +1573,50 @@ def pub_poster(item_id):
     return resp
 
 
+import public_auto
+PUB_TMDB_CACHE = DATA_DIR / "pub_tmdb.json"
+_pub_rules_cache = {"at": 0.0, "rules": None}
+
+
+def _pub_qbit_rules() -> dict | None:
+    """qBit 자동 받기 규칙(10분 캐시). 못 받으면 지난 값"""
+    now = time.time()
+    if now - _pub_rules_cache["at"] > 600 or _pub_rules_cache["rules"] is None:
+        try:
+            _pub_rules_cache.update(at=now, rules=_qbit_get("/api/v2/rss/rules") or {})
+        except Exception:
+            _pub_rules_cache["at"] = now
+    return _pub_rules_cache["rules"]
+
+
+def _pub_tmdb_lookup(name: str):
+    return tf_shows.tmdb_tv(TMDB_API_KEY, name)
+
+
+@app.route("/pub/auto", methods=["GET"])
+def pub_auto():
+    entries = public_auto.titles(BT4G_KEYWORDS_PATH, DRAMA_KEYWORDS_PATH, _pub_qbit_rules())
+    rows = public_auto.build(entries, _pub_catalog(), PUB_TMDB_CACHE, lookup=_pub_tmdb_lookup if TMDB_API_KEY else None,
+                             background=not app.config.get("TESTING"))
+    groups = [(k, [r for r in rows if r["kind"] == k]) for k in ("예능", "드라마", "애니")]
+    return _pub_render("public/auto.html", active="/pub/auto", groups=[g for g in groups if g[1]], total=len(rows))
+
+
+@app.route("/pub/recent", methods=["GET"])
+def pub_recent():
+    d = _pub_catalog()
+    idx = public_catalog.by_id(d)
+    days = []
+    for r in (d or {}).get("recent") or []:
+        if r["id"] not in idx:
+            continue
+        if not days or days[-1][0] != r["date"]:
+            days.append((r["date"], []))
+        days[-1][1].append(dict(idx[r["id"]], count=r["count"]))
+    return _pub_render("public/recent.html", active="/pub/recent", days=days, ready=d is not None,
+                       recent_days=public_catalog.RECENT_DAYS)
+
+
 @app.route("/request/search", methods=["GET"])
 def media_request_search():
     if not _rq_search_limit.allow(_public_ip(request)):
