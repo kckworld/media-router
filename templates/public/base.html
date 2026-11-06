@@ -16,6 +16,7 @@
             --accent: #7aa7ff; --accent-soft: #23314d; --danger: #f28b82; --ok: #81c995; --warn-bg: #3a3220; }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }   /* 11-07: display:flex 칸이 hidden을 무시하던 것(요청 화면 '고른 작품' 빈 칸) */
   body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
   a { color: var(--accent); }
   header { background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
@@ -60,5 +61,6 @@
   {% block content %}{% endblock %}
 </main>
 <footer>가족·지인용 NAS 미디어 안내예요. 요청은 단톡방에서 받은 코드가 있어야 해요.</footer>
+{% block scripts %}{% endblock %}{#- /pub/ 화면은 비워 둠(CSP가 스크립트 막음). /request만 씀 #}
 </body>
 </html>

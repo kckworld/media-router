@@ -351,3 +351,62 @@ def test_public_body_limit(pub):
     r = c.post("/request/submit", data=b"x" * (web_admin.PUBLIC_MAX_BODY + 1), headers={"Host": HOST, "Content-Type": "application/json"})
     assert r.status_code == 413
     assert web_admin.app.config["MAX_CONTENT_LENGTH"] == 10 * 1024 * 1024
+
+
+def test_find_title_prefers_kind_and_contains():
+    d = {"items": [
+        {"id": "1" * 32, "name": "원피스", "kind": "드라마", "type": "series", "episodes": 8},
+        {"id": "2" * 32, "name": "원피스", "kind": "애니", "type": "series", "episodes": 1189},
+        {"id": "3" * 32, "name": "미래소년 코난", "kind": "애니", "type": "series", "episodes": 26},
+        {"id": "4" * 32, "name": "명탐정 코난", "kind": "애니", "type": "series", "episodes": 1218},
+        {"id": "5" * 32, "name": "명탐정 코난: 베이커가의 망령", "kind": "애니", "type": "movie", "episodes": None}]}
+    assert pc.find_title(d, "원피스", "애니")["episodes"] == 1189                      # 전: 드라마(8화)
+    assert pc.find_title(d, "원피스", "드라마")["episodes"] == 8
+    assert pc.find_title(d, "코난", "애니")["name"] == "명탐정 코난"                    # 전: 못 찾음
+    assert pc.find_title(d, "원피스")["kind"] == "드라마"                               # 종류 안 주면 예전처럼
+
+
+def test_auto_order_drama_anime_variety(pub, monkeypatch):
+    c, tmp = pub
+    v, d = tmp / "v.txt", tmp / "d.txt"
+    v.write_text("런닝맨\n", encoding="utf-8")
+    d.write_text("가짜드라마\n", encoding="utf-8")
+    monkeypatch.setattr(web_admin, "BT4G_KEYWORDS_PATH", v)
+    monkeypatch.setattr(web_admin, "DRAMA_KEYWORDS_PATH", d)
+    monkeypatch.setattr(web_admin, "PUB_TMDB_CACHE", tmp / "tmdb.json")
+    monkeypatch.setattr(web_admin, "TMDB_API_KEY", "")
+    monkeypatch.setitem(web_admin._pub_rules_cache, "at", time.time())
+    monkeypatch.setitem(web_admin._pub_rules_cache, "rules", {"먼작귀": {"enabled": True}})
+    h = g(c, "/pub/auto").get_data(as_text=True)
+    assert h.index("<h2>드라마") < h.index("<h2>애니") < h.index("<h2>예능")
+
+
+def test_plex_recent_uses_added_at(monkeypatch):
+    import xml.etree.ElementTree as ET
+    now = int(time.time())
+    secs = '<MediaContainer><Directory key="2" type="show" title="2.드라마"/><Directory key="1" type="movie" title="1.영화"/></MediaContainer>'
+    shows = (f'<MediaContainer><Video grandparentTitle="런닝 하이" grandparentRatingKey="g1" addedAt="{now - 100}" parentIndex="2" index="16"/>'
+             f'<Video grandparentTitle="런닝 하이" grandparentRatingKey="g1" addedAt="{now - 200}" parentIndex="2" index="15"/>'
+             f'<Video grandparentTitle="모르는 작품" grandparentRatingKey="g2" addedAt="{now - 300}" parentIndex="1" index="1"/>'
+             f'<Video grandparentTitle="옛 드라마" grandparentRatingKey="g3" addedAt="{now - 40 * 86400}" parentIndex="1" index="1"/></MediaContainer>')
+    movies = f'<MediaContainer><Video title="가짜 영화" ratingKey="m1" addedAt="{now - 50}"/></MediaContainer>'
+    monkeypatch.setenv("PLEX_URL", "http://px:32400")
+    monkeypatch.setenv("PLEX_TOKEN", "T")
+
+    class R:
+        def __init__(self, body): self.b = body.encode()
+        def read(self): return self.b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    def fake_open(req, timeout=None):
+        u = req.full_url
+        return R(secs if u.split("?")[0].endswith("/library/sections") else shows if "/sections/2/" in u else movies)
+    monkeypatch.setattr(pc.urllib.request, "urlopen", fake_open)
+    r = pc.plex_recent(CAT)
+    assert [(x["id"], x["count"], x["last"]) for x in r] == [(B, 1, ""), (C, 2, "16화")]   # 모르는 작품·14일 지난 것 빠짐
+
+
+def test_request_page_new_frame(pub):
+    c, tmp = pub
+    h = g(c, "/request").get_data(as_text=True)
+    assert 'aria-current="page">영상 요청<' in h and "🎬 NAS 미디어" in h

@@ -1523,7 +1523,8 @@ def _request_code() -> str:
 
 @app.route("/request", methods=["GET"])
 def media_request_page():
-    return render_template("request.html", categories=media_requests.CATEGORIES,
+    # 11-07: 공개 틀(메뉴). 이 화면은 MR 주소에서도 로그인 없이 열리므로 '미리 보기' 줄은 안 띄움
+    return render_template("request.html", nav=PUB_NAV, active="/request", preview=False, categories=media_requests.CATEGORIES,
                            platforms=media_requests.PLATFORMS, open=bool(_request_code()))
 
 
@@ -1631,7 +1632,7 @@ def pub_auto():
     entries = public_auto.titles(BT4G_KEYWORDS_PATH, DRAMA_KEYWORDS_PATH, _pub_qbit_rules())
     rows = public_auto.build(entries, _pub_catalog(), PUB_TMDB_CACHE, lookup=_pub_tmdb_lookup if TMDB_API_KEY else None,
                              background=not app.config.get("TESTING"))
-    groups = [(k, [r for r in rows if r["kind"] == k]) for k in ("예능", "드라마", "애니")]
+    groups = [(k, [r for r in rows if r["kind"] == k]) for k in ("드라마", "애니", "예능")]   # 11-07: 드라마 → 애니 → 예능
     return _pub_render("public/auto.html", active="/pub/auto", groups=[g for g in groups if g[1]], total=len(rows))
 
 
@@ -1645,7 +1646,7 @@ def pub_recent():
             continue
         if not days or days[-1][0] != r["date"]:
             days.append((r["date"], []))
-        days[-1][1].append(dict(idx[r["id"]], count=r["count"]))
+        days[-1][1].append(dict(idx[r["id"]], count=r["count"], last=r.get("last") or ""))
     return _pub_render("public/recent.html", active="/pub/recent", days=days, ready=d is not None,
                        recent_days=public_catalog.RECENT_DAYS)
 

@@ -44,7 +44,11 @@ def test_page_is_public_and_simple(rq):
     c, _, _ = rq
     html = c.get("/request").get_data(as_text=True)
     assert "영상 요청" in html and "단톡방 코드" in html and "넷플릭스" in html
-    assert "/settings" not in html and "nav" not in html.lower().split("<main")[0]
+    # 11-07: 공개 사이트 틀(공개 메뉴만). 관리 화면 링크·미리 보기 줄은 없어야 함
+    assert 'href="/pub/auto"' in html and 'href="/request" class="on"' in html and "미리 보기" not in html
+    for admin in ('href="/settings', 'href="/downloads', 'href="/login', 'href="/users', 'href="/people'):
+        assert admin not in html
+    assert "<script>" in html and "/request/search" in html and "/request/submit" in html   # 기능(검색·보내기) 그대로
 
 
 def test_submit_saves_and_notifies_with_poster(rq):

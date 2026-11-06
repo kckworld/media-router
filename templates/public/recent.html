@@ -9,7 +9,7 @@
   {% for day, rows in days %}
     <h2>{{ day[5:7]|int }}월 {{ day[8:10]|int }}일</h2>
     <div class="grid">
-      {% for it in rows %}{% with extra=(it.count ~ '편 추가') if it.type == 'series' else '' %}{% include "public/_tile.html" %}{% endwith %}{% endfor %}
+      {% for it in rows %}{% with extra=((('최근 ' ~ it.last ~ ' · ') if it.last else '') ~ it.count ~ '편 추가') if it.type == 'series' else '' %}{% include "public/_tile.html" %}{% endwith %}{% endfor %}
     </div>
   {% else %}
     {% if ready %}<p class="empty">최근 {{ recent_days }}일 동안 새로 들어온 게 없어요.</p>{% endif %}

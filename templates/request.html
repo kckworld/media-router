@@ -1,25 +1,8 @@
-<!doctype html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>영상 요청</title>
-<style>
-  :root {
-    --bg: #f5f6f8; --card: #fff; --fg: #1d2129; --muted: #6b7280; --line: #e3e6eb;
-    --accent: #2f6fed; --accent-soft: #e8f0fe; --danger: #d93025; --ok: #188038;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #15171c; --card: #1f2229; --fg: #e8eaed; --muted: #9aa0a6; --line: #333842;
-            --accent: #7aa7ff; --accent-soft: #23314d; --danger: #f28b82; --ok: #81c995; }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
-  main { max-width: 520px; margin: 0 auto; padding: 20px 16px 40px; }
-  h1 { font-size: 22px; margin: 4px 0 4px; }
-  .lead { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+{% extends "public/base.html" %}
+{% block title %}영상 요청{% endblock %}
+{#- 11-07: 다른 공개 화면과 같은 틀(메뉴·레이아웃). 기능·주소·코드 확인은 그대로(이 화면만 스크립트 씀 — /pub/ CSP 밖) #}
+{% block css %}
+  form.card, .card { max-width: 560px; }
   label, .label { display: block; font-weight: 700; font-size: 14px; margin: 16px 0 6px; }
   label:first-child { margin-top: 0; }
   .req { color: var(--danger); }
@@ -55,11 +38,9 @@
   .done .big { font-size: 40px; }
   .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
   .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
-</style>
-</head>
-<body>
-<main>
-  <h1>🎬 영상 요청</h1>
+{% endblock %}
+{% block content %}
+  <h1>영상 요청</h1>
   <p class="lead">보고 싶은 영화·드라마·예능·애니메이션을 알려 주세요.</p>
 
   {% if not open %}
@@ -117,8 +98,8 @@
     <button type="button" id="again">하나 더 요청하기</button>
   </div>
   {% endif %}
-</main>
-{% if open %}
+{% endblock %}
+{% block scripts %}
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
@@ -196,6 +177,4 @@
   };
 })();
 </script>
-{% endif %}
-</body>
-</html>
+{% endblock %}

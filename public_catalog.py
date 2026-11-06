@@ -110,7 +110,71 @@ def fetch() -> dict:
             continue
         seen[key] = {"id": key, "date": day, "count": 1}
         recent.append(seen[key])
-    return {"made": int(time.time()), "items": items, "recent": recent}
+    d = {"made": int(time.time()), "items": items, "recent": recent, "recent_src": "jellyfin"}
+    try:                                                      # 11-07: 최근 추가는 Plex addedAt 기준(재인코딩으로 파일만 바뀐 옛 회차가 안 올라오게)
+        pr = plex_recent(d)
+        if pr is not None:
+            d.update(recent=pr, recent_src="plex")
+    except CatalogError:
+        pass
+    return d
+
+
+def _plex_kind(section_title: str, section_type: str) -> str:
+    t = section_title or ""
+    for word, label in (("애니", "애니"), ("드라마", "드라마"), ("예능", "예능"), ("다큐", "다큐"), ("어린이", "어린이")):
+        if word in t:
+            return label
+    return "영화" if section_type == "movie" else ""
+
+
+def plex_recent(d: dict) -> list[dict] | None:
+    """Plex 구역마다 addedAt 최신순 회차·영화 → 14일 안, 시리즈별로 묶어(가장 최근 추가일·회차) Jellyfin 목록 항목(포스터용)에 이어 붙임.
+    Plex 설정이 없거나 못 부르면 None(그러면 Jellyfin 날짜로)"""
+    if not (os.getenv("PLEX_URL") and os.getenv("PLEX_TOKEN")):
+        return None
+    import xml.etree.ElementTree as ET
+
+    def get(path, **q):
+        q["X-Plex-Token"] = os.environ["PLEX_TOKEN"]
+        url = os.environ["PLEX_URL"].rstrip("/") + path + "?" + urllib.parse.urlencode(q)
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"Accept": "application/xml"}), timeout=TIMEOUT) as r:
+                return ET.fromstring(r.read())
+        except Exception as e:
+            raise CatalogError("plex " + type(e).__name__) from None
+    since = time.time() - RECENT_DAYS * 86400
+    rows = []
+    for s in get("/library/sections"):
+        typ = {"show": 4, "movie": 1}.get(s.get("type") or "")
+        if not typ:
+            continue
+        kind = _plex_kind(s.get("title") or "", s.get("type") or "")
+        root = get(f"/library/sections/{s.get('key')}/all", type=typ, sort="addedAt:desc",
+                   **{"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 400 if typ == 4 else 100})
+        for v in root:
+            added = int(v.get("addedAt") or 0)
+            if added < since:
+                break
+            show = typ == 4
+            rows.append({"title": v.get("grandparentTitle") if show else v.get("title"), "kind": kind, "added": added,
+                         "key": (v.get("grandparentRatingKey") if show else v.get("ratingKey")) or "",
+                         "season": v.get("parentIndex"), "ep": v.get("index")})
+    rows.sort(key=lambda r: -r["added"])
+    out, seen = [], {}
+    for r in rows:
+        k = (r["key"], r["kind"])
+        if k in seen:
+            seen[k]["count"] += 1
+            continue
+        it = find_title(d, r["title"] or "", r["kind"])
+        if not it or norm(it["name"]) != norm(r["title"] or ""):    # 이름이 정확히 같은 것만(엉뚱한 포스터 방지)
+            seen[k] = {"count": 0}
+            continue
+        last = f"{int(r['ep'])}화" if (r.get("ep") or "").isdigit() else ""
+        seen[k] = {"id": it["id"], "date": datetime.fromtimestamp(r["added"], timezone(timedelta(hours=9))).strftime("%Y-%m-%d"), "count": 1, "last": last}
+        out.append(seen[k])
+    return [x for x in out if x.get("id")]
 
 
 def load_file(path: Path) -> dict | None:
@@ -172,19 +236,31 @@ def search(d: dict | None, q: str, limit: int = 40) -> list[dict]:
     return hits[:limit]
 
 
-def find_title(d: dict | None, title: str) -> dict | None:
-    """자동 받기 목록의 제목에 맞는 시리즈(띄어쓰기·기호 무시, 같은 이름 우선)"""
+def find_title(d: dict | None, title: str, kind: str = "") -> dict | None:
+    """제목에 맞는 작품(띄어쓰기·기호 무시). kind를 주면 그 종류를 먼저 본다.
+    11-07: '원피스'(애니 규칙)가 드라마 '원피스'(실사 8화)에, '코난'은 '명탐정 코난'을 못 찾던 것 고침 —
+    ① 같은 이름·같은 종류 시리즈 ② 같은 이름·같은 종류 ③ (종류를 줬으면) 같은 종류 시리즈 중 이름에 제목이 든 것, 화수 가장 많은 것
+    ④ 같은 이름 시리즈(아무 종류) ⑤ 이름이 제목으로 시작(3자 이상)"""
     nt = norm(title)
     if not nt or not d:
         return None
-    best = None
-    for it in d.get("items") or []:
-        n = norm(it["name"])
-        if n == nt and it["type"] == "series":
+    items = d.get("items") or []
+    exact = [it for it in items if norm(it["name"]) == nt]
+    for pick in ([it for it in exact if it["kind"] == kind and it["type"] == "series"], [it for it in exact if it["kind"] == kind]):
+        if kind and pick:
+            return pick[0]
+    if kind:
+        part = [it for it in items if it["kind"] == kind and it["type"] == "series" and nt in norm(it["name"])]
+        if part:
+            return max(part, key=lambda it: (it.get("episodes") or 0, -len(it["name"])))
+    for it in exact:
+        if it["type"] == "series":
             return it
-        if best is None and (n == nt or (len(nt) >= 3 and n.startswith(nt))):
-            best = it
-    return best
+    if exact:
+        return exact[0]
+    if len(nt) >= 3:
+        return next((it for it in items if norm(it["name"]).startswith(nt)), None)
+    return None
 
 
 def poster_file(cache_dir: Path, d: dict | None, item_id: str) -> Path | None:

@@ -84,13 +84,13 @@ def tmdb_fill(cache_path: Path, names: list[str], lookup) -> None:
 
 def build(entries: list[dict], catalog: dict | None, cache_path: Path, lookup=None, background: bool = True) -> list[dict]:
     if lookup and not background:                             # (시험·처음 한 번) 그 자리에서 채운 뒤 그림
-        need = [e["title"] for e in entries if not (public_catalog.find_title(catalog, e["title"]) or {}).get("poster")]
+        need = [e["title"] for e in entries if not (public_catalog.find_title(catalog, e["title"], e["kind"]) or {}).get("poster")]
         tmdb_fill(cache_path, need, lookup)
         lookup = None
     tm = _load(cache_path)
     out, missing = [], []
     for e in entries:
-        it = public_catalog.find_title(catalog, e["title"])
+        it = public_catalog.find_title(catalog, e["title"], e["kind"])
         row = {"name": e["title"], "kind": e["kind"], "type": "series", "poster": False, "poster_url": None, "in_nas": False,
                "days": "", "episodes": None, "seasons": None, "status": "", "id": ""}
         if it:
@@ -116,6 +116,6 @@ def build(entries: list[dict], catalog: dict | None, cache_path: Path, lookup=No
                 threading.Thread(target=run, daemon=True).start()
         else:
             tmdb_fill(cache_path, missing, lookup)
-    order = {"예능": 0, "드라마": 1, "애니": 2}
+    order = {"드라마": 0, "애니": 1, "예능": 2}          # 11-07 사용자: 드라마 → 애니 → 예능
     out.sort(key=lambda r: (order.get(r["kind"], 9), r["name"]))
     return out
