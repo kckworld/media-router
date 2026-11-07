@@ -1679,6 +1679,8 @@ def pub_title():
     series = (it["type"] == "series") if it else True
     info = public_tmdb.lookup(TMDB_API_KEY, it["name"] if it else name, series, (it or {}).get("year"), PUB_TMDB_DETAIL) \
         if TMDB_API_KEY else None
+    if info:                                                  # 캐시에 영어로 남은 장르도 한국어로(W-15)
+        info = dict(info, genres=public_tmdb.genres_ko(info.get("genres") or []))
     tpl = "public/_title_body.html" if request.args.get("frag") == "1" else "public/title.html"
     return _pub_render(tpl, it=it, name=it["name"] if it else name, info=info, series=series, kind=(it or {}).get("kind") or k)
 
@@ -1691,12 +1693,19 @@ _acc_total_limit = media_requests.RateLimiter(10, 86400)    # 전체 하루 10�
 
 
 def _notify_account_request(it: dict) -> None:
-    lines = [f"🆕 계정 요청 — {it['name']}", f"원하는 서비스: {account_requests.label(it['services'])}"]
+    svc = it.get("service") or (it.get("services") or [""])[0]
+    if svc == "plex":                                         # 11-07(W-15): Plex는 공유 요청(본인이 가입), Jellyfin은 계정 생성 요청
+        lines = [f"🆕 Plex 공유 요청 — {it['name']}", f"Plex 이메일: {it.get('email', '')}",
+                 "→ Plex 설정 > 사용자 > 친구 초대에서 이 이메일로 라이브러리 공유"]
+    elif svc == "jellyfin":
+        lines = [f"🆕 Jellyfin 계정 생성 요청 — {it['name']}", f"희망 아이디: {it.get('username', '')}"]
+    else:
+        lines = [f"🆕 계정 요청 — {it['name']}", f"원하는 서비스: {account_requests.label(it.get('services') or [])}"]
     if it.get("contact"):
         lines.append(f"연락: {it['contact']}")
     if it.get("memo"):
         lines.append(f"메모: {it['memo']}")
-    lines.append("(계정은 자동으로 안 만들어요. 승인 뒤 직접 만들어 주세요.)")
+    lines.append("(자동으로는 아무것도 안 해요. 승인 뒤 직접 공유하거나 만들어 주세요.)")
     ts = int(time.time())
     _tg_notify("\n".join(lines), {"inline_keyboard": [[{"text": "✅ 승인", "callback_data": f"ar_ok_{it['id']}:{ts}"},
                                                        {"text": "❌ 거절", "callback_data": f"ar_no_{it['id']}:{ts}"}]]})
@@ -1705,20 +1714,28 @@ def _notify_account_request(it: dict) -> None:
 def _tg_account_decide(action: str) -> None:
     status = "승인" if action.startswith("ar_ok_") else "거절"
     it = account_requests.set_status(ACCOUNT_REQUESTS_PATH, action[6:], status, datetime.now(APP_TZ))
-    _tg_notify(f"{'✅' if status == '승인' else '❌'} {it['name']}님 계정 요청 {status}"
-               + (" — Plex·Jellyfin 계정은 직접 만들어 주세요." if status == "승인" else "") if it else "그 요청을 찾지 못했어요.")
+    if not it:
+        _tg_notify("그 요청을 찾지 못했어요.")
+        return
+    plex = (it.get("service") or (it.get("services") or [""])[0]) == "plex"
+    todo = ((" — Plex에서 이 이메일로 라이브러리를 공유해 주세요: " + it.get("email", "")) if plex
+            else (" — Jellyfin에서 계정을 만들어 주세요: " + it.get("username", ""))) if status == "승인" else ""
+    _tg_notify(f"{'✅' if status == '승인' else '❌'} {it['name']}님 {'Plex 공유' if plex else 'Jellyfin 계정'} 요청 {status}{todo}")
 
 
 @app.route("/pub/account", methods=["GET", "POST"])
 def pub_account():
+    svc = (request.form.get("service") if request.method == "POST" else request.args.get("svc")) or "plex"   # 기본 Plex
+    svc = svc if svc in account_requests.SERVICES else "plex"
     ctx = {"active": "/pub/account", "open": bool(_request_code()), "services": account_requests.SERVICES,
-           "form": {}, "error": "", "done": False}
+           "svc": svc, "form": {}, "error": "", "done": False}
     if request.method == "GET":
         return _pub_render("public/account.html", **ctx)
     form = request.form
     ip = _public_ip(request)
+    # 틀려서 다시 그릴 때 이름·메모 등은 채워 주되, 이메일(개인정보)은 응답에 다시 넣지 않음
     ctx["form"] = {"name": form.get("name", "")[:20], "contact": form.get("contact", "")[:50], "memo": form.get("memo", "")[:200],
-                   "services": form.getlist("services")}
+                   "username": form.get("username", "")[:20]}
     if form.get("website"):                                   # 사람은 못 보는 칸
         ctx["done"] = True
         return _pub_render("public/account.html", **ctx)

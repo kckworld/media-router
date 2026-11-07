@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import threading
 from datetime import datetime
@@ -35,16 +36,32 @@ def _save(path: Path, d: dict) -> None:
     os.replace(tmp, path)
 
 
+EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+$")
+JF_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{3,20}$")
+
+
 def validate(form) -> tuple[dict | None, str]:
+    """11-07(W-15): 서비스 하나만 — Plex는 직접 가입한 계정 이메일(라이브러리 공유 요청), Jellyfin은 희망 아이디(관리자가 만듦)"""
     name = " ".join(str(form.get("name") or "").split())[:20]
     contact = " ".join(str(form.get("contact") or "").split())[:50]
     memo = str(form.get("memo") or "").strip()[:200]
-    services = [s for s in SERVICES if (form.getlist("services") if hasattr(form, "getlist") else form.get("services") or []).count(s)]
+    service = str(form.get("service") or "").strip()
     if not name:
         return None, "이름(닉네임)을 적어 주세요."
-    if not services:
-        return None, "원하는 서비스(Plex·Jellyfin)를 하나 이상 골라 주세요."
-    return {"name": name, "contact": contact, "services": services, "memo": memo}, ""
+    if service not in SERVICES:
+        return None, "Plex·Jellyfin 중 하나를 골라 주세요."
+    data = {"name": name, "contact": contact, "memo": memo, "service": service, "services": [service]}
+    if service == "plex":
+        email = str(form.get("email") or "").strip()[:120]
+        if not EMAIL_RE.match(email):
+            return None, "Plex 계정 이메일을 정확히 적어 주세요(예: name@example.com)."
+        data["email"] = email
+    else:
+        uid = str(form.get("username") or "").strip()
+        if not JF_ID_RE.match(uid):
+            return None, "희망 아이디는 영문·숫자·_·- 로 3~20자예요."
+        data["username"] = uid
+    return data, ""
 
 
 def add(path: Path, data: dict, now: datetime) -> dict:

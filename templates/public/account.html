@@ -2,34 +2,55 @@
 {% block title %}계정 요청{% endblock %}
 {% block css %}
   label { display: block; font-weight: 700; font-size: 14px; margin: 16px 0 6px; }
-  label:first-child { margin-top: 0; }
+  label:first-of-type { margin-top: 0; }
   .req { color: var(--danger); } .opt { color: var(--muted); font-weight: 500; }
-  .checks { display: flex; gap: 16px; flex-wrap: wrap; font-weight: 600; }
-  .checks label { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: 600; }
   .err { color: var(--danger); font-weight: 700; margin: 0 0 12px; }
   .ok { color: var(--ok); font-weight: 700; }
   .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
-  form.card { max-width: 560px; }
+  form.card, .card { max-width: 560px; }
+  .svc { display: flex; gap: 8px; margin: 0 0 12px; max-width: 560px; }
+  .svc a { flex: 1; text-align: center; padding: 12px; border-radius: 12px; border: 2px solid var(--line); background: var(--card);
+    text-decoration: none; color: var(--fg); font-weight: 800; }
+  .svc a span { display: block; font-weight: 500; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .svc a.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .guide { background: var(--accent-soft); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 0 0 14px; line-height: 1.6; }
+  .guide ol { margin: 4px 0 0; padding-left: 20px; }
 {% endblock %}
 {% block content %}
-  <h1>Plex · Jellyfin 계정 요청</h1>
-  <p class="lead">NAS 영상을 보려면 계정이 있어야 해요. 아래를 보내면 관리자가 확인한 뒤 계정을 만들어 알려 드려요(바로 만들어지지 않아요).
-    단톡방에서 받은 <b>코드</b>가 필요해요. 쓰는 법은 <a href="/pub/guide">사용법</a>을 봐 주세요.</p>
+  <h1>계정 요청</h1>
+  <p class="lead">NAS 영상을 보려면 Plex나 Jellyfin 계정이 필요해요. 관리자가 확인한 뒤 연락드려요(바로 되지 않아요).
+    단톡방에서 받은 <b>코드</b>가 필요해요.</p>
   {% if done %}
     <div class="card"><p class="ok">요청을 보냈어요. 관리자가 확인하면 연락드릴게요.</p><p><a href="/pub/">처음으로</a></p></div>
   {% elif not open %}
     <div class="card"><p class="err">지금은 요청을 받지 않아요.</p></div>
   {% else %}
+    <nav class="svc" aria-label="서비스 고르기">
+      <a href="/pub/account?svc=plex" class="{{ 'on' if svc == 'plex' else '' }}"{% if svc == 'plex' %} aria-current="page"{% endif %}>Plex<span>직접 가입 → 공유 요청</span></a>
+      <a href="/pub/account?svc=jellyfin" class="{{ 'on' if svc == 'jellyfin' else '' }}"{% if svc == 'jellyfin' %} aria-current="page"{% endif %}>Jellyfin<span>관리자가 계정 만들어 줌</span></a>
+    </nav>
     <form class="card" method="post" action="/pub/account" autocomplete="off">
       {% if error %}<p class="err" role="alert">{{ error }}</p>{% endif %}
+      <input type="hidden" name="service" value="{{ svc }}">
+      {% if svc == 'plex' %}
+        <div class="guide">
+          <b>Plex는 본인이 직접 가입한 계정으로 제 라이브러리를 공유받는 방식이에요.</b>
+          <ol><li>plex.tv에서 무료 계정을 만들어요. <b>한국에서는 가입이 막혀 있어서 VPN이 필요해요</b> → <a href="/pub/guide/00-plex-signup">VPN으로 Plex 가입하는 법</a></li>
+              <li>가입한 <b>Plex 계정 이메일</b>을 아래에 적어 보내요.</li>
+              <li>관리자가 공유하면 Plex 앱에 NAS 라이브러리가 보여요.</li></ol>
+        </div>
+        <label for="acEmail">Plex 계정 이메일 <span class="req">*</span></label>
+        <input type="email" id="acEmail" name="email" maxlength="120" required autocomplete="email" inputmode="email" placeholder="name@example.com">
+      {% else %}
+        <div class="guide">
+          <b>Jellyfin은 관리자가 계정을 만들어 드려요.</b> 쓰고 싶은 아이디를 적어 주세요. 만들어지면 비밀번호와 접속 방법을 따로 알려 드려요.
+          쓰는 법은 <a href="/pub/guide/02-jellyfin">Jellyfin으로 보기</a>.
+        </div>
+        <label for="acUser">희망 아이디 <span class="req">*</span> <span class="opt">(영문·숫자·_·- 3~20자)</span></label>
+        <input type="text" id="acUser" name="username" maxlength="20" required pattern="[A-Za-z0-9_\-]{3,20}" autocapitalize="off" spellcheck="false" value="{{ form.username or '' }}">
+      {% endif %}
       <label for="acName">이름(닉네임) <span class="req">*</span></label>
       <input type="text" id="acName" name="name" maxlength="20" required value="{{ form.name or '' }}">
-      <div class="label" style="font-weight:700;font-size:14px;margin:16px 0 6px;">원하는 서비스 <span class="req">*</span></div>
-      <div class="checks">
-        {% for k, v in services.items() %}
-          <label><input type="checkbox" name="services" value="{{ k }}"{% if k in (form.services or []) %} checked{% endif %}> {{ v }}</label>
-        {% endfor %}
-      </div>
       <label for="acContact">연락 방법 <span class="opt">(선택 · 카톡 이름 등)</span></label>
       <input type="text" id="acContact" name="contact" maxlength="50" value="{{ form.contact or '' }}">
       <label for="acMemo">메모 <span class="opt">(선택 · 쓰는 기기 등)</span></label>
@@ -37,7 +58,7 @@
       <div class="hp" aria-hidden="true"><label for="acWeb">비워 두세요</label><input type="text" id="acWeb" name="website" tabindex="-1"></div>
       <label for="acCode">단톡방 코드 <span class="req">*</span></label>
       <input type="text" id="acCode" name="code" maxlength="40" required autocomplete="off">
-      <p style="margin:16px 0 0;"><button type="submit">요청 보내기</button></p>
+      <p style="margin:16px 0 0;"><button type="submit">{{ 'Plex 공유 요청 보내기' if svc == 'plex' else 'Jellyfin 계정 요청 보내기' }}</button></p>
     </form>
   {% endif %}
 {% endblock %}

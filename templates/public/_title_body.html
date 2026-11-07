@@ -10,7 +10,7 @@
     {%- if info and info.original and info.original != name %}<div class="muted ti-orig">{{ info.original }}</div>{% endif %}
     <div class="ti-chips">
       {%- if kind %}<span class="chip">{{ kind }}</span>{% endif %}
-      {%- for g in (info.genres if info else []) %}<span class="chip g">{{ g }}</span>{% endfor %}
+      {%- for g in (info.genres if info else []) if g != kind %}<span class="chip g">{{ g }}</span>{% endfor %}
     </div>
     <dl class="ti-dl">
       {%- if info and info.date %}<dt>{{ '첫 방영' if series else '개봉' }}</dt><dd>{{ info.date.replace('-', '.') }}{% if info.last_date and info.last_date != info.date %} ~ {{ info.last_date.replace('-', '.') }}{% endif %}</dd>{% endif %}

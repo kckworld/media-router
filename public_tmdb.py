@@ -21,6 +21,12 @@ HIT_SECONDS = 7 * 86400
 MISS_SECONDS = 86400
 STATUS_KO = {"Returning Series": "방영 중", "Ended": "완결", "Canceled": "종영(중단)", "In Production": "제작 중",
              "Released": "개봉", "Planned": "예정", "Post Production": "후반 작업", "Pilot": "파일럿"}
+# 11-07(W-15): TMDB가 한국어 요청에도 영어로 주는 TV 장르 → 한국어
+GENRE_KO = {"Action & Adventure": "액션·모험", "Sci-Fi & Fantasy": "SF·판타지", "War & Politics": "전쟁·정치", "Kids": "어린이",
+            "News": "뉴스", "Reality": "리얼리티", "Soap": "연속극", "Talk": "토크", "Mystery": "미스터리", "Animation": "애니메이션",
+            "Comedy": "코미디", "Crime": "범죄", "Documentary": "다큐멘터리", "Drama": "드라마", "Family": "가족", "Western": "서부",
+            "Action": "액션", "Adventure": "모험", "Fantasy": "판타지", "Horror": "공포", "Music": "음악", "Romance": "로맨스",
+            "Science Fiction": "SF", "Thriller": "스릴러", "War": "전쟁", "History": "역사", "TV Movie": "TV 영화"}
 _lock = threading.Lock()
 
 
@@ -57,6 +63,15 @@ def _get(api_key: str, path: str, **params) -> dict | None:
     return r.json() if r.status_code == 200 else None
 
 
+def genres_ko(names: list[str]) -> list[str]:
+    out = []
+    for n in names:
+        k = GENRE_KO.get(n, n)
+        if k and k not in out:
+            out.append(k)
+    return out
+
+
 def _clean(media: str, m: dict) -> dict:
     tv = media == "tv"
     date = (m.get("first_air_date") if tv else m.get("release_date")) or ""
@@ -66,7 +81,7 @@ def _clean(media: str, m: dict) -> dict:
             "overview": str(m.get("overview") or "").strip()[:1500], "date": date[:10],
             "last_date": str(m.get("last_air_date") or "")[:10] if tv else "",
             "status": STATUS_KO.get(m.get("status") or "", ""),
-            "genres": [str(g.get("name") or "")[:20] for g in (m.get("genres") or [])][:5],
+            "genres": genres_ko([str(g.get("name") or "")[:30] for g in (m.get("genres") or [])])[:5],
             "networks": [str(n.get("name") or "")[:30] for n in (m.get("networks") or [])][:3] if tv else [],
             "seasons": m.get("number_of_seasons") if tv else None, "episodes": m.get("number_of_episodes") if tv else None,
             "runtime": m.get("runtime") if not tv else None,

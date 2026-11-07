@@ -172,7 +172,7 @@ def acc(pub, monkeypatch, tmp_path):
 
 
 def post_acc(c, **form):
-    data = {"name": "가짜이름", "services": ["plex"], "code": "1234"}
+    data = {"name": "가짜이름", "service": "plex", "email": "fake@example.com", "code": "1234"}
     data.update(form)
     return c.post("/pub/account", data=data, headers={"Host": HOST})
 
@@ -182,20 +182,21 @@ def test_account_request_flow(acc):
     h = g(c, "/pub/account").get_data(as_text=True)
     assert 'name="code"' in h and 'name="website"' in h
     assert post_acc(c, code="0000").status_code == 403
-    assert post_acc(c, services=[]).status_code == 400
-    r = post_acc(c, contact="카톡 가짜", memo="TV로 봐요", services=["plex", "jellyfin"])
+    assert post_acc(c, service="").status_code == 400
+    assert post_acc(c, email="not-an-email").status_code == 400
+    r = post_acc(c, contact="카톡 가짜", memo="TV로 봐요")
     assert r.status_code == 200 and "요청을 보냈어요" in r.get_data(as_text=True) and r.headers["Cache-Control"] == "no-store"
     it = json.loads((tmp / "acc.json").read_text(encoding="utf-8"))["items"][0]
-    assert it["status"] == "대기" and it["services"] == ["plex", "jellyfin"] and it["name"] == "가짜이름"
+    assert it["status"] == "대기" and it["service"] == "plex" and it["email"] == "fake@example.com" and it["name"] == "가짜이름"
     import os, stat
     assert stat.S_IMODE(os.stat(tmp / "acc.json").st_mode) == 0o600
     text, markup = sent[-1]
-    assert "가짜이름" in text and "Plex·Jellyfin" in text
+    assert "가짜이름" in text and "Plex 공유 요청" in text and "fake@example.com" in text
     btns = [b["callback_data"] for b in markup["inline_keyboard"][0]]
     assert btns[0].startswith(f"ar_ok_{it['id']}:") and btns[1].startswith(f"ar_no_{it['id']}:")
     web_admin._tg_account_decide(btns[0].split(":")[0])                               # [승인] 버튼 처리
     assert json.loads((tmp / "acc.json").read_text(encoding="utf-8"))["items"][0]["status"] == "승인"
-    assert "직접 만들어" in sent[-1][0]
+    assert "Plex에서 이 이메일로 라이브러리를 공유해 주세요: fake@example.com" in sent[-1][0]
 
 
 def test_account_request_limits_and_honeypot(acc):
@@ -488,3 +489,41 @@ def test_rows_and_tile_links(tm, monkeypatch):
     assert 'data-row' in h and 'id="tiDlg"' in h
     js = g(c, "/static/pub.js")
     assert js.status_code == 200 and "showModal" in js.get_data(as_text=True)
+
+
+
+def test_account_service_split(acc):
+    c, tmp, sent = acc
+    h = g(c, "/pub/account").get_data(as_text=True)                                   # 기본 Plex
+    assert 'value="plex"' in h and 'name="email"' in h and 'name="username"' not in h and "/pub/guide/00-plex-signup" in h
+    assert 'href="/pub/account?svc=plex" class="on"' in h
+    h = g(c, "/pub/account?svc=jellyfin").get_data(as_text=True)
+    assert 'value="jellyfin"' in h and 'name="username"' in h and 'name="email"' not in h
+    assert post_acc(c, service="jellyfin", username="ab").status_code == 400             # 3자 미만
+    assert post_acc(c, service="jellyfin", username="bad id!").status_code == 400
+    r = post_acc(c, service="jellyfin", username="new_user-1", email="")
+    assert r.status_code == 200
+    it = json.loads((tmp / "acc.json").read_text(encoding="utf-8"))["items"][0]
+    assert it["service"] == "jellyfin" and it["username"] == "new_user-1" and "email" not in it
+    assert "Jellyfin 계정 생성 요청" in sent[-1][0] and "new_user-1" in sent[-1][0]
+    web_admin._tg_account_decide("ar_ok_" + it["id"])
+    assert "Jellyfin에서 계정을 만들어 주세요: new_user-1" in sent[-1][0]
+
+
+def test_email_not_echoed_on_error(acc):
+    c, tmp, sent = acc
+    h = post_acc(c, email="secret.person@example.com", code="0000").get_data(as_text=True)
+    assert "secret.person@example.com" not in h                                            # 개인정보는 응답에 다시 안 넣음
+    h = post_acc(c, email="secret.person@example.com", name="").get_data(as_text=True)
+    assert "secret.person@example.com" not in h
+
+
+def test_genres_korean():
+    assert public_tmdb.genres_ko(["Sci-Fi & Fantasy", "Drama", "Action & Adventure", "Kids", "Reality", "드라마", "Unknown"]) == \
+        ["SF·판타지", "드라마", "액션·모험", "어린이", "리얼리티", "Unknown"]
+
+
+def test_genre_same_as_kind_hidden(tm, monkeypatch):
+    c, tmp, calls = tm
+    h = g(c, f"/pub/title?id={A}&frag=1").get_data(as_text=True)
+    assert h.count(">예능<") == 1 and "리얼리티" in h

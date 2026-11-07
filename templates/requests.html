@@ -157,7 +157,7 @@
             ? '<button type="button" class="btn small primary" data-write onclick="setAcc(\'' + accEsc(it.id) + '\', \'승인\')">승인</button> ' +
               '<button type="button" class="btn small" data-write onclick="setAcc(\'' + accEsc(it.id) + '\', \'거절\')">거절</button>'
             : '<span class="hint">' + accEsc(it.status) + ' · ' + accEsc(it.decided_at) + '</span>';
-          return '<li class="rq-item"><div><b>' + accEsc(it.name) + '</b> · ' + (it.services || []).map(function(x) { return ACC_SVC[x] || accEsc(x); }).join("·") +
+          return '<li class="rq-item"><div><b>' + accEsc(it.name) + '</b> · ' + (it.service === 'plex' ? 'Plex 공유 · <code>' + accEsc(it.email) + '</code>' : it.service === 'jellyfin' ? 'Jellyfin 계정 · 아이디 <code>' + accEsc(it.username) + '</code>' : (it.services || []).map(function(x) { return ACC_SVC[x] || accEsc(x); }).join('·')) +
             '<div class="hint">' + accEsc(it.at) + (it.contact ? ' · 연락 ' + accEsc(it.contact) : '') + (it.memo ? ' · ' + accEsc(it.memo) : '') + '</div></div>' +
             '<div>' + acts + '</div></li>';
         }).join("") : '<li class="rq-empty">계정 요청이 없어요.</li>';
