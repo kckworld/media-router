@@ -527,3 +527,15 @@ def test_genre_same_as_kind_hidden(tm, monkeypatch):
     c, tmp, calls = tm
     h = g(c, f"/pub/title?id={A}&frag=1").get_data(as_text=True)
     assert h.count(">예능<") == 1 and "리얼리티" in h
+
+
+def test_guide_old_quality_redirects_and_done_link(gd, acc):
+    c, tmp = gd
+    r = g(c, "/pub/guide/04-quality")
+    assert r.status_code == 301 and r.headers["Location"].endswith("/pub/guide/00-essential")   # 11-07 W-16
+    (tmp / "guide").mkdir(exist_ok=True)
+    (tmp / "guide" / "04-quality.md").write_text("# 남아 있으면 그대로", encoding="utf-8")
+    assert g(c, "/pub/guide/04-quality").status_code == 200
+    c2, tmp2, sent = acc
+    h = post_acc(c2).get_data(as_text=True)
+    assert "요청을 보냈어요" in h and 'href="/pub/guide/00-essential"' in h and "필수 설정 먼저" in h

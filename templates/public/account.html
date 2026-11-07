@@ -21,7 +21,9 @@
   <p class="lead">NAS 영상을 보려면 Plex나 Jellyfin 계정이 필요해요. 관리자가 확인한 뒤 연락드려요(바로 되지 않아요).
     단톡방에서 받은 <b>코드</b>가 필요해요.</p>
   {% if done %}
-    <div class="card"><p class="ok">요청을 보냈어요. 관리자가 확인하면 연락드릴게요.</p><p><a href="/pub/">처음으로</a></p></div>
+    <div class="card"><p class="ok">요청을 보냈어요. 관리자가 확인하면 연락드릴게요.</p>
+      <p class="guide" style="margin:10px 0;">⚠ <b><a href="/pub/guide/00-essential">필수 설정 먼저</a></b> — 앱에서 화질·Direct Play 설정을 안 하면 영상이 끊겨요(기기마다 한 번).</p>
+      <p><a href="/pub/">처음으로</a></p></div>
   {% elif not open %}
     <div class="card"><p class="err">지금은 요청을 받지 않아요.</p></div>
   {% else %}

@@ -1790,8 +1790,13 @@ def pub_guide_list():
     return _pub_render("public/guide_list.html", active="/pub/guide", docs=guides.listing(GUIDE_DIR))
 
 
+GUIDE_REDIRECTS = {"04-quality": "00-essential"}             # 11-07(W-16): 옛 '화질·끊김' → '필수 설정'
+
+
 @app.route("/pub/guide/<slug>", methods=["GET"])
 def pub_guide(slug):
+    if slug in GUIDE_REDIRECTS and guides.read(GUIDE_DIR, slug) is None:
+        return redirect("/pub/guide/" + GUIDE_REDIRECTS[slug], 301)
     text = guides.read(GUIDE_DIR, slug)
     if text is None:
         return make_response("Not Found", 404)
