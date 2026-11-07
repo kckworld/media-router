@@ -1,0 +1,80 @@
+{% extends "public/base.html" %}
+{% block title %}시청 통계{% endblock %}
+{% block css %}
+  .sg { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .sg .card h2 { margin: 0 0 10px; font-size: 16px; }
+  .bars { list-style: none; margin: 0; padding: 0; }
+  .bars li { display: grid; grid-template-columns: 1.6em minmax(0, 1fr) auto; gap: 2px 8px; padding: 5px 0; font-size: 14px; align-items: center; }
+  .bars .rk { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+  .bars .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bars .v { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .bars .bar { grid-column: 2 / -1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .bars .bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .cols { display: flex; align-items: flex-end; gap: 2px; height: 120px; }
+  .cols div { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 1px; opacity: .85; }
+  .axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .tabs2 { display: flex; gap: 6px; margin-bottom: 8px; font-size: 13px; }
+  .tabs2 span { padding: 2px 10px; border-radius: 999px; background: var(--line); color: var(--muted); font-weight: 700; }
+  .big { font-size: 28px; font-weight: 800; }
+  .split { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: 8px 0; background: var(--line); }
+  .split i { display: block; height: 100%; }
+  .split i.a { background: var(--ok); } .split i.b { background: #f59e0b; }
+  details.more summary { cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 700; margin-top: 6px; }
+{% endblock %}
+{% block content %}
+  <h1>시청 통계</h1>
+  <p class="lead">NAS에서 최근 {{ data.days or 30 }}일 동안 많이 본 것들이에요. 누가 봤는지는 안 보여요. 재생 수가 {{ min_plays }}회 안 되는 작품은 빼고 셌어요.</p>
+  {% if error %}<p class="empty">{{ error }}</p>{% endif %}
+  {% if not cards %}<p class="empty">지금은 공개한 통계가 없어요.</p>{% endif %}
+  <div class="sg">
+  {% if 'popular' in cards and data.popular7 is defined %}
+    <section class="card">
+      <h2>🔥 인기 작품 (최근 7일)</h2>
+      {% set mx = (data.popular7[0].plays if data.popular7 else 1) %}
+      <ul class="bars">{% for r in data.popular7 %}<li><span class="rk">{{ loop.index }}</span><span class="lb">{{ r.content }}</span><span class="v">{{ r.plays }}회</span><span class="bar"><i style="width:{{ (100 * r.plays / mx)|round|int }}%"></i></span></li>{% else %}<li class="muted">아직 없어요.</li>{% endfor %}</ul>
+      {% if data.popular30 %}
+      <details class="more"><summary>최근 30일 순위 보기</summary>
+        {% set mx30 = data.popular30[0].plays %}
+        <ul class="bars">{% for r in data.popular30 %}<li><span class="rk">{{ loop.index }}</span><span class="lb">{{ r.content }}</span><span class="v">{{ r.plays }}회</span><span class="bar"><i style="width:{{ (100 * r.plays / mx30)|round|int }}%"></i></span></li>{% endfor %}</ul>
+      </details>{% endif %}
+    </section>
+  {% endif %}
+  {% if 'daily' in cards and data.daily is defined %}
+    <section class="card">
+      <h2>📅 일별 재생 수</h2>
+      {% set mxd = (data.daily|map(attribute='plays')|max) if data.daily else 1 %}
+      <div class="cols" role="img" aria-label="최근 {{ data.daily|length }}일 일별 재생 수, 가장 많은 날 {{ mxd }}회">{% for d in data.daily %}<div style="height:{{ (100 * d.plays / mxd)|round|int }}%" title="{{ d.day }} · {{ d.plays }}회"></div>{% endfor %}</div>
+      {% if data.daily %}<div class="axis"><span>{{ data.daily[0].day[5:] }}</span><span>가장 많은 날 {{ mxd }}회</span><span>{{ data.daily[-1].day[5:] }}</span></div>{% endif %}
+    </section>
+  {% endif %}
+  {% if 'types' in cards and data.types is defined %}
+    <section class="card">
+      <h2>🎞 종류별 비율</h2>
+      <ul class="bars">{% for r in data.types %}<li><span class="rk"></span><span class="lb">{{ r.kind }}</span><span class="v">{{ r.pct }}%</span><span class="bar"><i style="width:{{ r.pct }}%"></i></span></li>{% else %}<li class="muted">아직 없어요.</li>{% endfor %}</ul>
+    </section>
+  {% endif %}
+  {% if 'hourly' in cards and data.hourly is defined %}
+    <section class="card">
+      <h2>🕘 시간대별 재생</h2>
+      {% set mxh = (data.hourly|max) or 1 %}
+      <div class="cols" role="img" aria-label="시간대별 재생 수">{% for n in data.hourly %}<div style="height:{{ (100 * n / mxh)|round|int }}%" title="{{ loop.index0 }}시 · {{ n }}회"></div>{% endfor %}</div>
+      <div class="axis"><span>0시</span><span>6시</span><span>12시</span><span>18시</span><span>23시</span></div>
+    </section>
+  {% endif %}
+  {% if 'playback' in cards and data.playback is defined %}
+    <section class="card">
+      <h2>▶ 재생 방식</h2>
+      <div><span class="big">{{ data.playback.direct_pct }}%</span> 원본 그대로 · <b>{{ data.playback.transcode_pct }}%</b> 서버가 바꿔서(변환)</div>
+      <div class="split"><i class="a" style="width:{{ data.playback.direct_pct }}%"></i><i class="b" style="width:{{ data.playback.transcode_pct }}%"></i></div>
+      <p class="muted" style="font-size:13px;margin:0;">변환되면 끊기기 쉬워요 → <a href="/pub/guide/00-essential">⚠ 필수 설정</a>{% if data.playback.since %} · {{ data.playback.since }}부터 기록{% endif %}</p>
+    </section>
+  {% endif %}
+  {% if 'completion' in cards and data.completion is defined %}
+    <section class="card">
+      <h2>✅ 끝까지 본 비율</h2>
+      {% if data.completion.avg_pct is not none %}<div><span class="big">{{ data.completion.avg_pct }}%</span> 평균(한 번 틀면 어디까지 보는지)</div>{% endif %}
+      <ul class="bars">{% for r in data.completion.best %}<li><span class="rk">{{ loop.index }}</span><span class="lb">{{ r.content }}</span><span class="v">{{ r.avg_pct }}%</span><span class="bar"><i style="width:{{ r.avg_pct }}%"></i></span></li>{% endfor %}</ul>
+    </section>
+  {% endif %}
+  </div>
+{% endblock %}

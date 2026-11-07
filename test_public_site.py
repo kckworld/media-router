@@ -539,3 +539,87 @@ def test_guide_old_quality_redirects_and_done_link(gd, acc):
     c2, tmp2, sent = acc
     h = post_acc(c2).get_data(as_text=True)
     assert "요청을 보냈어요" in h and 'href="/pub/guide/00-essential"' in h and "필수 설정 먼저" in h
+
+
+# ── 11-07 W-17: 공개 통계
+import public_stats
+
+FULL = {"days": 30, "popular7": [{"content": "가짜 드라마 S01", "plays": 12}], "popular30": [{"content": "가짜 드라마 S01", "plays": 30}],
+        "daily": [{"day": "2026-11-01", "plays": 5}, {"day": "2026-11-02", "plays": 9}],
+        "types": [{"kind": "드라마", "plays": 40, "pct": 80}, {"kind": "기타", "plays": 10, "pct": 20}],
+        "hourly": [0] * 23 + [4], "playback": {"direct_pct": 70, "transcode_pct": 30, "since": "2026-10-28"},
+        "completion": {"avg_pct": 77, "finish_pct": 90, "best": [{"content": "가짜 영화", "avg_pct": 99}]}}
+
+
+@pytest.fixture
+def st(pub, monkeypatch):
+    c, tmp = pub
+    monkeypatch.setattr(web_admin, "PUB_STATS_CARDS", tmp / "cards.json")
+    built = []
+
+    def fake(key, fn, ttl=None):
+        cards = list(key[1])
+        built.append(cards)
+        return {k: v for k, v in FULL.items() if k == "days" or any(k.startswith(x) for x in cards)}
+    monkeypatch.setattr(web_admin, "_watch_stats", fake)
+    return c, tmp, built
+
+
+def test_stats_default_cards_only(st):
+    c, tmp, built = st
+    r = g(c, "/pub/stats")
+    h = r.get_data(as_text=True)
+    assert r.status_code == 200 and built[-1] == ["popular", "daily", "types"]           # 처음엔 세 장만
+    assert "인기 작품" in h and "일별 재생" in h and "종류별 비율" in h and "가짜 드라마 S01" in h
+    assert "시간대별" not in h and "재생 방식" not in h and "끝까지 본" not in h
+    assert 'href="/pub/stats" class="on"' in h
+
+
+def test_stats_toggle_owner_only_and_off_cards_not_computed(st, monkeypatch):
+    c, tmp, built = st
+    monkeypatch.setattr(web_admin, "authed", lambda req: True)
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
+    assert c.post("/api/guides/stats", json={"enabled": ["playback", "nope"]}).get_json()["enabled"] == ["playback"]
+    h = g(c, "/pub/stats").get_data(as_text=True)
+    assert built[-1] == ["playback"] and "재생 방식" in h and "인기 작품" not in h and "/pub/guide/00-essential" in h
+    assert c.post("/api/guides/stats", json={"enabled": []}, headers={"Host": HOST}).status_code == 404
+    monkeypatch.setattr(web_admin, "current_user", lambda req: "someone")
+    assert c.post("/api/guides/stats", json={"enabled": ["popular"]}).status_code == 403
+    c.post("/api/guides/stats", json={"enabled": []})                                  # (막혔으니 그대로 playback)
+    monkeypatch.setattr(web_admin, "current_user", lambda req: web_admin.accounts.OWNER)
+    c.post("/api/guides/stats", json={"enabled": []})
+    built.clear()
+    h = g(c, "/pub/stats").get_data(as_text=True)
+    assert built == [] and "공개한 통계가 없어요" in h                                 # 다 끄면 계산도 안 함
+
+
+class _Cur:
+    """SQL을 기록하고 정해진 결과를 돌려주는 가짜 커서"""
+    def __init__(self): self.sql = []; self.res = []
+    def execute(self, sql, args=None):
+        self.sql.append(sql)
+        s = " ".join(sql.split())
+        if "COUNT(DISTINCT person_id) AS viewers" in s:
+            self.res = [("인기 A", 10, 3, 1.0), ("적은 B", 2, 2, 0.1)]
+            self.description = [("content",), ("plays",), ("viewers",), ("hours",)]
+        elif "GROUP BY 1, 2" in s and "media_type" in s:
+            self.res = [("episode", "가짜드라마", 50), ("movie", "가짜 영화", 8), ("episode", "희귀", 1)]
+        elif "AS day" in s:
+            self.res = [("2026-11-01", 4)]
+        else:
+            self.res = []
+    def fetchall(self): return self.res
+
+
+def test_build_no_personal_fields_and_small_counts():
+    cur = _Cur()
+    d = public_stats.build(cur, ["popular", "daily", "types"], kind_of=lambda n, mt: "드라마" if n == "가짜드라마" else "")
+    assert [r["content"] for r in d["popular7"]] == ["인기 A"] and set(d["popular7"][0]) == {"content", "plays"}   # viewers·hours 안 냄
+    assert {r["kind"] for r in d["types"]} == {"드라마", "영화", "기타"}               # 1회짜리는 기타로
+    blob = json.dumps(d, ensure_ascii=False)
+    for bad in ("person", "username", "user", "ip", "device", "region", "viewer"):
+        assert bad not in blob
+    sql = " ".join(cur.sql).lower()
+    for bad in ("person_name", "username", "public_ip", "viewer_ip", "region", "device"):
+        assert bad not in sql                                                          # 계산할 때도 안 씀
+    assert "hourly" not in d and "playback" not in d and "completion" not in d

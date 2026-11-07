@@ -1254,10 +1254,10 @@ STATS_CACHE_SEC = 60
 _stats_cache: dict = {"lock": threading.Lock(), "data": {}}
 
 
-def _watch_stats(key: tuple, fn):
+def _watch_stats(key: tuple, fn, ttl: int | None = None):
     with _stats_cache["lock"]:
         hit = _stats_cache["data"].get(key)
-        if hit and time.time() - hit[0] < STATS_CACHE_SEC:
+        if hit and time.time() - hit[0] < (ttl or STATS_CACHE_SEC):
             return hit[1]
     with _stats_db() as conn:
         conn.set_session(readonly=True)
@@ -1542,7 +1542,7 @@ _pub_poster_limit = media_requests.RateLimiter(600, 60)
 PUB_CSP = ("default-src 'none'; img-src 'self' https://image.tmdb.org; style-src 'self' 'unsafe-inline'; "
            "script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 PUB_NAV = [("/pub/", "검색"), ("/pub/auto", "자동으로 받는 것"), ("/pub/recent", "최근 추가"),
-           ("/request", "영상 요청"), ("/pub/account", "계정 요청"), ("/pub/guide", "사용법")]
+           ("/request", "영상 요청"), ("/pub/account", "계정 요청"), ("/pub/stats", "통계"), ("/pub/guide", "사용법")]
 
 
 def _is_public_host() -> bool:
@@ -1683,6 +1683,48 @@ def pub_title():
         info = dict(info, genres=public_tmdb.genres_ko(info.get("genres") or []))
     tpl = "public/_title_body.html" if request.args.get("frag") == "1" else "public/title.html"
     return _pub_render(tpl, it=it, name=it["name"] if it else name, info=info, series=series, kind=(it or {}).get("kind") or k)
+
+
+# ── 공개 통계 (11-07, W-20261107-17): 집계 숫자만, 켜진 카드만 계산·전달, 10분 캐시
+import public_stats
+PUB_STATS_CARDS = DATA_DIR / "pub_stats_cards.json"
+PUB_STATS_CACHE_SEC = 600
+
+
+def _pub_kind_of(name: str, media_type: str) -> str:
+    it = public_catalog.find_title(_pub_catalog(), name)
+    return it["kind"] if it else ""
+
+
+@app.route("/pub/stats", methods=["GET"])
+def pub_stats():
+    cards = public_stats.load_cards(PUB_STATS_CARDS)
+    data, err = {}, ""
+    if cards:
+        try:
+            data = _watch_stats(("pub", tuple(cards)), lambda cur: public_stats.build(cur, cards, kind_of=_pub_kind_of),
+                               ttl=PUB_STATS_CACHE_SEC)
+        except Exception:
+            app.logger.exception("공개 통계 실패")
+            err = "지금은 통계를 불러오지 못했어요."
+    return _pub_render("public/stats.html", active="/pub/stats", cards=cards, data=data, error=err,
+                       labels=dict(public_stats.CARDS), min_plays=public_stats.MIN_PLAYS)
+
+
+@app.route("/api/guides/stats", methods=["GET", "POST"])
+def api_guides_stats():
+    """MR 설정 > 공개 사이트: 통계 카드 켜고 끄기(소유자만)"""
+    blocked = _guides_owner()
+    if blocked:
+        return blocked
+    if request.method == "POST":
+        on = public_stats.save_cards(PUB_STATS_CARDS, (request.get_json(silent=True) or {}).get("enabled") or [])
+        with _stats_cache["lock"]:                              # 바꾼 게 바로 보이게 공개 통계 캐시만 비움
+            for k in [k for k in _stats_cache["data"] if k and k[0] == "pub"]:
+                _stats_cache["data"].pop(k, None)
+        return jsonify({"ok": True, "enabled": on})
+    return jsonify({"ok": True, "enabled": public_stats.load_cards(PUB_STATS_CARDS),
+                    "cards": [{"key": k, "label": v} for k, v in public_stats.CARDS]})
 
 
 # ── 계정 요청 (공개, 코드 필요). 계정은 자동으로 안 만들고 텔레그램 [승인]/[거절] + MR 요청 화면 목록만

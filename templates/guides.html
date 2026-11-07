@@ -35,6 +35,15 @@
       </div>
     </div>
 
+    {#- 11-07(W-17): 공개 통계 카드 켜고 끄기. 꺼진 카드는 서버가 계산·전달 자체를 안 함 #}
+    <div class="card">
+      <div class="section-title">공개 통계 카드 <span class="hint">/pub/stats · 사람·IP·지역·기기는 어느 카드에도 없음, 3회 미만은 뺌</span></div>
+      <div id="stCards" style="display:flex; gap:8px 18px; flex-wrap:wrap; margin:6px 0 10px;"></div>
+      <button type="button" class="btn small primary" onclick="saveStatCards()" data-write>저장</button>
+      <a class="btn small" href="/pub/stats" target="_blank" rel="noopener">공개 통계 보기 ↗</a>
+      <span class="hint" id="stMsg" role="status" aria-live="polite"></span>
+    </div>
+
     <div class="card">
       <div class="section-title">사용법 문서</div>
       <div class="gd-wrap">
@@ -124,6 +133,23 @@
         msg("그림을 넣었어요. 저장해야 공개 화면에 보여요."); preview();
       });
     }
+    function loadStatCards() {
+      fetch("/api/guides/stats", { cache: "no-store" }).then(mrJson).then(function(res) {
+        if (!res.ok || !res.data.ok) { $("stCards").innerHTML = '<span class="hint">못 불러왔어요</span>'; return; }
+        var on = res.data.enabled || [];
+        $("stCards").innerHTML = res.data.cards.map(function(c) {
+          return '<label style="display:inline-flex;gap:6px;align-items:center;font-size:14px;"><input type="checkbox" value="' + esc(c.key) + '"' +
+            (on.indexOf(c.key) >= 0 ? " checked" : "") + " data-write> " + esc(c.label) + "</label>";
+        }).join("");
+      });
+    }
+    function saveStatCards() {
+      var on = [].slice.call(document.querySelectorAll("#stCards input:checked")).map(function(i) { return i.value; });
+      post("/api/guides/stats", { enabled: on }).then(function(res) {
+        $("stMsg").textContent = res.data.ok ? "저장했어요. 공개 통계에 바로 반영돼요." : "⚠ 저장 못 했어요";
+      });
+    }
     renderList();
+    loadStatCards();
   </script>
 {% endblock %}
