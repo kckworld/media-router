@@ -59,7 +59,11 @@ def test_home_search_and_headers(pub):
     h = r.get_data(as_text=True)
     assert r.status_code == 200 and "최근 추가" in h and "가짜 영화" in h and "미리 보기" not in h
     assert "default-src 'none'" in r.headers["Content-Security-Policy"] and r.headers["X-Frame-Options"] == "DENY"
-    assert "<script" not in h
+    # 11-07(W-14): 우리 파일 /static/pub.js 하나만, 인라인 스크립트는 없음·CSP로도 막힘
+    import re as _re
+    assert _re.findall(r"<script[^>]*>", h) == ['<script src="/static/pub.js?v=1" defer>']
+    csp = r.headers["Content-Security-Policy"]
+    assert "script-src 'self';" in csp and "unsafe-inline" not in csp.split("script-src")[1].split(";")[0]
     h = g(c, "/pub/?q=런닝").get_data(as_text=True)
     assert h.index("런닝맨") < h.index("런닝 하이") and "45화" in h and "시즌 2" in h
     h = g(c, "/pub/?q=없는제목").get_data(as_text=True)
@@ -410,3 +414,77 @@ def test_request_page_new_frame(pub):
     c, tmp = pub
     h = g(c, "/request").get_data(as_text=True)
     assert 'aria-current="page">영상 요청<' in h and "🎬 NAS 미디어" in h
+
+
+# ── 11-07 W-14: 가로 줄 + 설명 창
+import public_tmdb
+
+
+@pytest.fixture
+def tm(pub, monkeypatch):
+    c, tmp = pub
+    calls = []
+
+    def fake_get(api_key, path, **params):
+        calls.append((path, params.get("query")))
+        assert api_key == "TMDBKEY"
+        if path.startswith("/search/tv"):
+            return {"results": [{"id": 77, "name": params["query"]}]}
+        if path.startswith("/search/movie"):
+            return {"results": []}
+        if path == "/tv/77":
+            return {"id": 77, "name": "런닝맨", "original_name": "Running Man", "overview": "가짜 줄거리 <b>굵게</b>",
+                    "first_air_date": "2010-07-11", "last_air_date": "2026-11-02", "status": "Returning Series",
+                    "genres": [{"name": "리얼리티"}, {"name": "코미디"}], "networks": [{"name": "SBS"}],
+                    "number_of_seasons": 1, "number_of_episodes": 780, "poster_path": "/abc.jpg"}
+        return None
+    monkeypatch.setattr(public_tmdb, "_get", fake_get)
+    monkeypatch.setattr(web_admin, "TMDB_API_KEY", "TMDBKEY")
+    monkeypatch.setattr(web_admin, "PUB_TMDB_DETAIL", tmp / "tmdb_detail.json")
+    return c, tmp, calls
+
+
+def test_title_modal_fragment_and_page(tm):
+    c, tmp, calls = tm
+    r = g(c, f"/pub/title?id={A}&frag=1")
+    h = r.get_data(as_text=True)
+    assert r.status_code == 200 and "<html" not in h and 'id="tiTitle"' in h
+    assert "가짜 줄거리 &lt;b&gt;굵게&lt;/b&gt;" in h and "리얼리티" in h and "SBS" in h and "2010.07.11 ~ 2026.11.02" in h
+    assert "시즌 1개 · 45화 있음" in h and "780화 (TMDB)" in h                        # NAS 회차 + TMDB 전체
+    assert 'href="https://www.themoviedb.org/tv/77?language=ko-KR"' in h and 'target="_blank"' in h
+    assert "TMDBKEY" not in h and "api_key" not in h and "/volume" not in h
+    full = g(c, f"/pub/title?id={A}").get_data(as_text=True)
+    assert "<html" in full and "가짜 줄거리" in full
+    g(c, f"/pub/title?id={A}&frag=1")
+    assert len(calls) == 2                                                             # 두 번째는 캐시(검색+상세 한 번씩)
+    h = g(c, f"/pub/title?id={B}&frag=1").get_data(as_text=True)                     # 영화: TMDB 없음 → NAS 정보만
+    assert "TMDB 자료를 찾지 못했어요" in h and "있음" in h
+
+
+def test_title_only_listed(tm, monkeypatch):
+    c, tmp, calls = tm
+    assert g(c, "/pub/title?id=" + "f" * 32).status_code == 404                        # 목록에 없는 id
+    assert g(c, "/pub/title?id=../x").status_code == 404
+    assert g(c, "/pub/title?t=아무거나&k=예능").status_code == 404                     # 자동 목록에 없는 제목 → TMDB 대신 찾기 안 함
+    assert g(c, "/pub/title").status_code == 404
+    v, d = tmp / "v.txt", tmp / "d.txt"
+    v.write_text("가짜 새예능\n", encoding="utf-8")
+    d.write_text("", encoding="utf-8")
+    monkeypatch.setattr(web_admin, "BT4G_KEYWORDS_PATH", v)
+    monkeypatch.setattr(web_admin, "DRAMA_KEYWORDS_PATH", d)
+    monkeypatch.setitem(web_admin._pub_rules_cache, "at", time.time())
+    monkeypatch.setitem(web_admin._pub_rules_cache, "rules", {})
+    h = g(c, "/pub/title?t=가짜 새예능&k=예능&frag=1").get_data(as_text=True)
+    assert "아직 없음" in h and calls[0] == ("/search/tv", "가짜 새예능")
+    assert calls and not any(q == "아무거나" for _, q in calls)
+
+
+def test_rows_and_tile_links(tm, monkeypatch):
+    c, tmp, calls = tm
+    h = g(c, "/pub/recent").get_data(as_text=True)
+    assert h.count('class="row" data-row') == 2 and 'class="strip"' in h                # 날짜마다 한 줄
+    assert f'href="/pub/title?id={B}" data-title' in h
+    h = g(c, "/pub/").get_data(as_text=True)
+    assert 'data-row' in h and 'id="tiDlg"' in h
+    js = g(c, "/static/pub.js")
+    assert js.status_code == 200 and "showModal" in js.get_data(as_text=True)

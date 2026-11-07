@@ -1538,8 +1538,9 @@ PUB_POSTER_DIR = DATA_DIR / "pub_posters"
 _pub_limit = media_requests.RateLimiter(120, 60)            # 화면: 접속지당 1분 120번
 _pub_total = media_requests.RateLimiter(3000, 60)           # 전체
 _pub_poster_limit = media_requests.RateLimiter(600, 60)
+# 11-07(W-14): 가로 줄 버튼·설명 창용 /static/pub.js 하나만(인라인 스크립트는 여전히 막힘), 설명 창 조각은 같은 사이트에서만 받음
 PUB_CSP = ("default-src 'none'; img-src 'self' https://image.tmdb.org; style-src 'self' 'unsafe-inline'; "
-           "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+           "script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 PUB_NAV = [("/pub/", "검색"), ("/pub/auto", "자동으로 받는 것"), ("/pub/recent", "최근 추가"),
            ("/request", "영상 요청"), ("/pub/account", "계정 요청"), ("/pub/guide", "사용법")]
 
@@ -1649,6 +1650,37 @@ def pub_recent():
         days[-1][1].append(dict(idx[r["id"]], count=r["count"], last=r.get("last") or ""))
     return _pub_render("public/recent.html", active="/pub/recent", days=days, ready=d is not None,
                        recent_days=public_catalog.RECENT_DAYS)
+
+
+# ── 설명 창 (11-07, W-20261107-14): 포스터를 누르면 TMDB 한국어 자료 + NAS 회차. 목록에 있는 것만(아무 이름이나 TMDB 대신 찾아 주지 않음)
+import public_tmdb
+PUB_TMDB_DETAIL = DATA_DIR / "pub_tmdb_detail.json"
+
+
+@app.route("/pub/title", methods=["GET"])
+def pub_title():
+    d = _pub_catalog()
+    idx = public_catalog.by_id(d)
+    iid = (request.args.get("id") or "").strip()
+    t, k = (request.args.get("t") or "").strip()[:60], (request.args.get("k") or "").strip()[:10]
+    it, name = None, ""
+    if iid:
+        it = idx.get(iid) if public_catalog.ID_RE.match(iid) else None
+        if not it:
+            return make_response("Not Found", 404)
+        name = it["name"]
+    elif t:
+        entries = public_auto.titles(BT4G_KEYWORDS_PATH, DRAMA_KEYWORDS_PATH, _pub_qbit_rules())
+        if not any(e["title"] == t and e["kind"] == k for e in entries):     # 자동 받는 목록에 있는 제목만
+            return make_response("Not Found", 404)
+        it, name = public_catalog.find_title(d, t, k), t
+    else:
+        return make_response("Not Found", 404)
+    series = (it["type"] == "series") if it else True
+    info = public_tmdb.lookup(TMDB_API_KEY, it["name"] if it else name, series, (it or {}).get("year"), PUB_TMDB_DETAIL) \
+        if TMDB_API_KEY else None
+    tpl = "public/_title_body.html" if request.args.get("frag") == "1" else "public/title.html"
+    return _pub_render(tpl, it=it, name=it["name"] if it else name, info=info, series=series, kind=(it or {}).get("kind") or k)
 
 
 # ── 계정 요청 (공개, 코드 필요). 계정은 자동으로 안 만들고 텔레그램 [승인]/[거절] + MR 요청 화면 목록만

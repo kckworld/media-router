@@ -1,0 +1,8 @@
+{#- 가로 한 줄(11-07): 손가락·휠·트랙패드로 옆으로 밀기, PC는 ◀ ▶ 버튼(pub.js가 켬). caller()가 칸들을 그림 #}
+{% macro row(label) -%}
+<div class="row" data-row>
+  <button type="button" class="row-btn prev" data-dir="-1" aria-label="{{ label }} 앞으로" hidden>‹</button>
+  <div class="strip" tabindex="0" aria-label="{{ label }}">{{ caller() }}</div>
+  <button type="button" class="row-btn next" data-dir="1" aria-label="{{ label }} 뒤로" hidden>›</button>
+</div>
+{%- endmacro %}

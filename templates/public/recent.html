@@ -1,16 +1,17 @@
 {% extends "public/base.html" %}
+{% from "public/_row.html" import row %}
 {% block title %}최근 추가{% endblock %}
 {% block content %}
   <h1>최근 추가</h1>
-  <p class="lead">최근 {{ recent_days }}일 동안 NAS에 새로 들어온 영화·회차예요.</p>
+  <p class="lead">최근 {{ recent_days }}일 동안 NAS에 새로 들어온 영화·회차예요. 날짜마다 옆으로 밀어 보고, 포스터를 누르면 설명이 나와요.</p>
   {% if not ready %}
     <p class="empty">목록을 준비하는 중이에요. 잠시 뒤에 다시 열어 주세요.</p>
   {% endif %}
   {% for day, rows in days %}
-    <h2>{{ day[5:7]|int }}월 {{ day[8:10]|int }}일</h2>
-    <div class="grid">
-      {% for it in rows %}{% with extra=((('최근 ' ~ it.last ~ ' · ') if it.last else '') ~ it.count ~ '편 추가') if it.type == 'series' else '' %}{% include "public/_tile.html" %}{% endwith %}{% endfor %}
-    </div>
+    <h2>{{ day[5:7]|int }}월 {{ day[8:10]|int }}일 <span class="muted" style="font-size:14px;font-weight:600;">{{ rows|length }}</span></h2>
+    {% call row(day[5:7]|int ~ '월 ' ~ day[8:10]|int ~ '일') %}
+      {%- for it in rows %}{% with extra=((('최근 ' ~ it.last ~ ' · ') if it.last else '') ~ it.count ~ '편 추가') if it.type == 'series' else '' %}{% include "public/_tile.html" %}{% endwith %}{% endfor %}
+    {% endcall %}
   {% else %}
     {% if ready %}<p class="empty">최근 {{ recent_days }}일 동안 새로 들어온 게 없어요.</p>{% endif %}
   {% endfor %}

@@ -1,0 +1,6 @@
+{% extends "public/base.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block content %}
+  <p style="margin:0 0 10px;"><a href="/pub/">← 처음으로</a></p>
+  <div class="card">{% include "public/_title_body.html" %}</div>
+{% endblock %}

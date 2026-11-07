@@ -1,5 +1,6 @@
-{#- 포스터 칸 하나: it = 목록 항목(public_catalog), extra = 아래 한 줄 #}
-<div class="tile">
+{#- 포스터 칸 하나: it = 목록 항목(public_catalog/public_auto), extra = 아래 한 줄. 누르면 설명 창(/pub/title — JS 없으면 그냥 화면으로) #}
+{%- set href = ('/pub/title?id=' ~ it.id) if it.id else ('/pub/title?t=' ~ (it.name|urlencode) ~ '&k=' ~ (it.kind|urlencode)) %}
+<a class="tile" href="{{ href }}" data-title aria-label="{{ it.name }} 설명 보기">
   {%- if it.poster %}<img src="/pub/poster/{{ it.id }}" alt="" loading="lazy" width="200" height="300">
   {%- elif it.poster_url %}<img src="{{ it.poster_url }}" alt="" loading="lazy" width="200" height="300" referrerpolicy="no-referrer">
   {%- else %}<div class="ph">{{ it.name }}</div>{% endif %}
@@ -12,4 +13,4 @@
     {%- if it.year and it.type != 'series' %}<span class="chip g">{{ it.year }}</span>{% endif %}
     {%- if extra %}<div class="muted" style="margin-top:4px;font-size:12px;">{{ extra }}</div>{% endif %}
   </div>
-</div>
+</a>

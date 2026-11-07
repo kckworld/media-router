@@ -1,0 +1,27 @@
+{#- 설명 창 안쪽(창으로도, 따로 화면으로도 씀). 내부 정보 없음: TMDB 공개 자료 + NAS 화수·시즌 수만 #}
+<div class="ti">
+  <div class="ti-poster">
+    {%- if it and it.poster %}<img src="/pub/poster/{{ it.id }}" alt="" width="200" height="300">
+    {%- elif info and info.poster %}<img src="{{ info.poster }}" alt="" width="200" height="300" referrerpolicy="no-referrer">
+    {%- else %}<div class="ph">{{ name }}</div>{% endif %}
+  </div>
+  <div class="ti-main">
+    <h2 class="ti-title" id="tiTitle">{{ name }}</h2>
+    {%- if info and info.original and info.original != name %}<div class="muted ti-orig">{{ info.original }}</div>{% endif %}
+    <div class="ti-chips">
+      {%- if kind %}<span class="chip">{{ kind }}</span>{% endif %}
+      {%- for g in (info.genres if info else []) %}<span class="chip g">{{ g }}</span>{% endfor %}
+    </div>
+    <dl class="ti-dl">
+      {%- if info and info.date %}<dt>{{ '첫 방영' if series else '개봉' }}</dt><dd>{{ info.date.replace('-', '.') }}{% if info.last_date and info.last_date != info.date %} ~ {{ info.last_date.replace('-', '.') }}{% endif %}</dd>{% endif %}
+      {%- if info and info.status %}<dt>상태</dt><dd>{{ info.status }}{% if info.networks %} · {{ info.networks|join(', ') }}{% endif %}</dd>{% endif %}
+      {%- if series and info and info.episodes %}<dt>전체</dt><dd>{% if info.seasons %}시즌 {{ info.seasons }}개 · {% endif %}{{ info.episodes }}화 (TMDB)</dd>{% endif %}
+      {%- if not series and info and info.runtime %}<dt>길이</dt><dd>{{ info.runtime }}분</dd>{% endif %}
+      <dt>NAS</dt>
+      <dd>{% if it %}{% if series %}{% if it.seasons %}시즌 {{ it.seasons }}개 · {% endif %}{{ it.episodes or 0 }}화 있음{% else %}있음{% endif %}{% if it.status %} · {{ it.status }}{% endif %}
+          {%- else %}아직 없음 — 새 회차가 나오면 자동으로 받아요{% endif %}</dd>
+    </dl>
+    {%- if info and info.overview %}<p class="ti-ov">{{ info.overview }}</p>{% elif info %}<p class="muted">줄거리가 아직 없어요.</p>{% else %}<p class="muted">TMDB 자료를 찾지 못했어요.</p>{% endif %}
+    {%- if info %}<p><a class="btn" href="{{ info.url }}" target="_blank" rel="noopener noreferrer">TMDB에서 보기 ↗</a></p>{% endif %}
+  </div>
+</div>
