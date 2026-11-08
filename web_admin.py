@@ -5558,6 +5558,54 @@ def api_users_service_users():
     return jsonify({"ok": True, "service": service, "users": out})
 
 
+@app.route("/api/users/account_activity", methods=["GET"])
+def api_users_account_activity():
+    """서버 계정·재생 기록(11-09): Jellyfin·Plex 전 계정 + 맵핑 상태 + 재생 수·첫/마지막 재생·마지막 접속.
+    서버 기록(media_servers.activity)과 우리 play_history(맵핑된 계정만 사람별로 셀 수 있음)를 합쳐 더 넓은 쪽을 쓴다
+    (Jellyfin 서버 기록은 26-08-09부터라 그 전 재생은 play_history에만 있다)."""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    refresh = request.args.get("refresh") == "1"
+    accounts, db_stats = {}, {}
+    with _stats_db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT sa.id, sa.service, sa.user_id, sa.username, sa.person_id, p.name FROM service_accounts sa "
+                    "LEFT JOIN persons p ON p.id = sa.person_id")
+        for aid, svc, uid, uname, pid, pname in cur.fetchall():
+            accounts[(svc, str(uid))] = {"account_id": aid, "username": uname, "person_id": pid, "person": pname}
+        cur.execute("SELECT account_id, count(*), sum(watched_sec), min(played_at), max(played_at) FROM play_history "
+                    "WHERE account_id IS NOT NULL GROUP BY account_id")
+        for aid, cnt, ws, first, last in cur.fetchall():
+            db_stats[aid] = (int(cnt), int(ws or 0), first, last)
+    rows, errors = [], {}
+    for svc in media_servers.SERVICES:
+        try:
+            srv = media_servers.activity(svc, refresh=refresh)
+        except media_servers.ServerError as e:
+            errors[svc] = str(e)
+            srv = None
+        keys = set(srv or {}) | {uid for (s, uid) in accounts if s == svc}
+        for uid in keys:
+            a, s = accounts.get((svc, uid)) or {}, (srv or {}).get(uid) or {}
+            d = db_stats.get(a.get("account_id"))
+            firsts = [datetime.fromisoformat(x) for x in (s.get("first"),) if x]
+            lasts = [datetime.fromisoformat(x) for x in (s.get("last"),) if x]
+            plays, watched = s.get("plays") or 0, s.get("watched_sec")
+            if d:                                    # 두 기록이 겹치니 합치지 않고 많은 쪽·넓은 범위를 쓴다
+                plays = max(plays, d[0])
+                if svc == "jellyfin":
+                    watched = max(watched or 0, d[1])
+                firsts += [d[2]] if d[2] else []
+                lasts += [d[3]] if d[3] else []
+            rows.append({"service": svc, "user_id": uid, "username": s.get("username") or a.get("username") or uid,
+                         "on_server": None if srv is None else uid in srv,
+                         "account_id": a.get("account_id"), "person_id": a.get("person_id"), "person": a.get("person"),
+                         "plays": plays, "watched_sec": watched,
+                         "first": min(firsts).isoformat() if firsts else None,
+                         "last": max(lasts).isoformat() if lasts else None, "last_seen": s.get("last_seen")})
+    return jsonify({"ok": True, "rows": rows, "errors": errors, "jellyfin_since": "2026-08-09"})
+
+
 @app.route("/api/users/accounts", methods=["POST"])
 def api_users_accounts_create():
     auth = authed(request)

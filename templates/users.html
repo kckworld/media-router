@@ -41,6 +41,15 @@
     .account-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .account-info { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
     .account-username { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .act-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .act-table th, .act-table td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; vertical-align: middle; }
+    .act-table th { font-size: 11.5px; color: var(--muted); font-weight: 700; cursor: pointer; user-select: none; }
+    .act-table th.sorted::after { content: attr(data-dir); margin-left: 3px; }
+    .act-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .act-table tr.idle td { color: var(--muted); }
+    .act-table .map-form { display: flex; gap: 4px; align-items: center; }
+    .act-table .map-form select { min-width: 120px; padding: 4px 6px; font-size: 12.5px; }
+    .act-table .gone { font-size: 11px; color: var(--warn); margin-left: 4px; }
     .account-userid { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
   </style>
 {% endblock %}
@@ -51,7 +60,7 @@
       <div class="tile"><span class="tile-label">사용자</span><span class="tile-value" id="sumPersons">-</span></div>
       <div class="tile"><span class="tile-label">연결 계정</span><span class="tile-value" id="sumAccounts">-</span></div>
       <div class="tile"><span class="tile-label">재생 기록</span><span class="tile-value" id="sumPlays">-</span></div>
-      <div class="tile"><span class="tile-label">미매핑 계정</span><span class="tile-value" id="sumUnmatched">-</span></div>
+      <div class="tile" title="맵핑 전에 쌓여서 누구 것인지 모르는 재생 기록 수"><span class="tile-label">주인 없는 재생</span><span class="tile-value" id="sumUnmatched">-</span></div>
     </div>
     <div class="users-grid">
       <div class="card">
@@ -84,6 +93,38 @@
         <div class="card-header"><span class="card-title" id="accountPanelTitle">🔗 계정 관리</span></div>
         <div class="card-body" id="accountPanel">
           <div class="empty-state">왼쪽에서 사용자를 선택하세요</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="actCard" style="margin-top:24px; padding:0; overflow:hidden;">
+      <div class="card-header">
+        <span class="card-title">🧾 서버 계정 · 재생 기록</span>
+        <button class="btn ghost small" onclick="loadActivity(true)" title="서버에서 다시 불러오기(평소 10분 캐시)">↻ 새로고침</button>
+      </div>
+      <div class="card-body">
+        <div class="chip-row" id="actFilters" style="margin-bottom:10px;">
+          <button class="chip" data-f="unmapped" aria-pressed="true">미매핑 <span class="n" id="actN-unmapped"></span></button>
+          <button class="chip" data-f="idle" aria-pressed="false">안 쓰는 계정 <span class="n" id="actN-idle"></span></button>
+          <button class="chip" data-f="recent" aria-pressed="false">최근 30일 <span class="n" id="actN-recent"></span></button>
+          <button class="chip" data-f="all" aria-pressed="false">전체 <span class="n" id="actN-all"></span></button>
+        </div>
+        <div class="chip-row" id="actSvc" style="margin-bottom:10px;">
+          <button class="chip" data-s="" aria-pressed="true">둘 다</button>
+          <button class="chip" data-s="jellyfin" aria-pressed="false">Jellyfin</button>
+          <button class="chip" data-s="plex" aria-pressed="false">Plex</button>
+          <input type="text" id="actSearch" placeholder="🔍 계정·사람 검색" oninput="renderActivity()" style="min-width:150px; flex:1;">
+        </div>
+        <div class="hint" id="actHint" style="margin-bottom:8px;">안 쓰는 계정 = 재생 0회이거나 마지막 재생이 90일 넘은 계정. Jellyfin 서버 기록은 26-08-09부터라 그 전 재생은 맵핑된 계정만 반영돼요.</div>
+        <div style="overflow-x:auto;">
+          <table class="act-table">
+            <thead><tr>
+              <th data-k="service">서비스</th><th data-k="username">계정</th><th data-k="person">사람</th>
+              <th data-k="plays" class="num">재생</th><th data-k="watched_sec" class="num">시청 시간</th>
+              <th data-k="first">첫 재생</th><th data-k="last">마지막 재생</th><th data-k="last_seen">마지막 접속</th>
+            </tr></thead>
+            <tbody id="actBody"><tr><td colspan="8" class="empty-state">불러오는 중...</td></tr></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -342,6 +383,111 @@
         if (selectedPersonId) selectPerson(selectedPersonId);
       } catch (e) { showToast(e.message, 'error'); }
     }
+
+    // ── 11-09 서버 계정 · 재생 기록: 미매핑·안 쓰는 계정 찾기, 줄에서 바로 사람에 연결 ──
+    let ACT = [], actFilter = 'unmapped', actSvc = '', actSort = { k: 'last', dir: -1 };
+    const IDLE_DAYS = 90, DAY = 86400000;
+    function actIdle(r) { return !r.plays || !r.last || (Date.now() - Date.parse(r.last)) > IDLE_DAYS * DAY; }
+    function actRecent(r) { return r.last && (Date.now() - Date.parse(r.last)) <= 30 * DAY; }
+    const ACT_TESTS = { unmapped: r => !r.person_id, idle: actIdle, recent: actRecent, all: () => true };
+    function fmtDate(s) {
+      if (!s) return '-';
+      const d = new Date(s), days = Math.floor((Date.now() - d) / DAY);
+      const ds = String(d.getFullYear()).slice(2) + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      const ago = days < 1 ? '오늘' : days < 31 ? days + '일 전' : days < 365 ? Math.floor(days / 30) + '달 전' : Math.floor(days / 365) + '년 전';
+      return '<span title="' + escapeHtml(d.toLocaleString('ko-KR')) + '">' + ds + ' <span class="muted">(' + ago + ')</span></span>';
+    }
+    function fmtHours(sec) {
+      if (sec == null) return '<span class="muted">-</span>';
+      const h = sec / 3600;
+      return h >= 10 ? Math.round(h) + '시간' : h >= 1 ? h.toFixed(1) + '시간' : Math.round(sec / 60) + '분';
+    }
+    async function loadActivity(refresh) {
+      const body = document.getElementById('actBody');
+      if (refresh) body.innerHTML = '<tr><td colspan="8" class="empty-state">서버에서 불러오는 중...</td></tr>';
+      try {
+        const d = await fetchJSON('/api/users/account_activity' + (refresh ? '?refresh=1' : ''), { cache: 'no-store' });
+        ACT = d.rows || [];
+        const errs = Object.entries(d.errors || {}).map(([s, e]) => (s === 'plex' ? 'Plex' : 'Jellyfin') + ': ' + e);
+        const hint = document.getElementById('actHint');
+        hint.dataset.base = hint.dataset.base || hint.textContent;
+        hint.textContent = (errs.length ? '⚠ 서버 기록을 못 불러왔어요(' + errs.join(', ') + ') — 맵핑된 계정의 우리 기록만 보여요. ' : '') + hint.dataset.base;
+        renderActivity();
+      } catch (e) {
+        body.innerHTML = '<tr><td colspan="8" class="empty-state">⚠ ' + escapeHtml(e.message) + '</td></tr>';
+      }
+    }
+    function renderActivity() {
+      const q = (document.getElementById('actSearch').value || '').trim().toLowerCase();
+      const base = ACT.filter(r => (!actSvc || r.service === actSvc) &&
+        (!q || r.username.toLowerCase().includes(q) || (r.person || '').toLowerCase().includes(q)));
+      Object.keys(ACT_TESTS).forEach(f => { document.getElementById('actN-' + f).textContent = base.filter(ACT_TESTS[f]).length; });
+      const k = actSort.k, dir = actSort.dir;
+      const val = r => (k === 'first' || k === 'last' || k === 'last_seen') ? (r[k] ? Date.parse(r[k]) : -Infinity)
+        : (k === 'plays' || k === 'watched_sec') ? (r[k] == null ? -Infinity : r[k]) : String(r[k] || '').toLowerCase();
+      const rows = base.filter(ACT_TESTS[actFilter]).sort((a, b) => { const x = val(a), y = val(b); return x < y ? -dir : x > y ? dir : 0; });
+      document.querySelectorAll('.act-table th').forEach(th => {
+        th.classList.toggle('sorted', th.dataset.k === k); th.dataset.dir = dir > 0 ? '▲' : '▼';
+      });
+      const body = document.getElementById('actBody');
+      if (!rows.length) { body.innerHTML = '<tr><td colspan="8" class="empty-state">해당하는 계정이 없어요</td></tr>'; return; }
+      const opts = persons.map(p => '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>').join('');
+      body.innerHTML = rows.map(r => {
+        const i = ACT.indexOf(r);
+        const who = r.person_id
+          ? '<a href="#" onclick="event.preventDefault(); selectPerson(' + r.person_id + '); window.scrollTo({top:0, behavior:\'smooth\'});">' + escapeHtml(r.person || '') + '</a>'
+          : r.account_id
+            ? '<span class="muted">사람 없음</span>'
+            : '<span class="map-form"><select id="actPick-' + i + '" aria-label="연결할 사람"><option value="">— 사람 고르기 —</option>' +
+              '<option value="new">+ 새 사용자 「' + escapeHtml(r.username) + '」</option>' + opts + '</select>' +
+              '<button class="btn primary small" data-write onclick="mapActivity(' + i + ')">연결</button></span>';
+        return '<tr class="' + (actIdle(r) ? 'idle' : '') + '">' +
+          '<td><span class="badge badge-' + r.service + '"><span class="badge-dot"></span>' + (r.service === 'jellyfin' ? 'JF' : 'PX') + '</span></td>' +
+          '<td title="ID ' + escapeHtml(r.user_id) + '">' + escapeHtml(r.username) + (r.on_server === false ? '<span class="gone" title="서버에 이 계정이 없어요(삭제됨)">서버에 없음</span>' : '') + '</td>' +
+          '<td>' + who + '</td>' +
+          '<td class="num">' + (r.plays || 0).toLocaleString() + '</td>' +
+          '<td class="num">' + fmtHours(r.watched_sec) + '</td>' +
+          '<td>' + fmtDate(r.first) + '</td><td>' + fmtDate(r.last) + '</td>' +
+          '<td>' + (r.service === 'plex' ? '<span class="muted" title="Plex는 접속 기록을 안 줘요">-</span>' : fmtDate(r.last_seen)) + '</td></tr>';
+      }).join('');
+    }
+    async function mapActivity(i) {
+      const r = ACT[i], v = document.getElementById('actPick-' + i).value;
+      if (!r || !v) { showToast('연결할 사람을 골라 주세요', 'error'); return; }
+      try {
+        let pid = +v;
+        if (v === 'new') {
+          const p = await fetchJSON('/api/users/persons', { method: 'POST', body: JSON.stringify({ name: r.username, memo: '' }) });
+          pid = p.id;
+        }
+        await fetchJSON('/api/users/accounts', { method: 'POST', body: JSON.stringify({ person_id: pid, service: r.service, username: r.username, user_id: r.user_id }) });
+        showToast((r.service === 'plex' ? 'Plex' : 'Jellyfin') + ' ' + r.username + ' 연결 완료', 'success');
+        await Promise.all([loadPersons(), loadSummary()]);
+        if (selectedPersonId) renderAccountPanel();
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+    document.getElementById('actFilters').addEventListener('click', e => {
+      const b = e.target.closest('.chip'); if (!b) return;
+      actFilter = b.dataset.f;
+      document.querySelectorAll('#actFilters .chip').forEach(c => c.setAttribute('aria-pressed', c === b ? 'true' : 'false'));
+      renderActivity();
+    });
+    document.getElementById('actSvc').addEventListener('click', e => {
+      const b = e.target.closest('.chip'); if (!b) return;
+      actSvc = b.dataset.s;
+      document.querySelectorAll('#actSvc .chip').forEach(c => c.setAttribute('aria-pressed', c === b ? 'true' : 'false'));
+      renderActivity();
+    });
+    document.querySelector('.act-table thead').addEventListener('click', e => {
+      const th = e.target.closest('th'); if (!th) return;
+      const k = th.dataset.k;
+      actSort = { k: k, dir: actSort.k === k ? -actSort.dir : (['service', 'username', 'person'].includes(k) ? 1 : -1) };
+      renderActivity();
+    });
+
+    // 사람·계정이 바뀌면(이 표나 오른쪽 계정 관리에서) 표의 맵핑 상태도 다시 받는다(서버 기록은 10분 캐시라 빠름)
+    const _loadPersonsOrig = loadPersons;
+    loadPersons = async function() { await _loadPersonsOrig(); await loadActivity(false); };
 
     Promise.all([loadPersons(), loadSummary()]);
 
