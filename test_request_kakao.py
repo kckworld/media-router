@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""요청 완료 안내를 카톡 방에도 (2026-11-01) - MR 쪽 설정·전송·실패 대체"""
-import json
+"""요청 완료 안내 (2026-11-01 카톡, 11-10부터 알림 허브 'mr.request_done'으로) - 채널·실패 알림"""
 import time
 
+import notify_hub as nh
 import web_admin
 from test_media_requests import GOOD, rq, saved  # noqa: F401  (rq는 fixture)
 
@@ -14,61 +14,62 @@ def _done(c, sent, tmp_path, monkeypatch):
     monkeypatch.setattr(web_admin, "authed", lambda req: True)
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
     c.post(f"/api/requests/{rid}", json={"status": "done"})
-    for _ in range(100):                      # 웹 버튼은 안내를 백그라운드 스레드로 보낸다
+    for _ in range(600):                      # 웹 버튼은 안내를 백그라운드 스레드로 보낸다(NAS가 바쁘면 느려서 30초까지)
         if saved(tmp_path)[0].get("announced"):
             break
         time.sleep(0.05)
 
 
-def test_kakao_off_by_default(rq, monkeypatch):
+def _set(tmp_path, **kw):
+    d = web_admin._hub()
+    assert nh.update_item(d, "mr.request_done", kw) is None
+    nh.save(web_admin.NOTIFY_HUB_PATH, d)
+
+
+def test_telegram_only_by_default(rq, monkeypatch):
     c, sent, tmp_path = rq
     calls = []
     monkeypatch.setattr(web_admin, "_kakao_send", lambda *a: calls.append(a) or {"ok": True})
     _done(c, sent, tmp_path, monkeypatch)
     assert not calls and [m for m, _ in sent].count("sendPhoto") == 1
+    assert nh.query_log(web_admin.NOTIFY_LOG_PATH, key="mr.request_done")[0]["status"] == "ok"
 
 
-def test_kakao_on_sends_same_poster_and_caption(rq, monkeypatch):
+def test_both_sends_same_poster_and_caption(rq, monkeypatch):
     c, sent, tmp_path = rq
     calls = []
     monkeypatch.setattr(web_admin, "_kakao_send", lambda *a: calls.append(a) or {"ok": True, "image": True})
-    monkeypatch.setattr(web_admin, "authed", lambda req: True)
-    monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
-    assert c.post("/api/requests/kakao", json={"on": True, "room": ""}).status_code == 400   # 켜려면 방 이름
-    assert c.post("/api/requests/kakao", json={"on": True, "room": " 김창기 "}).get_json()["ok"]
-    st = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
-    assert st == {"code": "1234", "kakao_on": True, "kakao_room": "김창기"}            # 코드는 그대로
-    r = c.post("/api/requests/code", json={"code": "1234"})                          # 11-07: 새로 저장은 6자 이상
-    assert r.status_code == 400 and "6자 이상" in r.get_json()["error"]
-    assert web_admin._request_code() == "1234"                                        # 이미 있던 4자리는 그대로 동작
-    assert web_admin._request_settings()["kakao_room"] == "김창기"                      # 코드 저장이 카톡 설정을 안 지움
+    _set(tmp_path, channel="both", kakao_room="김창기")
     _done(c, sent, tmp_path, monkeypatch)
     photo = [p for m, p in sent if m == "sendPhoto"][0]
     assert calls == [("김창기", photo["photo"], photo["caption"])] and photo["photo"].endswith("/w500/a.jpg")
     assert not [p for m, p in sent if m == "text" and "카톡" in p["text"]]               # 성공이면 경고 없음
 
 
-def test_kakao_failure_falls_back_to_telegram_alert(rq, monkeypatch):
+def test_kakao_failure_alerts_on_telegram(rq, monkeypatch):
     c, sent, tmp_path = rq
-    (tmp_path / "settings.json").write_text(
-        json.dumps({"code": "1234", "kakao_on": True, "kakao_room": "김창기"}), encoding="utf-8")
     monkeypatch.setattr(web_admin, "_kakao_send", lambda *a: {"ok": False, "message": "카톡이 실행 중이 아님"})
+    _set(tmp_path, channel="both", kakao_room="김창기")
     _done(c, sent, tmp_path, monkeypatch)
     assert [m for m, _ in sent].count("sendPhoto") == 1                                 # 텔레그램 안내는 그대로
     warn = [p["text"] for m, p in sent if m == "text" and "카톡" in p["text"]]
     assert len(warn) == 1 and "못 보냈어요" in warn[0] and "카톡이 실행 중이 아님" in warn[0]
-    assert saved(tmp_path)[0]["announced"]                                               # 텔레그램으로 갔으니 한 번만
+    assert saved(tmp_path)[0]["announced"]
 
 
-def test_kakao_test_button_and_page(rq, monkeypatch):
+def test_turned_off_sends_nothing(rq, monkeypatch):
     c, sent, tmp_path = rq
-    calls = []
-    monkeypatch.setattr(web_admin, "_kakao_send",
-                        lambda *a: calls.append(a) or {"ok": False, "message": "창이 열려 있지 않음"})
+    _set(tmp_path, enabled=False)
+    _done(c, sent, tmp_path, monkeypatch)
+    assert not [m for m, _ in sent if m == "sendPhoto"]
+    assert saved(tmp_path)[0]["announced"]                                               # 꺼 둔 건 다시 시도 안 함
+    assert nh.query_log(web_admin.NOTIFY_LOG_PATH, key="mr.request_done")[0]["status"] == "off"
+
+
+def test_request_page_points_to_notify(rq, monkeypatch):
+    c, sent, tmp_path = rq
     monkeypatch.setattr(web_admin, "authed", lambda req: True)
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
-    r = c.post("/api/requests/kakao", json={"test": True, "room": "김창기"}).get_json()
-    assert r == {"ok": False, "error": "창이 열려 있지 않음"} and calls[0][:2] == ("김창기", "")
-    assert "kakao_room" not in web_admin._request_settings()                            # 시험은 설정을 안 바꿈
     html = c.get("/requests").get_data(as_text=True)
-    assert 'id="kkRoom"' in html and "꺼짐 (텔레그램만)" in html
+    assert 'href="/notify"' in html and 'id="kkRoom"' not in html
+    assert c.post("/api/requests/kakao", json={"on": True, "room": "x"}).status_code != 200      # 옛 설정 주소는 없어짐

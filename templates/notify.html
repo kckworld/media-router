@@ -1,0 +1,260 @@
+{% set active_page = 'notify' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .nt-items { display: grid; gap: 10px; }
+    .nt-item { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--surface); }
+    .nt-item.off { opacity: .62; }
+    .nt-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .nt-name { font-weight: 700; font-size: 14.5px; color: var(--text); flex: 1; min-width: 12em; }
+    .nt-src { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--chip); color: var(--chip-text); }
+    .nt-last { font-size: 12px; color: var(--muted); }
+    .nt-last.fail { color: var(--danger, #b3261e); }
+    .nt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-top: 10px; }
+    .nt-grid label { font-size: 11.5px; color: var(--muted); display: block; margin-bottom: 3px; }
+    .nt-grid select, .nt-grid input { width: 100%; }
+    .nt-acts { display: flex; gap: 6px; margin-top: 10px; justify-content: flex-end; }
+    .nt-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+    .nt-list { list-style: none; margin: 0; padding: 0; }
+    .nt-list li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    .nt-list li:last-child { border-bottom: 0; }
+    .nt-list .grow { flex: 1; min-width: 10em; }
+    .nt-list .m { font-size: 12px; color: var(--muted); }
+    .nt-form { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .nt-form input { min-width: 8em; flex: 1; }
+    .nt-log { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    .nt-log th, .nt-log td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .nt-log th { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+    .nt-log td.t { white-space: nowrap; color: var(--muted); }
+    .nt-log td.body { max-width: 420px; }
+    .nt-log td.body div { white-space: pre-wrap; word-break: break-all; max-height: 3.2em; overflow: hidden; cursor: pointer; }
+    .nt-log td.body div.open { max-height: none; }
+    .nt-st { font-weight: 700; white-space: nowrap; }
+    .nt-st.ok { color: var(--success, #188038); }
+    .nt-st.fail { color: var(--danger, #b3261e); }
+    .nt-st.off { color: var(--muted); }
+    .nt-filter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .nt-filter input, .nt-filter select { min-width: 8em; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <p class="muted" style="margin:0 0 12px;">요청 영상 완료 안내·Home Assistant·n8n 알림을 여기서 켜고 끄고, 텔레그램(어느 봇·대화방)·카톡(어느 방)으로 보낼지 정해요. 텔레그램으로 명령을 받는 기능(봇 메뉴·명령 응답)은 여기와 상관없이 그대로예요.</p>
+    <div class="filter-btns" style="margin-bottom:12px;">
+      <button type="button" class="btn small on" data-tab="items" onclick="ntTab('items')">알림 목록</button>
+      <button type="button" class="btn small" data-tab="setup" onclick="ntTab('setup')">봇 · 카톡 방</button>
+      <button type="button" class="btn small" data-tab="log" onclick="ntTab('log')">보낸 기록</button>
+    </div>
+
+    <div id="tab-items"><div class="nt-items" id="ntItems"><div class="hint">불러오는 중…</div></div></div>
+
+    <div id="tab-setup" hidden>
+      <div class="card">
+        <div class="section-title">텔레그램 봇</div>
+        <div class="hint">토큰은 저장만 하고 화면엔 끝 4자리만 보여요. 토큰을 넣으면 텔레그램에 확인해서 @봇이름을 붙여요.</div>
+        <ul class="nt-list" id="ntBots"></ul>
+        <div class="nt-form" data-write>
+          <input type="text" id="botId" placeholder="봇 ID (영문, 예: family_bot)" maxlength="30">
+          <input type="text" id="botName" placeholder="표시 이름" maxlength="40">
+          <input type="password" id="botToken" placeholder="토큰 (수정할 땐 비우면 그대로)" autocomplete="off">
+          <button type="button" class="btn small primary" onclick="saveBot()">추가·수정</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-title">카톡 방</div>
+        <div class="hint">kakao-desktop에서 그 방 채팅창 제목과 <b>완전히 같은 이름</b>이어야 보내요(띄어쓰기까지). 알림이 쓰는 방은 지울 수 없어요.</div>
+        <ul class="nt-list" id="ntRooms"></ul>
+        <div class="nt-form" data-write>
+          <input type="text" id="roomName" placeholder="카톡 방 이름 (정확히)" maxlength="50">
+          <button type="button" class="btn small primary" onclick="addRoom()">추가</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-log" hidden>
+      <div class="card">
+        <div class="nt-filter">
+          <select id="lgKey" onchange="loadLog()"><option value="">모든 알림</option></select>
+          <select id="lgStatus" onchange="loadLog()"><option value="">모든 결과</option><option value="ok">보냄</option><option value="fail">실패</option><option value="off">꺼져서 안 보냄</option></select>
+          <input type="date" id="lgFrom" onchange="loadLog()"> <input type="date" id="lgTo" onchange="loadLog()">
+          <input type="text" id="lgQ" placeholder="🔍 내용·받는 곳 검색" oninput="clearTimeout(window._lgT); window._lgT = setTimeout(loadLog, 400)">
+        </div>
+        <div style="overflow-x:auto;"><table class="nt-log"><thead><tr><th>시각</th><th>알림</th><th>채널</th><th>받는 곳</th><th>결과</th><th>내용</th></tr></thead>
+          <tbody id="lgBody"><tr><td colspan="6" class="hint">불러오는 중…</td></tr></tbody></table></div>
+        <div class="hint" id="lgFoot" style="margin-top:6px;"></div>
+      </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var NT = null, LAST = {};
+    var CH_LABEL = { telegram: "텔레그램", kakao: "카톡" };
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function post(url, body) {
+      return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).then(mrJson);
+    }
+    function ntTab(t) {
+      ["items", "setup", "log"].forEach(function(x) { document.getElementById("tab-" + x).hidden = x !== t; });
+      document.querySelectorAll("[data-tab]").forEach(function(b) { b.classList.toggle("on", b.getAttribute("data-tab") === t); });
+      if (t === "log") loadLog();
+    }
+    function load() {
+      Promise.all([fetch("/api/notify/config", { cache: "no-store" }).then(mrJson),
+                   fetch("/api/notify/log?limit=500", { cache: "no-store" }).then(mrJson)]).then(function(r) {
+        if (!r[0].ok || !r[0].data.ok) { document.getElementById("ntItems").innerHTML = '<div class="hint">못 불러왔어요.</div>'; return; }
+        NT = r[0].data; LAST = {};
+        ((r[1].data && r[1].data.rows) || []).forEach(function(x) { if (!LAST[x.key]) LAST[x.key] = x; });
+        renderItems(); renderSetup();
+        var sel = document.getElementById("lgKey"), cur = sel.value;
+        sel.innerHTML = '<option value="">모든 알림</option>' + Object.keys(NT.items).map(function(k) {
+          return '<option value="' + esc(k) + '">' + esc(NT.items[k].name) + '</option>'; }).join("");
+        sel.value = cur;
+      });
+    }
+    function lastLine(k) {
+      var x = LAST[k];
+      if (!x) return '<span class="nt-last">아직 보낸 기록 없음</span>';
+      var st = x.status === "ok" ? "보냄" : x.status === "off" ? "꺼져서 안 보냄" : "실패";
+      return '<span class="nt-last' + (x.status === "fail" ? " fail" : "") + '" title="' + esc(x.error || "") + '">마지막: ' +
+        esc(x.ts.slice(5, 16)) + " · " + (CH_LABEL[x.channel] || esc(x.channel)) + " · " + st + "</span>";
+    }
+    function renderItems() {
+      var botOpts = function(sel) {
+        return Object.keys(NT.bots).map(function(b) {
+          var x = NT.bots[b];
+          return '<option value="' + esc(b) + '"' + (b === sel ? " selected" : "") + '>' + esc(x.name) + (x.username ? " " + esc(x.username) : "") + '</option>';
+        }).join("");
+      };
+      var roomOpts = function(sel) {
+        return '<option value="">— 방 고르기 —</option>' + NT.rooms.map(function(r) {
+          return '<option' + (r === sel ? " selected" : "") + '>' + esc(r) + '</option>'; }).join("");
+      };
+      var chOpts = function(sel) {
+        return NT.channels.map(function(c) { return '<option value="' + c.value + '"' + (c.value === sel ? " selected" : "") + '>' + esc(c.label) + '</option>'; }).join("");
+      };
+      document.getElementById("ntItems").innerHTML = Object.keys(NT.items).map(function(k) {
+        var it = NT.items[k], id = k.replace(/[^a-z0-9]/g, "_");
+        var chatPh = it.caller_targets ? "구독자별 (n8n이 정함)" : it.bot === "mr" ? "기본: MR 설정의 대화방" : "대화방 ID (예: -100…)";
+        return '<div class="nt-item' + (it.enabled ? "" : " off") + '" id="it_' + id + '">' +
+          '<div class="nt-top"><span class="nt-src">' + esc(it.source) + '</span><span class="nt-name">' + esc(it.name) + '</span>' +
+          '<label class="nt-switch" data-write><input type="checkbox" id="en_' + id + '"' + (it.enabled ? " checked" : "") +
+          ' onchange="saveItem(\'' + k + '\', true)"> 켜기</label></div>' +
+          '<div style="margin-top:4px;">' + lastLine(k) + ' <span class="nt-last">· ' + esc(k) + '</span></div>' +
+          '<div class="nt-grid" data-write>' +
+            '<div><label>채널</label><select id="ch_' + id + '" onchange="toggleFields(\'' + k + '\')">' + chOpts(it.channel) + '</select></div>' +
+            '<div class="f-tg"><label>텔레그램 봇</label><select id="bot_' + id + '">' + botOpts(it.bot) + '</select></div>' +
+            '<div class="f-tg"><label>텔레그램 대화방</label><input type="text" id="chat_' + id + '" value="' + esc(it.chat_id) + '" placeholder="' + esc(chatPh) + '"' + (it.caller_targets ? " disabled" : "") + '></div>' +
+            '<div class="f-kk"><label>카톡 방</label><select id="room_' + id + '">' + roomOpts(it.kakao_room) + '</select></div>' +
+          '</div>' +
+          '<div class="nt-acts" data-write><button type="button" class="btn small" onclick="testItem(\'' + k + '\', this)">시험 보내기</button>' +
+          '<button type="button" class="btn small primary" onclick="saveItem(\'' + k + '\')">저장</button></div></div>';
+      }).join("");
+      Object.keys(NT.items).forEach(toggleFields);
+    }
+    function toggleFields(k) {
+      var id = k.replace(/[^a-z0-9]/g, "_"), ch = document.getElementById("ch_" + id).value, box = document.getElementById("it_" + id);
+      box.querySelectorAll(".f-tg").forEach(function(e) { e.hidden = ch === "kakao"; });
+      box.querySelectorAll(".f-kk").forEach(function(e) { e.hidden = ch === "telegram"; });
+    }
+    function saveItem(k, onlyToggle) {
+      var id = k.replace(/[^a-z0-9]/g, "_");
+      var body = { enabled: document.getElementById("en_" + id).checked };
+      if (!onlyToggle) {
+        body.channel = document.getElementById("ch_" + id).value;
+        body.bot = document.getElementById("bot_" + id).value;
+        body.kakao_room = document.getElementById("room_" + id).value;
+        if (!NT.items[k].caller_targets) body.chat_id = document.getElementById("chat_" + id).value.trim();
+      }
+      post("/api/notify/item/" + encodeURIComponent(k), body).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); load(); return; }
+        showToast(onlyToggle ? (body.enabled ? "켰어요" : "껐어요") : "저장했어요", "success");
+        load();
+      });
+    }
+    function testItem(k, btn) {
+      var it = NT.items[k];
+      if (!confirm("'" + it.name + "'을(를) 지금 설정으로 시험 보낼까요?" + (it.channel !== "telegram" ? "\n(카톡은 10초쯤 걸려요)" : ""))) return;
+      var done = mrBusy(btn, "보내는 중");
+      post("/api/notify/test/" + encodeURIComponent(k)).then(function(res) {
+        done();
+        var d = res.data || {};
+        if (d.skipped) showToast("꺼져 있어서 안 보냈어요(기록만 남김)", "info");
+        else if (d.ok) showToast("보냈어요", "success");
+        else showToast("못 보냈어요: " + (d.error || "오류"), "error");
+        load();
+      }).catch(function(e) { done(); showToast("오류: " + e, "error"); });
+    }
+    function renderSetup() {
+      document.getElementById("ntBots").innerHTML = Object.keys(NT.bots).map(function(b) {
+        var x = NT.bots[b], used = Object.keys(NT.items).filter(function(k) { return NT.items[k].bot === b; }).length;
+        return '<li><span class="grow"><b>' + esc(x.name) + '</b> ' + esc(x.username || "") + '<div class="m">ID ' + esc(b) +
+          ' · 토큰 ' + esc(x.token_tail || "없음") + ' · 쓰는 알림 ' + used + '개</div></span>' +
+          (x.builtin ? '<span class="m">연동·경로에서 바꿔요</span>' :
+            '<span data-write><button type="button" class="btn small" onclick="editBot(\'' + esc(b) + '\')">수정</button> ' +
+            '<button type="button" class="btn small danger" onclick="delBot(\'' + esc(b) + '\')">삭제</button></span>') + '</li>';
+      }).join("");
+      document.getElementById("ntRooms").innerHTML = NT.rooms.map(function(r, i) {
+        var used = Object.keys(NT.items).filter(function(k) { return NT.items[k].kakao_room === r; }).length;
+        return '<li><span class="grow"><b>' + esc(r) + '</b><div class="m">쓰는 알림 ' + used + '개</div></span>' +
+          '<span data-write><button type="button" class="btn small danger" onclick="delRoom(' + i + ')">삭제</button></span></li>';
+      }).join("") || '<li class="m">등록된 방이 없어요.</li>';
+    }
+    function editBot(b) {
+      document.getElementById("botId").value = b;
+      document.getElementById("botName").value = NT.bots[b].name;
+      document.getElementById("botToken").value = "";
+      document.getElementById("botToken").focus();
+    }
+    function saveBot() {
+      var body = { id: document.getElementById("botId").value.trim(), name: document.getElementById("botName").value.trim(),
+                   token: document.getElementById("botToken").value.trim() };
+      post("/api/notify/bot", body).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); return; }
+        ["botId", "botName", "botToken"].forEach(function(i) { document.getElementById(i).value = ""; });
+        showToast("봇을 저장했어요", "success"); load();
+      });
+    }
+    function delBot(b) {
+      if (!confirm("'" + NT.bots[b].name + "' 봇을 지울까요?")) return;
+      post("/api/notify/bot/" + encodeURIComponent(b) + "/delete").then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "지우지 못했어요", "error"); return; }
+        load();
+      });
+    }
+    function saveRooms(rooms) {
+      post("/api/notify/rooms", { rooms: rooms }).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); return; }
+        load();
+      });
+    }
+    function addRoom() {
+      var r = document.getElementById("roomName").value.trim();
+      if (!r) return;
+      document.getElementById("roomName").value = "";
+      saveRooms(NT.rooms.concat([r]));
+    }
+    function delRoom(i) {
+      if (!confirm("'" + NT.rooms[i] + "' 방을 목록에서 지울까요?")) return;
+      saveRooms(NT.rooms.filter(function(_, j) { return j !== i; }));
+    }
+    function loadLog() {
+      var p = new URLSearchParams({ key: document.getElementById("lgKey").value, status: document.getElementById("lgStatus").value,
+        from: document.getElementById("lgFrom").value, to: document.getElementById("lgTo").value, q: document.getElementById("lgQ").value.trim(), limit: "300" });
+      fetch("/api/notify/log?" + p.toString(), { cache: "no-store" }).then(mrJson).then(function(res) {
+        var rows = (res.data && res.data.rows) || [], body = document.getElementById("lgBody");
+        var ST = { ok: ["보냄", "ok"], fail: ["실패", "fail"], off: ["꺼짐", "off"] };
+        body.innerHTML = rows.map(function(x) {
+          var st = ST[x.status] || [x.status, ""];
+          return '<tr><td class="t">' + esc(x.ts.slice(5, 16)) + '</td><td>' + esc(x.name) + '</td><td>' + (CH_LABEL[x.channel] || esc(x.channel || "")) +
+            '</td><td>' + esc(x.target || "") + '</td><td><span class="nt-st ' + st[1] + '" title="' + esc(x.error || "") + '">' + st[0] + '</span>' +
+            (x.error ? '<div class="nt-last' + (x.status === "fail" ? " fail" : "") + '">' + esc(x.error) + '</div>' : "") +
+            '</td><td class="body"><div onclick="this.classList.toggle(\'open\')">' + esc(x.text || "") + (x.photo ? "\n📷 " + esc(x.photo) : "") + '</div></td></tr>';
+        }).join("") || '<tr><td colspan="6" class="hint">기록이 없어요.</td></tr>';
+        document.getElementById("lgFoot").textContent = rows.length + "건" + (rows.length >= 300 ? " (최근 300건까지)" : "") + " · 기록은 180일 보관";
+      });
+    }
+    load();
+  </script>
+{% endblock %}

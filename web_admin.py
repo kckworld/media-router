@@ -2048,30 +2048,15 @@ def _notify_request_done(it: dict) -> bool:
     caption = media_requests.done_caption(it, detail, library)
     poster = (detail or {}).get("poster") or it.get("poster")
     poster = poster.replace("/w185/", "/w500/") if poster else ""
-    sent = False
-    if poster:
-        tg = _tg_cfg()
-        if tg.get("enabled") and tg.get("chat_id"):
-            res = _tg_call("sendPhoto", {"chat_id": tg["chat_id"], "photo": poster, "caption": caption[:1000]})
-            sent = bool((res or {}).get("ok"))
-    if not sent:
-        sent = _tg_notify(caption)
-    _kakao_announce(poster, caption)
-    return sent
-
-
-def _kakao_announce(poster: str, caption: str) -> None:
-    """설정에서 켜 두었으면 같은 안내를 카톡 방에도 (텔레그램은 그대로). 못 보내면 텔레그램으로 알린다."""
-    st = _request_settings()
-    room = str(st.get("kakao_room") or "").strip()
-    if not (st.get("kakao_on") and room):
-        return
-    res = _kakao_send(room, poster, caption)
-    if not res.get("ok"):
-        app.logger.warning("요청 완료 카톡 실패: %s", res.get("message"))
-        _tg_notify(f"⚠ 카톡 '{room}' 방에 요청 완료 안내를 못 보냈어요 (텔레그램 안내만 갔어요)\n{res.get('message', '')}")
-    elif "포스터는 못 보냄" in str(res.get("message")):
-        _tg_notify(f"⚠ 카톡 '{room}' 방에 글은 보냈는데 {res['message'].split('(', 1)[-1].rstrip(')')}")
+    # 11-10: 받는 곳(텔레그램·카톡 방)·켜기는 설정 > 알림(허브 'mr.request_done')에서
+    res = hub_notify("mr.request_done", caption, photo=poster)
+    for r in res.get("results", []):          # 카톡만 실패하면 소유자에게 텔레그램으로 알린다(예전과 같게)
+        if r["channel"] == "kakao" and not r["ok"]:
+            _tg_notify(f"⚠ 카톡 '{r['target']}' 방에 요청 완료 안내를 못 보냈어요\n{r['error']}")
+        elif r["channel"] == "kakao" and "포스터는 못 보냄" in r.get("error", ""):
+            _tg_notify(f"⚠ 카톡 '{r['target']}' 방에 글은 보냈는데 {r['error'].split('(', 1)[-1].rstrip(')')}")
+    # 꺼 두었으면(skipped) 안내한 것으로 친다 — 다시 보내려고 매번 시도하지 않게
+    return bool(res.get("ok"))
 
 
 # 카톡에 인증·로그인·업데이트 같은 창이 떠 있으면(kakao_send.py가 손대지 않고 멈춤) 하루 한 번 텔레그램 + 캡처(11-04)
@@ -2186,6 +2171,217 @@ def _kakao_send(room: str, poster: str, text: str) -> dict:
         return res if isinstance(res, dict) else {"ok": False, "message": "응답 형식이 이상해요"}
     except (ValueError, IndexError):
         return {"ok": False, "message": f"응답을 못 읽었어요 (종료코드 {r.returncode}): {(r.stderr or r.stdout).strip()[:150]}"}
+
+
+# ── 알림 허브 (2026-11-10 사용자): MR 요청 완료 안내·HA·n8n 알림을 한 곳에서 켜기/끄기·채널·봇·카톡 방·보낸 기록.
+#    텔레그램으로 명령을 받는 기능(MR 봇 메뉴·버튼, n8n 매시 정각·날씨봇 명령 응답)은 대상이 아니다. 자세한 건 notify_hub.py.
+import notify_hub
+NOTIFY_HUB_PATH = DATA_DIR / "notify_hub.json"
+NOTIFY_LOG_PATH = DATA_DIR / "notify_log.sqlite3"
+NOTIFY_PHOTO_MAX = 10 * 1024 * 1024
+
+
+def _hub() -> dict:
+    first = not NOTIFY_HUB_PATH.exists()
+    d = notify_hub.load(NOTIFY_HUB_PATH)
+    if first:   # 처음엔 요청 화면의 예전 카톡 설정(켬·방)을 옮겨 온다
+        st = _request_settings()
+        it = d["items"]["mr.request_done"]
+        room = str(st.get("kakao_room") or "").strip()
+        if room and room not in d["rooms"]:
+            d["rooms"].append(room)
+        it.update(channel="both" if st.get("kakao_on") and room else "telegram", kakao_room=room or it["kakao_room"])
+        notify_hub.save(NOTIFY_HUB_PATH, d)
+    return d
+
+
+def _hub_bot_token(bid: str) -> str:
+    if bid == "mr":
+        return str(_tg_cfg().get("bot_token") or "")
+    return str((_hub()["bots"].get(bid) or {}).get("token") or "")
+
+
+def _hub_default_chat(bid: str) -> str:
+    return str(_tg_cfg().get("chat_id") or "") if bid == "mr" else ""
+
+
+def _hub_photo_bytes(url: str) -> bytes | None:
+    """사설망 주소(HA /local 등)는 텔레그램 서버가 못 가져가므로 MR이 받아서 올린다"""
+    try:
+        r = requests.get(url, timeout=15, stream=True)
+        r.raise_for_status()
+        data = r.raw.read(NOTIFY_PHOTO_MAX + 1, decode_content=True)
+        return data if 0 < len(data) <= NOTIFY_PHOTO_MAX else None
+    except Exception:
+        return None
+
+
+def _hub_tg_send(token: str, chat_id: str, text: str, photo: str, parse_mode: str) -> tuple[bool, str]:
+    extra = {"parse_mode": parse_mode} if parse_mode in ("HTML", "Markdown", "MarkdownV2") else {}
+    if photo:
+        cap, rest = (text, "") if len(text) <= 1000 else ("", text)
+        host = re.sub(r"^https?://([^/:]+).*", r"\1", photo)
+        if _PRIVATE_IP.match(host) or host == "localhost":
+            data = _hub_photo_bytes(photo)
+            if data is None:
+                return False, "사진을 못 가져왔어요"
+            try:
+                res = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto",
+                                    data=dict({"chat_id": chat_id, "caption": cap}, **extra),
+                                    files={"photo": ("photo.jpg", data)}, timeout=30).json()
+            except Exception as e:
+                return False, f"텔레그램 연결 실패({type(e).__name__})"
+        else:
+            res = _tg_call("sendPhoto", dict({"chat_id": chat_id, "photo": photo, "caption": cap}, **extra), token) or {}
+        if not res.get("ok"):
+            return False, str(res.get("description") or "사진 보내기 실패")[:200]
+        if not rest:
+            return True, ""
+        text = rest
+    ok_all, err = True, ""
+    for i in range(0, len(text), 4000):                      # 텔레그램 한 번에 4096자
+        res = _tg_call("sendMessage", dict({"chat_id": chat_id, "text": text[i:i + 4000]}, **extra), token) or {}
+        if not res.get("ok"):
+            ok_all, err = False, str(res.get("description") or "보내기 실패")[:200]
+            break
+    return ok_all, err
+
+
+def _hub_kakao_send(room: str, poster: str, text: str) -> tuple[bool, str]:
+    res = _kakao_send(room, poster, text)
+    return bool(res.get("ok")), str(res.get("message") or "")
+
+
+def hub_notify(key: str, text: str, photo: str = "", parse_mode: str = "", chat_ids: list | None = None) -> dict:
+    return notify_hub.dispatch(_hub(), key, text, photo=photo, parse_mode=parse_mode, chat_ids=chat_ids,
+                               bot_token_of=_hub_bot_token, default_chat_of=_hub_default_chat,
+                               tg_send=_hub_tg_send, kakao_send=_hub_kakao_send, log_path=NOTIFY_LOG_PATH)
+
+
+@app.route("/api/internal/notify", methods=["POST"])
+def api_internal_notify():
+    """HA·n8n이 부르는 곳(NAS 안에서 IP 주소로, X-Internal-Key). {key, text, photo?, parse_mode?, chat_ids?, wait?}
+    wait=false면 바로 202(HA rest_command 10초 제한), 보내기는 뒤에서."""
+    if not _is_internal_request(request):
+        return make_response("Not Found", 404)
+    if not hmac.compare_digest(request.headers.get("X-Internal-Key", "").encode(), _internal_key().encode()):
+        return jsonify({"ok": False, "message": "키가 맞지 않아요"}), 403
+    b = request.get_json(silent=True) or {}
+    key, text = str(b.get("key") or "").strip(), str(b.get("text") or "")[:notify_hub.TEXT_MAX]
+    photo, pm = str(b.get("photo") or "").strip()[:500], str(b.get("parse_mode") or "")
+    chats = b.get("chat_ids") if isinstance(b.get("chat_ids"), list) else ([b["chat_id"]] if b.get("chat_id") else None)
+    if photo and not re.match(r"^https?://", photo):
+        return jsonify({"ok": False, "message": "사진은 http(s) 주소로 주세요"}), 400
+    if key not in _hub()["items"]:
+        return jsonify({"ok": False, "message": "등록 안 된 알림이에요: " + key[:60]}), 404
+    if b.get("wait") is False or str(b.get("wait")).lower() == "false":
+        threading.Thread(target=lambda: hub_notify(key, text, photo, pm, chats), daemon=True).start()
+        return jsonify({"ok": True, "queued": True}), 202
+    res = hub_notify(key, text, photo, pm, chats)
+    return jsonify(res), (200 if res.get("ok") else 502)
+
+
+@app.route("/notify", methods=["GET"])
+def notify_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("notify.html", authed=True)
+
+
+@app.route("/api/notify/config", methods=["GET"])
+def api_notify_config():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    v = notify_hub.public_view(_hub())
+    tg = _tg_cfg()
+    v["bots"] = dict({"mr": {"name": "MR 봇 (연동·경로 설정)", "username": "", "builtin": True,
+                             "token_tail": ("…" + str(tg.get("bot_token") or "")[-4:]) if tg.get("bot_token") else ""}},
+                     **v["bots"])
+    return jsonify(dict(v, ok=True))
+
+
+def _notify_save(fn):
+    d = _hub()
+    err = fn(d)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    notify_hub.save(NOTIFY_HUB_PATH, d)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/notify/item/<key>", methods=["POST"])
+def api_notify_item(key):
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    body = request.get_json(silent=True) or {}
+    return _notify_save(lambda d: notify_hub.update_item(d, key, body))
+
+
+@app.route("/api/notify/bot", methods=["POST"])
+def api_notify_bot():
+    """봇 추가·수정. 토큰을 새로 넣으면 getMe로 확인하고 @이름을 붙인다(토큰은 응답에 안 넣음)"""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    b = request.get_json(silent=True) or {}
+    bid, name, token = str(b.get("id") or "").strip(), str(b.get("name") or ""), str(b.get("token") or "").strip()
+    username = ""
+    if token:
+        me = _tg_call("getMe", {}, token) or {}
+        if not me.get("ok"):
+            return jsonify({"ok": False, "error": "텔레그램이 이 토큰을 받지 않아요."}), 400
+        username = "@" + str((me.get("result") or {}).get("username") or "")
+    return _notify_save(lambda d: notify_hub.set_bot(d, bid, name, token, username))
+
+
+@app.route("/api/notify/bot/<bid>/delete", methods=["POST"])
+def api_notify_bot_delete(bid):
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    return _notify_save(lambda d: notify_hub.delete_bot(d, bid))
+
+
+@app.route("/api/notify/rooms", methods=["POST"])
+def api_notify_rooms():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    rooms = (request.get_json(silent=True) or {}).get("rooms")
+    if not isinstance(rooms, list):
+        return jsonify({"ok": False, "error": "방 목록이 이상해요."}), 400
+    return _notify_save(lambda d: notify_hub.set_rooms(d, rooms))
+
+
+@app.route("/api/notify/test/<key>", methods=["POST"])
+def api_notify_test(key):
+    """지금 설정 그대로 시험 한 줄(꺼져 있으면 '꺼짐' 기록만). 받는 사람이 여럿인 알림은 소유자에게만"""
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    d = _hub()
+    it = d["items"].get(key)
+    if not it:
+        return jsonify({"ok": False, "error": "모르는 알림이에요."}), 404
+    text = f"[알림 허브 시험] {it.get('name')} ({datetime.now(APP_TZ).strftime('%m-%d %H:%M')})"
+    chats = [str(_tg_cfg().get("chat_id") or "")] if it.get("caller_targets") else None
+    res = hub_notify(key, text, chat_ids=chats)
+    return jsonify(res), (200 if res.get("ok") else 502)
+
+
+@app.route("/api/notify/log", methods=["GET"])
+def api_notify_log():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    a = request.args
+    rows = notify_hub.query_log(NOTIFY_LOG_PATH, key=a.get("key", ""), status=a.get("status", ""), q=a.get("q", "")[:50],
+                                date_from=a.get("from", ""), date_to=a.get("to", ""),
+                                limit=int(a.get("limit")) if str(a.get("limit") or "").isdigit() else 200)
+    return jsonify({"ok": True, "rows": rows})
 
 
 # ── 단톡방 설문 (2026-11-02): 공개 /survey + 관리자 /surveys. 보안은 요청 페이지와 같게(단톡방 코드·허니팟·IP 제한) ──
@@ -2714,28 +2910,6 @@ def api_media_request_code():
         return jsonify({"ok": False, "error": f"코드는 {REQUEST_CODE_MIN}자 이상으로 해 주세요(비우면 요청을 닫아요)."}), 400
     _save_request_settings(code=code)
     return jsonify({"ok": True, "code": code})
-
-
-@app.route("/api/requests/kakao", methods=["POST"])
-def api_media_request_kakao():
-    """완료 안내를 카톡 방에도 보낼지(켬/끔)와 받는 방 이름. test=true면 지금 설정으로 시험 글 한 줄을 보낸다."""
-    auth = authed(request)
-    if auth is not True:
-        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
-    body = request.get_json(silent=True) or {}
-    room = str(body.get("room") or "").strip()
-    if len(room) > 50:
-        return jsonify({"ok": False, "error": "방 이름은 50자까지예요."}), 400
-    if body.get("test"):
-        if not room:
-            return jsonify({"ok": False, "error": "방 이름을 넣어 주세요."}), 400
-        res = _kakao_send(room, "", f"[Media Router 시험] 요청 완료 안내 카톡 연결 확인 ({time.strftime('%m-%d %H:%M')})")
-        return jsonify({"ok": bool(res.get("ok")), "error": "" if res.get("ok") else res.get("message", "")})
-    on = bool(body.get("on"))
-    if on and not room:
-        return jsonify({"ok": False, "error": "켜려면 방 이름을 넣어 주세요."}), 400
-    _save_request_settings(kakao_on=on, kakao_room=room)
-    return jsonify({"ok": True, "on": on, "room": room})
 
 
 # ── 예능 일괄 재인코딩 v2 (2026-10-27, /volume1/docker/reencode/reencode.py — 미디어 정리 세션) ──

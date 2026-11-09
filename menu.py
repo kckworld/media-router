@@ -48,6 +48,8 @@ GROUPS = [
     {"key": "settings", "label": "설정", "pages": [
         {"key": "settings", "label": "연동·경로", "href": "/settings", "prefixes": ["/settings"], "owner_only": True},
         {"key": "users", "label": "사용자 매핑", "href": "/users", "prefixes": ["/users", "/api/users"], "owner_only": True},
+        # 알림 허브(11-10): MR 요청 완료 안내·HA·n8n 알림 켜기/끄기·채널·봇·카톡 방·보낸 기록
+        {"key": "notify", "label": "알림", "href": "/notify", "prefixes": ["/notify", "/api/notify"], "owner_only": True},
         # 공개 사이트(request.kckworld.com, 11-07): 사용법 문서 편집·그림 올리기, 공개 화면 미리 보기
         {"key": "guides", "label": "공개 사이트", "href": "/guides", "prefixes": ["/guides", "/api/guides"], "owner_only": True},
         {"key": "skills", "label": "Claude", "href": "/skills", "prefixes": ["/skills", "/api/skills"], "owner_only": True},
