@@ -34,6 +34,8 @@ def re_env(monkeypatch, tmp_path):
     monkeypatch.setattr(web_admin, "REENCODE_SCHED_PATH", tmp_path / "sched.json")
     monkeypatch.setattr(web_admin, "REENCODE_ACK_PATH", tmp_path / "ack.json")
     monkeypatch.setattr(web_admin, "_reencode_started_at", 0.0)      # 테스트끼리 '방금 시작' 상태가 새지 않게
+    monkeypatch.setattr(web_admin, "_reencode_start_job",
+                        {"running": False, "step": "", "since": 0.0, "ok": None, "msg": "", "done_at": 0.0})
     monkeypatch.setattr(web_admin, "authed", lambda req: True)
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
     sent, host, tasks = [], [], []
@@ -47,6 +49,7 @@ def re_env(monkeypatch, tmp_path):
         return True
     monkeypatch.setattr(web_admin, "_reencode_host", fake_host)
     monkeypatch.setattr(web_admin, "_wake_pc", lambda progress=None, then="": (True, ""))
+    monkeypatch.setattr(web_admin, "_is_pc_online", lambda host: True)   # 진짜 PC에 ping하지 않게(테스트가 바꿀 수 있음)
     monkeypatch.setattr(web_admin, "_trigger_remote_task", lambda task, msg: tasks.append(task) or (True, msg))
     web_admin.app.config["TESTING"] = True
     return {"work": work, "sent": sent, "host": host, "tasks": tasks, "client": web_admin.app.test_client()}
@@ -141,12 +144,48 @@ def test_batch_active_with_history(re_env):
     assert st["total_saved"] == 7 * 2 ** 30
 
 
+def wait_start_job():
+    for _ in range(100):
+        if not web_admin._reencode_start_job["running"]:
+            return web_admin._reencode_start_job
+        time.sleep(0.05)
+    raise AssertionError("시작 작업이 안 끝남")
+
+
 def test_start_order_resume_then_pc_then_worker(re_env):
     r = re_env["client"].post("/api/reencode/start").get_json()
     assert r["ok"]
+    assert wait_start_job()["ok"]               # 11-09: PC 켜기·워커는 뒤에서(버튼이 부팅 내내 돌지 않게)
     # 워커는 run=false면 바로 PC를 끄므로: 호스트 resume → todo 채우기 → PC 켜기 → 작업 스케줄러
     assert re_env["host"][:2] == [("resume", "web"), ("run", "")] and re_env["tasks"] == ["ReencodeWorker"]
     assert reencode_ctl.running()
+
+
+def test_start_returns_fast_and_shows_steps(re_env, monkeypatch):
+    """PC 켜기가 오래 걸려도 요청은 바로 끝나고, /api/reencode의 start_job에 단계가 보이며, 두 번 누르면 409"""
+    gate = __import__("threading").Event()
+
+    def slow_wake(progress=None, then=""):
+        gate.wait(5)
+        return True, "PC를 켰어요."
+    monkeypatch.setattr(web_admin, "_wake_pc", slow_wake)
+    monkeypatch.setattr(web_admin, "_is_pc_online", lambda host: False)
+    t = time.time()
+    assert re_env["client"].post("/api/reencode/start").get_json()["ok"] and time.time() - t < 2
+    d = re_env["client"].get("/api/reencode").get_json()
+    assert d["start_job"]["running"] and d["start_job"]["step"] == "PC 켜는 중" and d["worker_active"]
+    assert re_env["client"].post("/api/reencode/start").status_code == 409
+    gate.set()
+    j = wait_start_job()
+    assert j["ok"] and re_env["tasks"] == ["ReencodeWorker"]
+
+
+def test_start_failure_reported_in_job(re_env, monkeypatch):
+    monkeypatch.setattr(web_admin, "_wake_pc", lambda progress=None, then="": (False, "2분 기다렸는데 PC가 안 켜져요."))
+    assert re_env["client"].post("/api/reencode/start").get_json()["ok"]
+    j = wait_start_job()
+    assert j["ok"] is False and "안 켜져요" in j["msg"] and not re_env["tasks"]
+    assert not re_env["client"].get("/api/reencode").get_json()["worker_active"]   # 다시 [▶ 시작] 보임
 
 
 def test_start_fails_if_resume_not_recorded(re_env, monkeypatch):

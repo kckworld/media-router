@@ -229,7 +229,7 @@ _reencode_started_at = 0.0     # 마지막 [▶ 시작] 성공 시각 — PC가 
 def _reencode_worker_active() -> bool:
     """PC 재인코딩 워커가 돌고 있는지(대기 포함, 하트비트 10분 안) 또는 방금(15분 안) 시작시켰는지.
     아니면 [▶ 시작]을 보여 준다(11-09: run 표시만 켜진 채 PC가 꺼져 있으면 '종료'만 보여 PC를 켤 수 없었다)."""
-    if _is_encoding_in_progress(("copying", "encoding", "uploading", "waiting")):
+    if _is_encoding_in_progress(("copying", "encoding", "uploading", "waiting")) or _reencode_start_job["running"]:
         return True
     w = reencode_ctl.worker()
     if w.get("state") == "shutting_down":
@@ -2852,20 +2852,24 @@ def _reencode_host(cmd: str, by: str = "", wait: bool = True) -> bool:
         return False
 
 
-def reencode_start(by: str, progress=None, resume: bool = True) -> tuple[bool, str]:
+def reencode_start(by: str, progress=None, resume: bool = True, step=None) -> tuple[bool, str]:
     """[▶ 시작]: control.json run=true → todo 채우기 → PC 켜기 → ReencodeWorker 실행.
     워커는 시작할 때 run이 false면 바로 PC를 끄므로, 켜기가 끝난 다음에 워커를 띄운다.
     resume=False(새 예능만, re_newstart): 멈춤(STOP)은 그대로 두고 워커를 띄운다 — 워커는 STOP이어도
     새 예능(N*) 작업은 처리하고 끝나면 PC를 끈다."""
+    step = step or (lambda s: None)              # 웹 [▶ 시작]의 단계 표시(11-09)
     if not _reencode_lock.acquire(blocking=False):
         return False, "이미 시작하는 중이에요."
     try:
         if resume and not _reencode_host("resume", by):
             return False, "호스트에 시작(control.json)을 기록하지 못했어요."
+        step("할 일 준비 중")
         _reencode_host("run")                    # todo를 미리 채움 (워커가 바로 집게)
+        step("PC 켜는 중" if not _is_pc_online(GAMING_PC_HOST) else "PC 켜져 있음 · 확인 중")
         ok, msg = _wake_pc(progress, "부팅되면 재인코딩을 시작할게요")
         if not ok:
             return False, msg
+        step("워커 띄우는 중")
         ok, msg = _trigger_remote_task(REENCODE_TASK, "KCK-GAMING에서 재인코딩 워커를 시작했어요. 끝나면 5분 뒤 PC가 꺼져요.")
         if ok:
             global _reencode_started_at
@@ -3105,6 +3109,8 @@ def api_reencode():
     st.update(ok=True, log=reencode_ctl.log_tail(reencode_ctl.LOG),
               worker_log=reencode_ctl.log_tail(reencode_ctl.WORK / "worker.log"),
               off_after=_reencode_sched_load().get("off_after"), worker_active=_reencode_worker_active(),
+              start_job=dict(_reencode_start_job, elapsed=int(time.time() - _reencode_start_job["since"])
+                             if _reencode_start_job["since"] else 0),
               **reencode_settings())
     return jsonify(st)
 
@@ -3114,8 +3120,35 @@ def api_reencode_start():
     auth = authed(request)
     if auth is not True:
         return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
-    ok, msg = reencode_start("web")
-    return jsonify({"ok": ok, "message": msg, "error": None if ok else msg}), (200 if ok else 500)
+    # 11-09: PC 부팅(1~3분)까지 기다리면 버튼이 계속 돌아서, 시작 기록만 바로 하고 나머지(PC 켜기·워커)는 뒤에서.
+    # 화면은 /api/reencode의 start_job(단계·경과)으로 진행을 보여 준다.
+    job = _reencode_start_job
+    with _reencode_start_job_lock:
+        if job["running"]:
+            return jsonify({"ok": False, "error": "이미 시작하는 중이에요."}), 409
+        if not _reencode_host("resume", "web"):
+            msg = "호스트에 시작(control.json)을 기록하지 못했어요."
+            return jsonify({"ok": False, "message": msg, "error": msg}), 500
+        job.update(running=True, step="시작 준비", since=time.time(), ok=None, msg="", done_at=0.0)
+    threading.Thread(target=_reencode_start_bg, args=("web",), daemon=True).start()
+    return jsonify({"ok": True, "message": "시작했어요. PC가 켜지고 워커가 뜰 때까지(1~3분) 진행 상황을 보여 드릴게요."})
+
+
+_reencode_start_job = {"running": False, "step": "", "since": 0.0, "ok": None, "msg": "", "done_at": 0.0}
+_reencode_start_job_lock = threading.Lock()
+
+
+def _reencode_start_bg(by: str) -> None:
+    job = _reencode_start_job
+
+    def step(s):
+        job["step"] = s
+    try:
+        ok, msg = reencode_start(by, resume=False, step=step)   # resume은 요청 때 이미 함
+    except Exception as e:                                       # 화면이 '시작하는 중'에 갇히지 않게
+        app.logger.exception("재인코딩 시작(뒤) 오류")
+        ok, msg = False, f"시작 중 오류: {type(e).__name__}"
+    job.update(running=False, ok=ok, msg=msg, done_at=time.time())
 
 
 @app.route("/api/reencode/stop", methods=["POST"])

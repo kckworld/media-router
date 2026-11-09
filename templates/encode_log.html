@@ -215,10 +215,17 @@
         document.getElementById("reCard").hidden = false;
         document.getElementById("reSummary").textContent = d.summary;
         // 11-09: '실행 중'은 PC 워커가 실제로 돌 때만. run 표시만 켜져 있고 PC가 꺼져 있으면 시작 버튼을 보여 준다
-        var active = !!d.worker_active;
+        var active = !!d.worker_active, sj = d.start_job || {};
         var rb = document.getElementById("reRunBadge");
         rb.className = "status-badge " + (active ? "running" : "idle");
-        rb.innerHTML = '<span class="dot"></span>' + (active ? "실행 중" : d.running ? "쉬는 중 · PC 꺼짐" : "멈춤");
+        rb.innerHTML = '<span class="dot"></span>' + (sj.running ? "시작하는 중 · " + reEsc(sj.step || "") + " (" + reElapsed(sj.elapsed) + ")"
+          : active ? "실행 중" : d.running ? "쉬는 중 · PC 꺼짐" : "멈춤");
+        reStartPoll(!!sj.running);
+        // 뒤에서 하던 시작이 끝났으면 결과를 한 번 알림(11-09: 버튼이 PC 부팅 내내 돌지 않게 바로 응답하도록 바꿈)
+        if (!sj.running && sj.done_at && sj.done_at !== reLastStartDone) {
+          if (reLastStartDone !== null) showToast((sj.ok ? "✅ " : "❌ ") + (sj.msg || (sj.ok ? "시작했어요" : "시작하지 못했어요")), sj.ok ? "success" : "error");
+          reLastStartDone = sj.done_at;
+        } else if (reLastStartDone === null) reLastStartDone = sj.done_at || 0;
         rb.title = active ? "PC 워커가 인코딩하고 있어요" : "PC 워커가 안 돌고 있어요. [▶ 재인코딩 시작]을 누르면 PC를 켜서 하고, 끝나면 PC를 꺼요";
         var w = d.worker || {}, ws = RE_WORKER[w.state] || [w.state || "기록 없음", "unknown"];
         var wb = document.getElementById("reWorkerBadge");
@@ -235,7 +242,7 @@
         }
         renderEta(e);
         document.getElementById("reStartBtn").hidden = active;
-        document.getElementById("reStopBtn").hidden = !active;
+        document.getElementById("reStopBtn").hidden = !active || !!sj.running;   // PC 켜는 동안엔 버튼 없이 단계만
         document.getElementById("reTrashBtn").hidden = !d.trash_warn;
         document.getElementById("reHint").textContent =
           "▶ 시작하면 PC를 켜고 하나씩 인코딩해요. 종료하면 지금 파일이 NAS에서 교체까지 확인된 뒤 PC를 꺼요(큐가 비어도 끝나면 5분 뒤 꺼짐). " +
@@ -300,6 +307,12 @@
         document.getElementById("reAcked").innerHTML = acked.map(failLine).join("<br>");
         renderReList();
       }).catch(function() {});
+    }
+    var reLastStartDone = null, reStartTimer = null;
+    function reElapsed(s) { s = Number(s) || 0; return s < 60 ? s + "초" : Math.floor(s / 60) + "분 " + (s % 60) + "초"; }
+    function reStartPoll(on) {          // 시작하는 동안만 5초마다 갱신
+      if (on && !reStartTimer) reStartTimer = setInterval(loadReencode, 5000);
+      if (!on && reStartTimer) { clearInterval(reStartTimer); reStartTimer = null; }
     }
     function reencodeCmd(cmd) {
       // 종료는 하나로(10-28): 인코딩 중이면 그 파일이 NAS에서 교체까지 확인된 뒤 PC를 끈다
