@@ -223,6 +223,25 @@ def _is_encoding_in_progress(states=("copying", "encoding", "uploading")) -> boo
     return datetime.now(APP_TZ) - updated < timedelta(minutes=10)
 
 
+_reencode_started_at = 0.0     # 마지막 [▶ 시작] 성공 시각 — PC가 부팅하는 동안(워커 하트비트 전)에도 '시작함'으로
+
+
+def _reencode_worker_active() -> bool:
+    """PC 재인코딩 워커가 돌고 있는지(대기 포함, 하트비트 10분 안) 또는 방금(15분 안) 시작시켰는지.
+    아니면 [▶ 시작]을 보여 준다(11-09: run 표시만 켜진 채 PC가 꺼져 있으면 '종료'만 보여 PC를 켤 수 없었다)."""
+    if _is_encoding_in_progress(("copying", "encoding", "uploading", "waiting")):
+        return True
+    w = reencode_ctl.worker()
+    if w.get("state") == "shutting_down":
+        try:   # 시작 뒤에 워커가 이미 끝냈으면(할 게 없었음) 더는 '시작함'이 아니다
+            if datetime.strptime(str(w.get("updated"))[:19], "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=APP_TZ).timestamp() > _reencode_started_at:
+                return False
+        except ValueError:
+            pass
+    return time.time() - _reencode_started_at < 15 * 60
+
+
 def _tg_cfg() -> dict:
     from db import load_cfg as _load_cfg
     return _load_cfg().get("telegram") or {}
@@ -2793,7 +2812,9 @@ _reencode_lock = threading.Lock()   # 시작 버튼 연타 방지
 
 def _reencode_buttons() -> dict:
     now = int(time.time())
-    toggle = ("⏹ 종료(지금 파일까지)", "re_stop") if reencode_ctl.running() else ("▶ 시작", "re_resume")
+    # 11-09: run 표시가 켜져 있어도 PC 워커가 안 돌면(PC 꺼짐) 시작 버튼 — 예전엔 '종료'만 보여서 PC를 켤 수 없었다
+    toggle = (("⏹ 종료(지금 파일까지)", "re_stop") if reencode_ctl.running() and _reencode_worker_active()
+              else ("▶ 시작", "re_resume"))
     rows = [[{"text": t, "callback_data": f"{a}:{now}"} for t, a in (toggle, ("📊 상태", "re_status"))]]
     if reencode_ctl.state().get("trash_warn"):   # v1이 남긴 Drive 휴지통 - 비운 뒤 기록용
         rows.append([{"text": "🧹 휴지통 비웠음", "callback_data": f"re_trash:{now}"}])
@@ -2845,7 +2866,11 @@ def reencode_start(by: str, progress=None, resume: bool = True) -> tuple[bool, s
         ok, msg = _wake_pc(progress, "부팅되면 재인코딩을 시작할게요")
         if not ok:
             return False, msg
-        return _trigger_remote_task(REENCODE_TASK, "KCK-GAMING에서 재인코딩 워커를 시작했어요. 끝나면 5분 뒤 PC가 꺼져요.")
+        ok, msg = _trigger_remote_task(REENCODE_TASK, "KCK-GAMING에서 재인코딩 워커를 시작했어요. 끝나면 5분 뒤 PC가 꺼져요.")
+        if ok:
+            global _reencode_started_at
+            _reencode_started_at = time.time()
+        return ok, msg
     finally:
         _reencode_lock.release()
 
@@ -3079,7 +3104,8 @@ def api_reencode():
         st["action"] = [a for a in st["action"] if a.get("id") not in acked]
     st.update(ok=True, log=reencode_ctl.log_tail(reencode_ctl.LOG),
               worker_log=reencode_ctl.log_tail(reencode_ctl.WORK / "worker.log"),
-              off_after=_reencode_sched_load().get("off_after"), **reencode_settings())
+              off_after=_reencode_sched_load().get("off_after"), worker_active=_reencode_worker_active(),
+              **reencode_settings())
     return jsonify(st)
 
 

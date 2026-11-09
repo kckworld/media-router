@@ -2,7 +2,7 @@
 """예능 일괄 재인코딩 v2 연결: 상태, 시작(호스트 resume → PC 켜기 → ReencodeWorker), 종료, 새벽·아침, PC 종료 예고"""
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -33,6 +33,7 @@ def re_env(monkeypatch, tmp_path):
     monkeypatch.setattr(reencode_ctl, "HISTORY", base / "history.json")
     monkeypatch.setattr(web_admin, "REENCODE_SCHED_PATH", tmp_path / "sched.json")
     monkeypatch.setattr(web_admin, "REENCODE_ACK_PATH", tmp_path / "ack.json")
+    monkeypatch.setattr(web_admin, "_reencode_started_at", 0.0)      # 테스트끼리 '방금 시작' 상태가 새지 않게
     monkeypatch.setattr(web_admin, "authed", lambda req: True)
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
     sent, host, tasks = [], [], []
@@ -95,6 +96,32 @@ def test_skipped_not_counted_as_done(re_env):
     st = reencode_ctl.state()
     assert st["batch_active"] and st["skipped"] == 1
     assert st["summary"].startswith("완료 0/2 · 진행 1 · 대기 0 · 실패 0 · 건너뜀 1")
+
+
+def test_start_button_when_flag_on_but_pc_off(re_env):
+    """11-09: run 표시가 켜져 있어도 PC 워커가 안 돌면(하트비트 끊김·shutting_down) 시작 버튼 — 예전엔 '종료'만 보였다"""
+    (re_env["work"] / "control.json").write_text(json.dumps({"run": True}), encoding="utf-8")
+    write_status(re_env, state="shutting_down", updated="2026-11-09 08:47:52")
+    assert reencode_ctl.running()
+    d = re_env["client"].get("/api/reencode").get_json()
+    assert d["running"] and not d["worker_active"]
+    assert web_admin._reencode_buttons()["inline_keyboard"][0][0]["callback_data"].startswith("re_resume:")
+    write_status(re_env, state="encoding", current="0004",
+                 updated=datetime.now(web_admin.APP_TZ).strftime("%Y-%m-%d %H:%M:%S"))
+    assert re_env["client"].get("/api/reencode").get_json()["worker_active"]
+    assert web_admin._reencode_buttons()["inline_keyboard"][0][0]["callback_data"].startswith("re_stop:")
+
+
+def test_just_started_counts_as_active(re_env, monkeypatch):
+    """[▶ 시작] 직후 PC 부팅 중(하트비트 전)엔 다시 '시작'을 보여 주지 않는다 — 워커가 끝내고 shutting_down이면 다시 시작 버튼"""
+    monkeypatch.setattr(web_admin, "_reencode_started_at", 0.0)
+    write_status(re_env, state="shutting_down", updated="2026-11-09 08:47:52")
+    assert not web_admin._reencode_worker_active()
+    ok, _ = web_admin.reencode_start("web")
+    assert ok and web_admin._reencode_worker_active()
+    write_status(re_env, state="shutting_down",
+                 updated=(datetime.now(web_admin.APP_TZ) + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"))
+    assert not web_admin._reencode_worker_active()
 
 
 def test_action_hidden_after_ack(re_env):

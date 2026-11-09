@@ -105,7 +105,7 @@
       </div>
       {# 배치 탭과 같은 배치: 제목+상태 / 실행 버튼 / 도구 / 내용 #}
       <div class="log-actions" data-write>
-        <button type="button" class="run-batch-btn" id="reStartBtn" onclick="reencodeCmd('start')"><span class="icon">▶</span> 재인코딩 시작</button>
+        <button type="button" class="run-batch-btn" id="reStartBtn" onclick="reencodeCmd('start')"><span class="icon">▶</span> 재인코딩 시작 (PC 켜서 하고 끝나면 꺼요)</button>
         <button type="button" class="btn" id="reStopBtn" onclick="reencodeCmd('stop')" title="지금 파일이 NAS에서 검사·교체까지 끝나면 PC를 꺼요">⏹ 종료 (지금 파일까지 · 끝나면 PC 꺼짐)</button>
         <button type="button" class="btn" id="reTrashBtn" hidden onclick="trashEmptied()" title="Synology Drive 웹에서 휴지통을 비운 뒤 누르세요">🧹 휴지통 비웠음</button>
       </div>
@@ -214,9 +214,12 @@
         RE = d;
         document.getElementById("reCard").hidden = false;
         document.getElementById("reSummary").textContent = d.summary;
+        // 11-09: '실행 중'은 PC 워커가 실제로 돌 때만. run 표시만 켜져 있고 PC가 꺼져 있으면 시작 버튼을 보여 준다
+        var active = !!d.worker_active;
         var rb = document.getElementById("reRunBadge");
-        rb.className = "status-badge " + (d.running ? "running" : "idle");
-        rb.innerHTML = '<span class="dot"></span>' + (d.running ? "실행 중" : "멈춤");
+        rb.className = "status-badge " + (active ? "running" : "idle");
+        rb.innerHTML = '<span class="dot"></span>' + (active ? "실행 중" : d.running ? "쉬는 중 · PC 꺼짐" : "멈춤");
+        rb.title = active ? "PC 워커가 인코딩하고 있어요" : "PC 워커가 안 돌고 있어요. [▶ 재인코딩 시작]을 누르면 PC를 켜서 하고, 끝나면 PC를 꺼요";
         var w = d.worker || {}, ws = RE_WORKER[w.state] || [w.state || "기록 없음", "unknown"];
         var wb = document.getElementById("reWorkerBadge");
         wb.className = "status-badge " + ws[1];
@@ -231,8 +234,8 @@
           document.getElementById("reNowMeta").textContent = ce ? "약 " + ce.pct + "% · " + ce.elapsed_min + "분 지남 · 약 " + ce.left_min + "분 남음 (예상 " + ce.expect_min + "분)" : "진행률 계산 중";
         }
         renderEta(e);
-        document.getElementById("reStartBtn").hidden = !!d.running;
-        document.getElementById("reStopBtn").hidden = !d.running;
+        document.getElementById("reStartBtn").hidden = active;
+        document.getElementById("reStopBtn").hidden = !active;
         document.getElementById("reTrashBtn").hidden = !d.trash_warn;
         document.getElementById("reHint").textContent =
           "▶ 시작하면 PC를 켜고 하나씩 인코딩해요. 종료하면 지금 파일이 NAS에서 교체까지 확인된 뒤 PC를 꺼요(큐가 비어도 끝나면 5분 뒤 꺼짐). " +
