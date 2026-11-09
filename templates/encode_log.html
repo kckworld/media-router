@@ -61,6 +61,13 @@
     .re-daily .col b { font-size: 11px; color: var(--fg); margin-bottom: 2px; font-weight: 600; }
     .re-note { font-size: 11.5px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
     .re-summary { font-size: 12.5px; color: var(--muted); white-space: pre-line; }
+    .re-hist { list-style: none; margin: 0; padding: 0; font-size: 12.5px; }
+    .re-hist li { padding: 5px 0; border-bottom: 1px solid var(--line); line-height: 1.45; }
+    .re-hist li:last-child { border-bottom: 0; }
+    .re-hist .n { font-weight: 600; color: var(--fg); }
+    .re-hist .m { color: var(--muted); font-size: 11.5px; }
+    .re-action { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: 10px; padding: 10px 12px; margin: 4px 0 12px; font-size: 12.5px; line-height: 1.6; }
+    .re-action b { color: var(--warn); }
     @media (max-width: 760px) {
       .re-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .re-cols { grid-template-columns: minmax(0, 1fr); }
@@ -104,7 +111,10 @@
       </div>
       {# 10-31 사용자 "보기 좋게": 숫자 타일 · 전체/순위별 진행 막대 · 지금 파일 진행률 · 최근 7일 처리량 #}
       <div class="re-tiles" id="reTiles"></div>
-      <div class="re-progress">
+      {# 11-09: 평소엔 새 영상 상시 처리, 일괄(캠페인)은 진행 중일 때만 진행 막대·순위별 표 #}
+      <div class="re-action" id="reAction" hidden></div>
+      <div class="re-progress" id="reBatchProg" hidden>
+        <div class="re-sub" id="reBatchTitle" style="margin-bottom:6px;">일괄 작업 진행</div>
         <div class="re-prog-head"><b id="reProgLabel">-</b><span id="reProgSaved"></span></div>
         <div class="re-bar"><i id="reProgBar"></i></div>
       </div>
@@ -114,9 +124,14 @@
         <div class="re-now-meta" id="reNowMeta"></div>
       </div>
       <div class="re-cols">
-        <div>
+        <div id="reTierWrap" hidden>
           <div class="re-sub">순위별 진행</div>
           <ul class="re-tiers" id="reTierBody"></ul>
+        </div>
+        <div id="reHistWrap" hidden>
+          <div class="re-sub">지난 일괄 작업</div>
+          <ul class="re-hist" id="reHist"></ul>
+          <div class="re-note" id="reTotalNote"></div>
         </div>
         <div>
           <div class="re-sub">최근 7일 처리량</div>
@@ -238,6 +253,31 @@
         document.getElementById("reProgLabel").textContent = "전체 " + doneN + " / " + total + "개 완료 (" + (doneN / total * 100).toFixed(1) + "%)";
         document.getElementById("reProgSaved").textContent = "줄인 용량 " + reGb(d.saved) + " / 예상 " + reGb(d.expect);
         document.getElementById("reProgBar").style.width = (doneN / total * 100).toFixed(1) + "%";
+        // 11-09: 일괄 작업은 진행 중일 때만, 평소엔 상시 처리 타일 + 지난 일괄 결산 + 조치 필요
+        document.getElementById("reBatchProg").hidden = !d.batch_active;
+        document.getElementById("reTierWrap").hidden = !d.batch_active;
+        if (!d.batch_active) renderSteady(d);
+        var hist = d.history || [];
+        document.getElementById("reHistWrap").hidden = !hist.length;
+        document.getElementById("reHist").innerHTML = hist.map(function(b) {
+          var prof = Object.keys(b.by_profile || {}).map(function(k) {
+            var p = b.by_profile[k];
+            return ({ variety: "예능", drama: "드라마" }[k] || k) + " " + p.count.toLocaleString() + "편 -" + reGb(p.saved);
+          }).join(" · ");
+          var sk = Object.keys(b.skipped || {}).reduce(function(a, k) { return a + b.skipped[k]; }, 0);
+          return '<li><span class="n">' + reEsc(b.name) + '</span> — ' + (b.count || 0).toLocaleString() + "편, <b>-" + reGb(b.saved) + "</b>" +
+            (b.size ? " (" + Math.round(b.saved / b.size * 100) + "%)" : "") +
+            '<div class="m">' + reEsc(prof) + (sk ? " · 건너뜀 " + sk : "") + (b.start ? " · " + reEsc(b.start) + " ~ " + reEsc(b.end) : "") + "</div></li>";
+        }).join("");
+        document.getElementById("reTotalNote").textContent = "지금까지 줄인 용량 합계 " + reGb(d.total_saved || 0) + " (일괄 + 새 영상)";
+        var act = d.action || [];
+        var actEl = document.getElementById("reAction");
+        actEl.hidden = !act.length;
+        actEl.innerHTML = act.length ? "<b>⚠ 다시 받아야 할 원본 " + act.length + "개</b> — 원본이 깨져 있어서 인코딩할 수 없어요. 같은 자리에 새 파일을 받아 두면 자동으로 다시 인코딩해요.<br>" +
+          act.map(function(a) {
+            return "#" + reEsc(a.id) + " " + reEsc(a.name) + ' <span class="muted">(' + (a.why === "corrupt" ? "영상 손상" : reEsc(reFailSummary(a.msg || "오류"))) + ")</span>" +
+              ' <button type="button" class="btn small" data-write onclick="reAck(\'' + reEsc(a.id) + '\', this)" title="목록에서 숨겨요(다시 받으면 그래도 자동으로 인코딩)">숨기기</button>';
+          }).join("<br>") : "";
         // 실패: 확인 완료를 누르면 접힌 '확인한 실패'로 내려간다(10-28)
         // ffmpeg 오류 원문은 길어서 짧은 요약 + 펼치면 원문 (10-28 사용자)
         var failLine = function(f) {
@@ -301,6 +341,15 @@
       }).join("");
       document.getElementById("reEtaNote").innerHTML = "최근 " + e.window_days + "일 중 워커가 실제로 돈 " + e.active_h +
         "시간 기준(PC가 꺼져 있던 시간은 뺌). 새벽 " + reEsc(e.night_at) + " 자동 시작 기준 완료 예상은 가동한 날 하루 평균으로 계산. 드라마는 샘플·새 드라마 속도로 어림했어요.";
+    }
+    function renderSteady(d) {
+      // 일괄 작업이 없을 때 타일: 기다리는 새 영상 · 최근 7일 · 최근 30일 · 누적
+      var s = d.steady || {}, waitN = d.waiting_total || 0, e = d.eta || {};
+      document.getElementById("reTiles").innerHTML =
+        tile(waitN + "건", "인코딩 대기", waitN ? "새 영상 · 남은 약 " + reHours(e.remain_h || 0) : "새 영상이 오면 자동") +
+        tile((s.count_7 || 0) + "건", "최근 7일", "-" + reGb(s.saved_7 || 0)) +
+        tile((s.count_30 || 0) + "건", "최근 30일", "-" + reGb(s.saved_30 || 0)) +
+        tile(reGb(d.total_saved || 0), "누적 절감", "일괄 + 새 영상");
     }
     function reFailSummary(msg) {
       if (/INVALIDDATA|Invalid NAL|Terminating thread|Error while decoding|corrupt|-1145393733/i.test(msg)) return "원본 손상(디코딩 오류)";

@@ -3050,7 +3050,7 @@ def _reencode_scheduler_loop() -> None:
                 changed = _reencode_watch_worker(state)
                 changed = _reencode_off_after(state) or changed
                 for key, job in (("night", _run_reencode_night),
-                                 ("morning", lambda: _tg_notify(_reencode_status_text("☀️ 예능 재인코딩 아침 요약"),
+                                 ("morning", lambda: _tg_notify(_reencode_status_text("☀️ 재인코딩 아침 요약"),
                                                                 _reencode_buttons()))):
                     if cfg[f"{key}_on"] and _reencode_due(cfg[f"{key}_at"], now, state, key):
                         state[key] = now.strftime("%Y-%m-%d")
@@ -3075,6 +3075,8 @@ def api_reencode():
     if st.get("failed") is not None:
         st["failed_acked"] = [f for f in st["failed"] if f.get("id") in acked]
         st["failed"] = [f for f in st["failed"] if f.get("id") not in acked]
+    if st.get("action") is not None:          # 11-09 '다시 받아야 할 원본' — 숨기기(확인 완료)한 건 빼기
+        st["action"] = [a for a in st["action"] if a.get("id") not in acked]
     st.update(ok=True, log=reencode_ctl.log_tail(reencode_ctl.LOG),
               worker_log=reencode_ctl.log_tail(reencode_ctl.WORK / "worker.log"),
               off_after=_reencode_sched_load().get("off_after"), **reencode_settings())

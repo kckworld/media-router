@@ -214,6 +214,37 @@ def _new_label(new_items: list) -> str:
     return "새 드라마" if drama == len(new_items) else f"새 영상(예능 {len(new_items) - drama}·드라마 {drama})"
 
 
+HISTORY = BASE / "history.json"            # reencode.py archive가 끝난 일괄 작업을 옮겨 두는 곳(11-09)
+ACTION_SKIPS = ("corrupt", "error")         # reencode.py KEEP_SKIPS와 같게: 원본을 다시 받아야 하는 것
+
+
+def history() -> dict:
+    """끝난 일괄 작업(캠페인) 결산 — 항목 목록은 빼고 한 줄씩"""
+    h = _read(HISTORY, {}) or {}
+    batches = [{k: v for k, v in b.items() if k != "items"} for b in h.get("batches") or []]
+    return {"batches": list(reversed(batches)), "saved": sum(b.get("saved", 0) for b in batches)}
+
+
+def steady_stats(new_items: list, now: float | None = None) -> dict:
+    """새로 받은 영상(N…) 상시 처리 통계: 최근 7·30일 처리 수·줄인 용량, 지금까지 전체"""
+    now = now or time.time()
+    out = {"saved_all": 0, "count_all": 0}
+    for days in (7, 30):
+        out[f"count_{days}"] = out[f"saved_{days}"] = 0
+    for it in new_items:
+        if it.get("status") != "done" or it.get("skipped"):
+            continue
+        s = it.get("saved") or 0
+        out["count_all"] += 1
+        out["saved_all"] += s
+        t = _ts(it.get("done_at"))
+        for days in (7, 30):
+            if t and now - t < days * 86400:
+                out[f"count_{days}"] += 1
+                out[f"saved_{days}"] += s
+    return out
+
+
 def state() -> dict:
     q = _read(QUEUE)
     if not q:
@@ -242,9 +273,16 @@ def state() -> dict:
     cur = by_id.get(w.get("current")) if w.get("current") else None
     is_running = running()
     trash = q.get("trash_bytes", 0)
-    summary = (f"완료 {counts.get('done', 0)}/{len(items)} · 진행 {counts.get('fed', 0)} · 대기 {counts.get('pending', 0)}"
-               f" · 실패 {counts.get('failed', 0)}" + (f" · 보류(드라마) {counts['hold']}" if counts.get("hold") else "")
-               + f"\n줄인 용량 {gb(saved)} / 예상 {gb(expect)}"
+    if any(it.get("status") in _OPEN + ("hold",) for it in items):
+        head = (f"완료 {counts.get('done', 0)}/{len(items)} · 진행 {counts.get('fed', 0)} · 대기 {counts.get('pending', 0)}"
+                f" · 실패 {counts.get('failed', 0)}" + (f" · 보류(드라마) {counts['hold']}" if counts.get("hold") else "")
+                + f"\n줄인 용량 {gb(saved)} / 예상 {gb(expect)}")
+    else:                                     # 11-09~: 일괄 작업이 없으면 새 영상 상시 처리 위주로
+        st7 = steady_stats(new_items)
+        keep = sum(1 for it in items if it.get("skipped") in ACTION_SKIPS)
+        head = (f"일괄 작업 없음 · 새 영상 최근 7일 {st7['count_7']}개 -{gb(st7['saved_7'])}"
+                + (f"\n⚠ 다시 받아야 할 원본 {keep}개" if keep else ""))
+    summary = (head
                + ("\n▶ 실행 중" if is_running else "\n⏹ 멈춤")
                + (f"\n🆕 {_new_label(new_open + held + new_failed)} " + " · ".join(([f"인코딩 대기 {len(new_open)}개"] if new_open else [])
                                              + ([f"대기 등록 전 {len(held)}개"] if held else [])
@@ -275,7 +313,14 @@ def state() -> dict:
         tier_rank = {"D1": 0, "D2": 1, "D3": 2}
         pending.sort(key=lambda it: (0, tier_rank.get(it.get("tier"), 3)) if it.get("profile") == "drama" else (1, 0))
     waiting = new_open + held + samples_open + [it for it in items if it.get("status") == "fed"] + pending
+    # 11-09: 일괄 작업은 가끔(캠페인), 평소엔 새 영상 위주 → 화면을 상시 처리 중심으로
+    batch_active = any(it.get("status") in _OPEN + ("hold",) for it in items)
+    action = [dict(row(it), why=it.get("skipped")) for it in items if it.get("skipped") in ACTION_SKIPS]
+    hist = history()
+    steady = steady_stats(new_items)
     return {"available": True, "counts": counts, "total": len(items), "saved": saved, "expect": expect,
+            "batch_active": batch_active, "action": action, "history": hist["batches"],
+            "total_saved": hist["saved"] + saved + steady["saved_all"], "steady": steady,
             # 예능 1~3(숫자) 다음 드라마 D1~D3(글자) - 섞어서 sorted하면 TypeError
             "tiers": {str(k): v for k, v in sorted(tiers.items(), key=lambda kv: (isinstance(kv[0], str), str(kv[0])))},
             "running": is_running, "worker": w,

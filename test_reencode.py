@@ -30,7 +30,9 @@ def re_env(monkeypatch, tmp_path):
     monkeypatch.setattr(reencode_ctl, "STOP", base / "STOP")
     monkeypatch.setattr(reencode_ctl, "LOG", base / "reencode.log")
     monkeypatch.setattr(reencode_ctl, "WORK", work)
+    monkeypatch.setattr(reencode_ctl, "HISTORY", base / "history.json")
     monkeypatch.setattr(web_admin, "REENCODE_SCHED_PATH", tmp_path / "sched.json")
+    monkeypatch.setattr(web_admin, "REENCODE_ACK_PATH", tmp_path / "ack.json")
     monkeypatch.setattr(web_admin, "authed", lambda req: True)
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
     sent, host, tasks = [], [], []
@@ -61,6 +63,45 @@ def test_state(re_env):
     assert st["tiers"]["1"] == {"done": 1, "todo": 1, "failed": 0, "hold": 0, "saved": 6 * 2 ** 30, "expect": 10 * 2 ** 30}
     assert [r["id"] for r in st["waiting_list"]] == ["0004", "0007"] and st["done_list"][0]["new_size"] == 2 * 2 ** 30
     assert st["failed"][0]["msg"] == "길이가 다름" and not st["trash_warn"]
+
+
+def test_steady_mode_after_archive(re_env):
+    """11-09: 일괄 작업이 끝나 history.json으로 옮겨지면 상시 처리 위주 — 결산 한 줄·조치 필요·누적 절감"""
+    base = reencode_ctl.QUEUE.parent
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    reencode_ctl.QUEUE.write_text(json.dumps({"items": [
+        {"id": "0490", "src": "/v/서진이네.E10.mp4", "tier": 1, "status": "done", "skipped": "corrupt", "msg": "원본 손상",
+         "size": 2 ** 31, "saved": 0, "expect_save": 2 ** 30},
+        {"id": "2131", "src": "/v/드라마.mkv", "tier": "D3", "profile": "drama", "status": "done", "skipped": "no_gain", "saved": 0}],
+        "new_items": [{"id": "N0001", "kind": "new", "src": "/v/런닝맨.E900.mp4", "status": "done", "saved": 2 ** 30, "done_at": now},
+                      {"id": "N0002", "kind": "new", "src": "/v/옛날.mp4", "status": "done", "saved": 2 ** 30, "done_at": "2026-01-01 00:00:00"}]}),
+        encoding="utf-8")
+    (base / "history.json").write_text(json.dumps({"batches": [
+        {"name": "예능·드라마 일괄 (10-27~11-09)", "count": 2571, "saved": 100 * 2 ** 30, "items": [{"id": "0001"}]}]}), encoding="utf-8")
+    st = reencode_ctl.state()
+    assert not st["batch_active"]
+    assert st["summary"].startswith("일괄 작업 없음 · 새 영상 최근 7일 1개 -1.0GB\n⚠ 다시 받아야 할 원본 1개")
+    assert [a["id"] for a in st["action"]] == ["0490"] and st["action"][0]["why"] == "corrupt"   # no_gain은 조치 아님
+    assert st["history"][0]["name"].startswith("예능·드라마") and "items" not in st["history"][0]
+    assert st["steady"]["count_7"] == 1 and st["steady"]["count_all"] == 2
+    assert st["total_saved"] == 102 * 2 ** 30
+
+
+def test_action_hidden_after_ack(re_env):
+    reencode_ctl.QUEUE.write_text(json.dumps({"items": [
+        {"id": "0490", "src": "/v/a.mp4", "status": "done", "skipped": "corrupt"},
+        {"id": "1404", "src": "/v/b.mp4", "status": "done", "skipped": "error", "msg": "aac"}]}), encoding="utf-8")
+    c = re_env["client"]
+    assert [a["id"] for a in c.get("/api/reencode").get_json()["action"]] == ["0490", "1404"]
+    assert c.post("/api/reencode/ack", json={"id": "0490"}).status_code == 200
+    assert [a["id"] for a in c.get("/api/reencode").get_json()["action"]] == ["1404"]
+
+
+def test_batch_active_with_history(re_env):
+    (reencode_ctl.QUEUE.parent / "history.json").write_text(json.dumps({"batches": [{"name": "옛", "saved": 2 ** 30}]}), encoding="utf-8")
+    st = reencode_ctl.state()
+    assert st["batch_active"] and st["summary"].startswith("완료 1/4")
+    assert st["total_saved"] == 7 * 2 ** 30
 
 
 def test_start_order_resume_then_pc_then_worker(re_env):
