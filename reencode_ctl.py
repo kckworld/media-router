@@ -273,9 +273,11 @@ def state() -> dict:
     cur = by_id.get(w.get("current")) if w.get("current") else None
     is_running = running()
     trash = q.get("trash_bytes", 0)
+    skipped_n = sum(1 for it in items if it.get("status") == "done" and it.get("skipped"))   # 건너뜀은 완료로 안 셈(11-09)
     if any(it.get("status") in _OPEN + ("hold",) for it in items):
-        head = (f"완료 {counts.get('done', 0)}/{len(items)} · 진행 {counts.get('fed', 0)} · 대기 {counts.get('pending', 0)}"
-                f" · 실패 {counts.get('failed', 0)}" + (f" · 보류(드라마) {counts['hold']}" if counts.get("hold") else "")
+        head = (f"완료 {counts.get('done', 0) - skipped_n}/{len(items)} · 진행 {counts.get('fed', 0)} · 대기 {counts.get('pending', 0)}"
+                f" · 실패 {counts.get('failed', 0)}" + (f" · 건너뜀 {skipped_n}" if skipped_n else "")
+                + (f" · 보류(드라마) {counts['hold']}" if counts.get("hold") else "")
                 + f"\n줄인 용량 {gb(saved)} / 예상 {gb(expect)}")
     else:                                     # 11-09~: 일괄 작업이 없으면 새 영상 상시 처리 위주로
         st7 = steady_stats(new_items)
@@ -319,7 +321,7 @@ def state() -> dict:
     hist = history()
     steady = steady_stats(new_items)
     return {"available": True, "counts": counts, "total": len(items), "saved": saved, "expect": expect,
-            "batch_active": batch_active, "action": action, "history": hist["batches"],
+            "batch_active": batch_active, "action": action, "history": hist["batches"], "skipped": skipped_n,
             "total_saved": hist["saved"] + saved + steady["saved_all"], "steady": steady,
             # 예능 1~3(숫자) 다음 드라마 D1~D3(글자) - 섞어서 sorted하면 TypeError
             "tiers": {str(k): v for k, v in sorted(tiers.items(), key=lambda kv: (isinstance(kv[0], str), str(kv[0])))},

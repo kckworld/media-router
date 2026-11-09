@@ -249,8 +249,9 @@
           return '<li><span class="lbl">' + reEsc(label) + '</span><div class="re-bar thin"><i style="width:' + (t.done / all * 100).toFixed(1) + '%"></i></div>' +
             '<span class="num">' + t.done + "/" + all + extra + " · -" + reGb(t.saved) + "</span></li>";
         }).join("");
-        var total = d.total || 1, doneN = (d.counts && d.counts.done) || 0;
-        document.getElementById("reProgLabel").textContent = "전체 " + doneN + " / " + total + "개 완료 (" + (doneN / total * 100).toFixed(1) + "%)";
+        var total = d.total || 1, doneN = ((d.counts && d.counts.done) || 0) - (d.skipped || 0);
+        document.getElementById("reProgLabel").textContent = "전체 " + doneN + " / " + total + "개 완료 (" + (doneN / total * 100).toFixed(1) + "%)" +
+          (d.skipped ? " · 건너뜀 " + d.skipped : "");
         document.getElementById("reProgSaved").textContent = "줄인 용량 " + reGb(d.saved) + " / 예상 " + reGb(d.expect);
         document.getElementById("reProgBar").style.width = (doneN / total * 100).toFixed(1) + "%";
         // 11-09: 일괄 작업은 진행 중일 때만, 평소엔 상시 처리 타일 + 지난 일괄 결산 + 조치 필요

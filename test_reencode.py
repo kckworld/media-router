@@ -87,6 +87,16 @@ def test_steady_mode_after_archive(re_env):
     assert st["total_saved"] == 102 * 2 ** 30
 
 
+def test_skipped_not_counted_as_done(re_env):
+    """남은 일괄 1편이 진행 중일 때 손상으로 건너뛴 것을 '완료'로 세지 않는다(11-09: '완료 4/5'로 보였음)"""
+    reencode_ctl.QUEUE.write_text(json.dumps({"items": [
+        {"id": "0490", "src": "/v/a.mp4", "status": "done", "skipped": "corrupt"},
+        {"id": "2168", "src": "/v/b.mkv", "status": "fed", "size": 1, "expect_save": 0}]}), encoding="utf-8")
+    st = reencode_ctl.state()
+    assert st["batch_active"] and st["skipped"] == 1
+    assert st["summary"].startswith("완료 0/2 · 진행 1 · 대기 0 · 실패 0 · 건너뜀 1")
+
+
 def test_action_hidden_after_ack(re_env):
     reencode_ctl.QUEUE.write_text(json.dumps({"items": [
         {"id": "0490", "src": "/v/a.mp4", "status": "done", "skipped": "corrupt"},
