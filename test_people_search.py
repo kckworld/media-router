@@ -18,6 +18,9 @@ FAKE = [
       "birYmd": f"1990{(i % 12) + 1:02d}01"} for i in range(15)]
 
 
+ORIG_ALERT = web_admin._people_alert_search      # 픽스처가 바꿔치기하기 전의 진짜 알림 함수
+
+
 @pytest.fixture
 def pp(monkeypatch, tmp_path):
     f = tmp_path / "employees.json"
@@ -30,7 +33,7 @@ def pp(monkeypatch, tmp_path):
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
     monkeypatch.setattr(web_admin, "_people_fresh", lambda req: True)
     alerts = []
-    monkeypatch.setattr(web_admin, "_people_note_lookup", lambda req: alerts.append(1))
+    monkeypatch.setattr(web_admin, "_people_alert_search", lambda *a: alerts.append(a))
     es._cache.update(mtime=None, data=None)
     web_admin.app.config["TESTING"] = True
     return web_admin.app.test_client(), f
@@ -75,29 +78,24 @@ def test_reauth_flow(pp, monkeypatch):
     assert r.headers["Location"].endswith("/people") and "media_admin=" in r.headers.get("Set-Cookie", "")
 
 
-def test_lookup_alert_batched_without_query(monkeypatch):
-    """조회 알림: 10분 묶음의 첫 번째만 바로, 나머지는 세었다가 한 번에. 검색어·결과는 안 넣음"""
-    from werkzeug.test import EnvironBuilder
-    sent, timers = [], []
+def test_alert_only_when_someone_else_searches(pp, monkeypatch):
+    """11-09 사용자: 본인(소유자) 검색은 알림 없음, 다른 사람이 검색하면 '누가 · 조건'만(결과·결과 수 없음). 상세 보기는 알림 없음"""
+    c, f = pp
+    monkeypatch.setattr(web_admin, "_people_alert_search", ORIG_ALERT)
+    sent = []
     monkeypatch.setattr(web_admin, "_tg_notify", lambda text, *a, **k: sent.append(text) or True)
     monkeypatch.setattr(web_admin.threading, "Thread", lambda target, daemon=None: type("T", (), {"start": lambda s: target()})())
-
-    class FakeTimer:
-        def __init__(self, sec, fn):
-            self.fn = fn
-            self.daemon = False
-            timers.append(self)
-
-        def start(self):
-            pass
-    monkeypatch.setattr(web_admin.threading, "Timer", FakeTimer)
-    monkeypatch.setattr(web_admin, "_people_alert", {"until": 0.0, "count": 0, "ip": "", "timer": None})
-    req = web_admin.app.request_class(EnvironBuilder(environ_base={"REMOTE_ADDR": "192.168.50.123"}).get_environ())
-    for _ in range(4):
-        web_admin._people_note_lookup(req)
-    assert len(sent) == 1 and sent[0].startswith("🔎 검색직 조회됨") and "…123" in sent[0] and "192.168" not in sent[0]
-    timers[0].fn()
-    assert len(sent) == 2 and "3번 더 조회됨" in sent[1]
+    monkeypatch.setattr(web_admin, "current_user", lambda req: web_admin.accounts.OWNER)
+    c.post("/api/people/search", json={"mode": "search_name", "q": "홍길"})
+    assert sent == []
+    monkeypatch.setattr(web_admin, "current_user", lambda req: "kim")
+    monkeypatch.setattr(web_admin.accounts, "get", lambda path, uid: {"name": "김철수"})
+    c.post("/api/people/search", json={"mode": "search_name", "q": "홍길"})
+    assert len(sent) == 1 and sent[0].startswith("🔎 검색직 조회 — 김철수(kim) · 이름: 홍길")
+    for leak in ("홍길동", "010-", "@ex.com", "결과"):
+        assert leak not in sent[0]
+    c.post("/api/people/search", json={"mode": "search_name", "q": "  "})       # 빈 검색어는 알림 없음
+    assert len(sent) == 1
 
 
 def test_list_max_100_and_detail_by_mail(pp):

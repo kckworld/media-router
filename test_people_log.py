@@ -37,7 +37,7 @@ def lg(monkeypatch, tmp_path):
     monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
     monkeypatch.setattr(web_admin, "_people_fresh", lambda req: True)
     alerts = []
-    monkeypatch.setattr(web_admin, "_people_note_lookup", lambda req: alerts.append(1))
+    monkeypatch.setattr(web_admin, "_people_alert_search", lambda *a: alerts.append(a))
     es._cache.update(mtime=None, data=None)
     web_admin.app.config["TESTING"] = True
     return web_admin.app.test_client(), tmp_path, alerts

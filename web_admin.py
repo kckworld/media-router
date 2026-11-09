@@ -2314,11 +2314,8 @@ import employee_search
 EMPLOYEE_JSON = Path(os.getenv("EMPLOYEE_JSON", "/app/ext/employees.json"))
 _people_limit = media_requests.RateLimiter(30, 60)
 # 11-04 사용자 결정(인사팀 권고): 검색직은 비밀번호를 입력한 지 24시간 안의 세션만(다른 화면은 30일 그대로),
-# 조회마다 텔레그램 알림(검색어·결과 없이, 10분 묶음), 목록 최대 100명(employee_search.MAX_LIST)
+# 목록 최대 100명(employee_search.MAX_LIST). 텔레그램 알림은 11-09부터 다른 사람이 검색할 때만(누가·조건만) — _people_alert_search
 PEOPLE_FRESH_SECONDS = 24 * 3600
-PEOPLE_ALERT_WINDOW = 600
-_people_alert = {"until": 0.0, "count": 0, "ip": "", "timer": None}
-_people_alert_lock = threading.Lock()
 
 
 def _session_login_age(req) -> float | None:
@@ -2338,38 +2335,14 @@ def _people_fresh(req) -> bool:
     return age is not None and age <= PEOPLE_FRESH_SECONDS
 
 
-def _mask_ip(ip: str) -> str:
-    """알림엔 IP 끝자리만(…123)"""
-    tail = re.split(r"[.:]", ip or "")[-1] if ip else ""
-    return f"…{tail}" if tail else "?"
-
-
-def _people_alert_flush() -> None:
-    with _people_alert_lock:
-        n, ip = _people_alert["count"], _people_alert["ip"]
-        _people_alert.update(count=0, timer=None)
-    if n:
-        _tg_notify(f"🔎 검색직 최근 {PEOPLE_ALERT_WINDOW // 60}분 동안 {n}번 더 조회됨 (마지막 접속 {_mask_ip(ip)})")
-
-
-def _people_note_lookup(req) -> None:
-    """검색·상세 한 번마다: 10분 묶음의 첫 조회는 바로 알리고, 그 뒤는 세어 두었다가 10분 뒤 한 번에(검색어·결과는 안 넣음)"""
-    now, ip = time.time(), _client_ip(req)
-    first = False
-    with _people_alert_lock:
-        if now >= _people_alert["until"]:
-            _people_alert.update(until=now + PEOPLE_ALERT_WINDOW, count=0, ip=ip)
-            first = True
-            t = threading.Timer(PEOPLE_ALERT_WINDOW, _people_alert_flush)
-            t.daemon = True
-            _people_alert["timer"] = t
-            t.start()
-        else:
-            _people_alert["count"] += 1
-            _people_alert["ip"] = ip
-    if first:
-        threading.Thread(target=lambda: _tg_notify(
-            f"🔎 검색직 조회됨 — {datetime.now(APP_TZ).strftime('%H:%M')}, 접속 {_mask_ip(ip)}"), daemon=True).start()
+def _people_alert_search(user_id: str, name: str, mode_label: str, q: str) -> None:
+    """11-09 사용자: 본인(소유자) 검색은 알리지 않고, 다른 사람이 검색할 때만 '누가 · 어떤 조건'만 텔레그램으로.
+    결과(사람·연락처)와 결과 수는 안 넣는다. 상세 보기는 조건이 아니라서 알리지 않는다."""
+    if user_id == accounts.OWNER:
+        return
+    who = f"{name}({user_id})" if name and name != user_id else user_id
+    text = f"🔎 검색직 조회 — {who} · {mode_label}: {q} ({datetime.now(APP_TZ).strftime('%H:%M')})"
+    threading.Thread(target=lambda: _tg_notify(text), daemon=True).start()
 
 
 def _people_guard():
@@ -2383,7 +2356,6 @@ def _people_guard():
         return jsonify({"ok": False, "reauth": True, "error": "비밀번호를 다시 입력해 주세요(검색직은 로그인 24시간까지)."}), 401
     if not _people_limit.allow("admin"):
         return jsonify({"ok": False, "error": "조회가 너무 많아요. 1분 뒤에 다시 해 주세요."}), 429
-    _people_note_lookup(request)
     return None
 
 
@@ -2465,6 +2437,7 @@ def _people_log_search(mode: str, q: str, total) -> None:
         return
     u = current_user(request) or accounts.OWNER
     name = "소유자" if u == accounts.OWNER else ((accounts.get(ACCOUNTS_PATH, u) or {}).get("name") or u)
+    _people_alert_search(u, name, dict(employee_search.MODES).get(mode, mode), q.strip())
     try:
         people_log.append(PEOPLE_LOG_PATH, {"source": "MR", "user_id": u, "name": name,
                                             "mode": dict(employee_search.MODES).get(mode, mode), "query": q,
