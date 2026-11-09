@@ -80,3 +80,10 @@ def test_discount_fields_shown(rc):
     assert "function discLine(g)" in html and "g.discount_total == null" in html and "g.discount_hint" in html
     assert "청구할인" in html and "가계부 할인" in html
     assert html.count("discLine(g)") == 2                                      # 정의 + 카드 줄에서 호출
+
+
+def test_separate_charges_shown(rc):
+    # 11-09: 우리 …741(용돈계좌) 후불교통은 가계부 대조에서 빼고 '이번 결제 합계'와 함께 표시만
+    html = rc.get("/recon").get_data(as_text=True)
+    assert "function sepLine(g)" in html and "g.separate_charges" in html and "g.withdraw_total" in html
+    assert html.count("sepLine(g)") == 2 and "가계부 제외" in html

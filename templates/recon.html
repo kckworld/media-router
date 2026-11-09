@@ -88,6 +88,14 @@
       if (g.discount_hint) s += '<div class="rc-hint">💡 ' + esc(g.discount_hint) + '</div>';
       return s;
     }
+    // 11-09: 가계부엔 안 쓰지만 같은 결제일에 따로 나가는 돈(우리 …741 용돈계좌 교통비 등) — 대조에선 빼고 표시만
+    function sepLine(g) {
+      var sc = g.separate_charges || [];
+      if (!sc.length) return "";
+      return sc.map(function(s) {
+        return '<div class="rc-disc">＋ ' + esc(s.label) + ' <b>' + won(s.amt) + '</b> (' + Number(s.count) + '건, 가계부 제외)</div>';
+      }).join("") + '<div class="rc-disc">이번 결제 합계 <b>' + won(g.withdraw_total) + '</b> <span class="muted">(문자로 오는 결제 예정 금액)</span></div>';
+    }
     function render(d) {
       var warn = document.getElementById("rcWarn"), cards = document.getElementById("rcCards"), foot = document.getElementById("rcFoot");
       if (!d) { warn.innerHTML = ""; cards.innerHTML = '<div class="rc-empty">이 달 대조 결과가 없어요.</div>'; foot.textContent = ""; return; }
@@ -113,7 +121,7 @@
         return '<details class="rc-card"' + (g.status === "diff" || g.status === "error" ? " open" : "") + '><summary>' +
           '<span class="rc-name">' + esc(g.name) + '</span><span class="rc-state ' + esc(g.status) + '">' + (STATE[g.status] || esc(g.status)) + '</span>' +
           '<div class="rc-nums"><div><span>출금액</span><b>' + won(g.compare_total) + '</b></div><div><span>가계부</span><b>' + won(g.ledger_total) + '</b></div>' +
-          '<div class="' + (hasDiff ? "bad" : "") + '"><span>차이</span><b>' + (g.diff == null ? "-" : won(g.diff)) + '</b></div></div>' + discLine(g) + '</summary>' +
+          '<div class="' + (hasDiff ? "bad" : "") + '"><span>차이</span><b>' + (g.diff == null ? "-" : won(g.diff)) + '</b></div></div>' + discLine(g) + sepLine(g) + '</summary>' +
           '<div class="rc-body">' + (body || '<p class="rc-foot">더 볼 내용이 없어요.</p>') + '</div></details>';
       }).join("") || '<div class="rc-empty">카드가 없어요.</div>';
       foot.textContent = "기준 가계부 백업: " + (d.mmbak_time || "-") + " · 비교한 때: " + (d.made_at || "-");
