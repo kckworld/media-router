@@ -3391,7 +3391,8 @@ def skills_page():
     auth = authed(request)
     if auth is not True:
         return auth
-    tab = "work" if request.args.get("tab") == "work" and current_user(request) == accounts.OWNER else "setup"
+    want = request.args.get("tab")
+    tab = want if want in ("work", "docs") and current_user(request) == accounts.OWNER else "setup"   # 문서 탭(11-10)
     return render_template("skills.html", authed=True, tab=tab, can_work=current_user(request) == accounts.OWNER)
 
 
@@ -3428,6 +3429,72 @@ def api_skills_work_task():
     if res is None:
         return jsonify({"ok": False, "error": "그 작업을 찾지 못했어요."}), 404
     return _no_store(jsonify(dict(res, ok=True)))
+
+
+WORK_HELD_DIR = Path(os.getenv("WORK_HELD_DIR", "/app/ext/ai/held"))
+
+# ── 설정 > Claude > [문서] (2026-11-10): 규칙·기록·보류·작업 파일·Claude 메모리 .md 보기·고치기(소유자만, docs_mgr.py)
+import docs_mgr
+DOC_ROOTS = {"rules": os.getenv("DOC_RULES_DIR", "/app/ext/ai"), "held": os.getenv("DOC_HELD_DIR", "/app/ext/ai/held"),
+             "tasks": os.getenv("DOC_TASKS_DIR", "/app/ext/ai/tasks"), "memory": os.getenv("DOC_MEMORY_DIR", "/app/ext/memory")}
+DOC_LABELS = {"rules": "규칙·기록 (ai-shared)", "held": "보류한 작업 (held)", "tasks": "작업 파일 (tasks)",
+              "memory": "Claude 메모리 (memory)"}
+
+
+@app.route("/api/skills/docs", methods=["GET"])
+def api_skills_docs():
+    blocked = _work_guard()
+    if blocked:
+        return blocked
+    return _no_store(jsonify({"ok": True, "groups": docs_mgr.listing(DOC_ROOTS, DOC_LABELS)}))
+
+
+@app.route("/api/skills/docs/file", methods=["GET", "POST"])
+def api_skills_docs_file():
+    blocked = _work_guard()
+    if blocked:
+        return blocked
+    if request.method == "GET":
+        d = docs_mgr.read(DOC_ROOTS, str(request.args.get("root") or ""), str(request.args.get("name") or ""))
+        if d is None:
+            return jsonify({"ok": False, "error": "그 파일을 열 수 없어요."}), 404
+        return _no_store(jsonify(dict(d, ok=True)))
+    b = request.get_json(silent=True) or {}
+    try:
+        ok, err, new_sha = docs_mgr.write(DOC_ROOTS, str(b.get("root") or ""), str(b.get("name") or ""),
+                                          str(b.get("text") or ""), str(b.get("sha") or ""))
+    except OSError as e:
+        app.logger.warning("문서 저장 실패: %s", type(e).__name__)
+        return jsonify({"ok": False, "error": "저장하지 못했어요(파일 권한)."}), 500
+    if not ok:
+        return jsonify({"ok": False, "error": err}), (409 if "바뀌었어요" in err or "없어졌어요" in err else 400)
+    return jsonify({"ok": True, "sha": new_sha})
+
+
+@app.route("/api/skills/work/action", methods=["POST"])
+def api_skills_work_action():
+    """11-10: 작업 [취소]·[보류]·[다시 하기]. 보류면 ai-shared/held/<ID>.md에 이어서 할 내용을 남긴다"""
+    blocked = _work_guard()
+    if blocked:
+        return blocked
+    b = request.get_json(silent=True) or {}
+    item_id, action = str(b.get("id") or "")[:20], str(b.get("action") or "")
+    try:
+        it, err = work_board.set_status(WORK_JSON, item_id, action, str(b.get("note") or ""))
+    except (OSError, ValueError) as e:
+        app.logger.warning("작업 상태 바꾸기 실패: %s", type(e).__name__)
+        return jsonify({"ok": False, "error": "작업 기록부를 고치지 못했어요."}), 500
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    held = ""
+    if action == "hold":
+        d = work_board.load(WORK_JSON)
+        sec = work_board.task_sections(WORK_TASKS_DIR, d["items"], item_id) or {}
+        try:
+            held = work_board.write_held(WORK_HELD_DIR, it, sec.get("sections") or [])
+        except OSError:
+            app.logger.warning("보류 파일 저장 실패")
+    return jsonify({"ok": True, "status": it["status"], "held": held})
 
 
 @app.route("/api/skills", methods=["GET"])

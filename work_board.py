@@ -67,3 +67,89 @@ def task_sections(tasks_dir: Path, items: list[dict], item_id: str) -> dict | No
     except OSError:
         return {"file": it["task"], "sections": [], "missing": True}
     return {"file": it["task"], "sections": _sections(text), "missing": False}
+
+
+# ─── 취소·보류·다시 하기 (2026-11-10 사용자: "토큰을 아끼려고") ───────────────
+# MR 작업 화면 버튼이 work.json 상태를 바꾼다. work.py와 똑같이 flock 잡고 제자리 덮어쓰기(단일 파일 마운트라 rename 안 됨).
+# 세션들은 다음 단계·예약 확인 전에 상태를 보고 '취소'면 멈추고 예약을 지우며, '보류'면 held/<ID>.md를 남기고 멈춘다(TEAM.md 0-1).
+import fcntl
+import os
+from datetime import datetime, timedelta, timezone
+
+_KST = timezone(timedelta(hours=9))
+ACTIONS = {"cancel": "취소", "hold": "보류", "resume": "대기"}
+OPEN_STATUSES = ("대기", "진행 중", "확인 필요")
+_ID_RE = re.compile(r"^W-\d{8}-\d{2,3}$")
+
+
+def _own(p) -> None:
+    """MR 컨테이너는 root라 새 파일을 kck9010:users로(세션이 이어서 고칠 수 있게)"""
+    try:
+        os.chown(p, 1026, 100)
+    except OSError:
+        pass
+
+
+def _now() -> str:
+    return datetime.now(_KST).isoformat(timespec="minutes")
+
+
+def set_status(path: Path, item_id: str, action: str, note: str = "") -> tuple[dict | None, str]:
+    """(바뀐 항목, 오류). cancel·hold는 열린 일(대기·진행 중·확인 필요)만, resume은 보류만"""
+    if action not in ACTIONS or not _ID_RE.match(item_id or ""):
+        return None, "잘못된 요청이에요."
+    with open(path, "r+", encoding="utf-8") as fp:
+        fcntl.flock(fp, fcntl.LOCK_EX)
+        t = fp.read()
+        data = json.loads(t) if t.strip() else {"items": []}
+        it = next((i for i in data.get("items", []) if i.get("id") == item_id), None)
+        if not it:
+            return None, "그 작업을 찾지 못했어요."
+        st = it.get("status")
+        if action in ("cancel", "hold") and st not in OPEN_STATUSES:
+            return None, f"'{st}' 상태라 {ACTIONS[action]}할 수 없어요."
+        if action == "resume" and st != "보류":
+            return None, "보류한 일만 다시 할 수 있어요."
+        new = ACTIONS[action]
+        msg = (note or "").strip()[:200] or {"cancel": "사용자가 MR에서 취소", "hold": "사용자가 MR에서 보류",
+                                              "resume": "사용자가 MR에서 다시 하기"}[action]
+        it["status"], it["updated"] = new, _now()
+        if new == "취소":
+            it["done"] = _now()
+        it.setdefault("history", []).append({"at": _now(), "status": new, "note": msg})
+        data["updated"] = _now()
+        fp.seek(0)
+        fp.truncate()
+        json.dump(data, fp, ensure_ascii=False, indent=1)
+        fp.flush()
+    try:
+        os.chmod(path, 0o664)
+    except OSError:
+        pass
+    return it, ""
+
+
+def write_held(held_dir: Path, item: dict, sections: list[dict]) -> str:
+    """보류한 일을 나중에 이어서 할 수 있게 held/<ID>.md로(작업 파일의 결과·확인 필요 부분 포함). 반환: ai-shared 기준 경로"""
+    held_dir.mkdir(parents=True, exist_ok=True)
+    _own(held_dir)
+    p = held_dir / f"{item['id']}.md"
+    lines = [f"# 보류: {item.get('title', '')}", "",
+             f"- ID: {item['id']} · 분류 {item.get('cat', '')} · 맡은 곳 {item.get('owner', '')} · 엔진 {item.get('engine', '')}",
+             f"- 시킨 날 {item.get('requested', '')} · 보류 {_now()}",
+             f"- 작업 파일: {item.get('task') or '(없음)'}",
+             f"- 메모: {item.get('note') or ''}", "",
+             "## 다시 시작하려면",
+             f"MR 설정 > Claude > 작업에서 [다시 하기]를 누르거나, 세션에 \"{item['id']} 이어서 해줘\"라고 하면 "
+             "이 파일과 작업 파일을 읽고 이어 간다.", "",
+             "## 바뀐 기록"]
+    lines += [f"- {h.get('at', '')} {h.get('status', '')} {h.get('note', '')}".rstrip() for h in item.get("history", [])[-20:]]
+    for sc in sections or []:
+        lines += ["", f"## (작업 파일) {sc['title']}", sc.get("body") or "(비어 있음)"]
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _own(p)
+    try:
+        os.chmod(p, 0o664)
+    except OSError:
+        pass
+    return f"held/{p.name}"

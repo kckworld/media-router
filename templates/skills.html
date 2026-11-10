@@ -99,14 +99,27 @@
       .set-card { padding: 18px 16px; }
       .set-actions { width: 100%; margin-top: 0; }
     }
-  </style>
+      .dc-wrap { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; align-items: start; }
+    @media (max-width: 800px) { .dc-wrap { grid-template-columns: minmax(0, 1fr); } }
+    .dc-list { max-height: 70vh; overflow-y: auto; font-size: 13px; }
+    .dc-grp summary { font-weight: 700; padding: 6px 0; cursor: pointer; }
+    .dc-file { display: flex; justify-content: space-between; gap: 6px; width: 100%; text-align: left; background: none; border: 0; padding: 5px 8px; border-radius: 6px; cursor: pointer; color: var(--text); font-size: 13px; }
+    .dc-file span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .dc-file:hover { background: var(--chip); }
+    .dc-file.on { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+    .dc-head { margin-bottom: 8px; }
+    .dc-text { width: 100%; min-height: 60vh; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5; padding: 10px; box-sizing: border-box; }
+    .dc-acts { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin: 8px 0; }
+    .dc-acts .hint { margin-right: auto; }
+</style>
 {% endblock %}
 
 {% block content %}
     {% if can_work %}
     <nav class="wk-tabs" aria-label="Claude 화면">
-      <a href="/skills" class="{{ 'on' if tab != 'work' else '' }}"{% if tab != 'work' %} aria-current="page"{% endif %}>로그인·세션·스킬</a>
+      <a href="/skills" class="{{ 'on' if tab == 'setup' else '' }}"{% if tab == 'setup' %} aria-current="page"{% endif %}>로그인·세션·스킬</a>
       <a href="/skills?tab=work" class="{{ 'on' if tab == 'work' else '' }}"{% if tab == 'work' %} aria-current="page"{% endif %}>작업</a>
+      <a href="/skills?tab=docs" class="{{ 'on' if tab == 'docs' else '' }}"{% if tab == 'docs' %} aria-current="page"{% endif %}>문서</a>
     </nav>
     {% endif %}
     {% if tab == 'work' %}
@@ -132,7 +145,26 @@
       </div>
       <div class="hint" id="wkCount" role="status" aria-live="polite" style="margin-bottom:8px;"></div>
       <div class="wk-list" id="wkList"></div>
-      <div class="hint" style="margin-top:8px;">기록은 각 세션이 <code>ai-shared/work.py</code>로 남겨요. 여기는 읽기만 해요. 줄을 누르면 바뀐 기록과 작업 파일의 '결과'·'확인 필요'가 보여요.</div>
+      <div class="hint" style="margin-top:8px;">기록은 각 세션이 <code>ai-shared/work.py</code>로 남겨요. 줄을 누르면 바뀐 기록과 작업 파일의 '결과'·'확인 필요'가 보이고, 하는 중인 일은 [⏸ 보류]·[✕ 취소], 보류한 일은 [▶ 다시 하기]를 할 수 있어요(세션이 다음 단계 전에 보고 따라요).</div>
+    </div>
+    {% elif tab == 'docs' %}
+    {# 11-10 문서 탭: 규칙·기록·보류·작업 파일·Claude 메모리 .md 보기·고치기 #}
+    <div class="dc-wrap">
+      <div class="card dc-side">
+        <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">문서 <button type="button" class="btn small" id="dcReload">↻</button></div>
+        <input type="text" id="dcQ" placeholder="🔍 파일 이름" style="width:100%;margin-bottom:8px;">
+        <div id="dcList" class="dc-list">불러오는 중...</div>
+      </div>
+      <div class="card dc-main">
+        <div class="dc-head"><b id="dcName">왼쪽에서 파일을 고르세요</b><span class="hint" id="dcMeta"></span></div>
+        <textarea id="dcText" class="dc-text" spellcheck="false" disabled></textarea>
+        <div class="dc-acts" data-write>
+          <span class="hint" id="dcState"></span>
+          <button type="button" class="btn small" id="dcRevert" disabled>되돌리기</button>
+          <button type="button" class="btn small primary" id="dcSave" disabled>저장</button>
+        </div>
+        <div class="hint">저장하면 바로 전 내용은 같은 폴더의 <code>.history/</code>에 남아요(파일마다 20개). 세션이 그 사이 파일을 바꿨으면 덮어쓰지 않고 알려 줘요.</div>
+      </div>
     </div>
     {% else %}
     {# Claude 로그인·세션 (10-27 설정 > 연동·경로에서 옮김) #}
@@ -352,13 +384,37 @@
         else if (b.dataset.st === "이번 주 완료") { $("wkDone").checked = true; }
         renderSum(); renderList();
       });
+      $("wkList").addEventListener("click", function(e) {
+        var b = e.target.closest("button[data-act]"); if (!b) return;
+        var d = b.closest(".wk-item"), it = ITEMS.filter(function(x) { return x.id === d.dataset.id; })[0] || {};
+        var act = b.dataset.act;
+        var ask = { cancel: "'" + it.title + "'을(를) 취소할까요?\n하던 세션이 다음 단계 전에 보고 멈춰요.",
+                    hold: "'" + it.title + "'을(를) 보류할까요?\n이어서 할 내용을 파일(ai-shared/held/" + it.id + ".md)로 남기고 멈춰요.",
+                    resume: "'" + it.title + "'을(를) 다시 '대기'로 돌릴까요?" }[act];
+        if (!confirm(ask)) return;
+        var done = mrBusy(b, "…");
+        fetch("/api/skills/work/action", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: it.id, action: act }) }).then(mrJson).then(function(res) {
+          done();
+          if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "바꾸지 못했어요", "error"); return; }
+          showToast({ cancel: "취소했어요", hold: "보류했어요" + (res.data.held ? " (" + res.data.held + ")" : ""), resume: "대기로 돌렸어요" }[act], "success");
+          load();
+        }).catch(function(e2) { done(); showToast("오류: " + e2, "error"); });
+      });
       $("wkList").addEventListener("toggle", function(e) {
         var d = e.target; if (!d.open || !d.classList || !d.classList.contains("wk-item")) return;
         var body = d.querySelector(".wk-body"); if (body.dataset.loaded) return;
         body.dataset.loaded = "1";
         var it = ITEMS.filter(function(x) { return x.id === d.dataset.id; })[0] || {};
         var hist = (it.history || []).slice().reverse();
-        body.innerHTML = (hist.length ? "<h4>바뀐 기록</h4><ul class=\"wk-hist\">" + hist.map(function(h) {
+        // 11-10: 취소(그 일 멈춤)·보류(held/<ID>.md에 남겨 두고 멈춤)·다시 하기 — 세션은 다음 단계 전에 상태를 보고 따른다
+        var open = ["대기", "진행 중", "확인 필요"].indexOf(it.status) >= 0;
+        var acts = open ? '<button type="button" class="btn small" data-act="hold" data-write>⏸ 보류</button> ' +
+                          '<button type="button" class="btn small danger" data-act="cancel" data-write>✕ 취소</button>'
+                 : it.status === "보류" ? '<a class="btn small" href="/skills?tab=docs#held/' + encodeURIComponent(it.id + ".md") + '">📄 보류 파일</a> ' +
+                                          '<button type="button" class="btn small primary" data-act="resume" data-write>▶ 다시 하기</button>' : "";
+        body.innerHTML = (acts ? '<div class="wk-acts" style="display:flex;gap:6px;justify-content:flex-end;margin-bottom:8px;">' + acts + "</div>" : "") +
+          (hist.length ? "<h4>바뀐 기록</h4><ul class=\"wk-hist\">" + hist.map(function(h) {
           return "<li><span>" + when(h.at) + "</span><span>" + esc(h.status || "") + "</span><span>" + esc(h.note || "") + "</span></li>"; }).join("") + "</ul>" : "") +
           '<div class="wk-task">' + (it.task ? '<h4>작업 파일</h4><div class="hint">' + esc(it.task) + " 불러오는 중...</div>" : "") + "</div>";
         if (!it.task) return;
@@ -371,6 +427,66 @@
         }).catch(function() { body.querySelector(".wk-task").innerHTML = '<div class="hint">못 불러왔어요.</div>'; });
       }, true);
       load();
+    })();
+  </script>
+{% elif tab == 'docs' %}
+  <script>
+    (function() {
+      function $(id) { return document.getElementById(id); }
+      function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+      var GROUPS = [], CUR = null;   // CUR = {root, name, sha, text}
+      function when(t) { var d = new Date(t * 1000); return (d.getMonth() + 1) + "/" + d.getDate() + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+      function dirty() { return CUR && $("dcText").value !== CUR.text; }
+      function renderList() {
+        var q = $("dcQ").value.trim().toLowerCase();
+        $("dcList").innerHTML = GROUPS.map(function(g) {
+          var files = g.files.filter(function(f) { return !q || f.name.toLowerCase().indexOf(q) >= 0; });
+          return '<details class="dc-grp"' + (g.key !== "tasks" || q ? " open" : "") + '><summary>' + esc(g.label) + ' <span class="hint">' + files.length + '</span></summary>' +
+            (files.length ? files.map(function(f) {
+              var on = CUR && CUR.root === g.key && CUR.name === f.name;
+              return '<button type="button" class="dc-file' + (on ? " on" : "") + '" data-root="' + esc(g.key) + '" data-name="' + esc(f.name) + '">' +
+                esc(f.name) + '<span>' + when(f.mtime) + '</span></button>'; }).join("") : '<div class="hint" style="padding:4px 8px;">없음</div>') + '</details>';
+        }).join("");
+      }
+      function loadList() {
+        fetch("/api/skills/docs", { cache: "no-store" }).then(mrJson).then(function(res) {
+          if (!res.ok || !res.data.ok) { $("dcList").textContent = "목록을 못 불러왔어요."; return; }
+          GROUPS = res.data.groups || []; renderList();
+        });
+      }
+      function openFile(root, name) {
+        if (dirty() && !confirm("고친 내용이 저장되지 않았어요. 버리고 다른 파일을 열까요?")) return;
+        fetch("/api/skills/docs/file?root=" + encodeURIComponent(root) + "&name=" + encodeURIComponent(name), { cache: "no-store" }).then(mrJson).then(function(res) {
+          var d = res.data || {};
+          if (!res.ok || !d.ok) { showToast(d.error || "못 열었어요", "error"); return; }
+          if (d.too_big) { showToast("파일이 너무 커서 여기서 열 수 없어요(400KB까지)", "error"); return; }
+          CUR = { root: root, name: name, sha: d.sha, text: d.text };
+          $("dcName").textContent = name;
+          $("dcMeta").textContent = " · " + ((GROUPS.filter(function(g) { return g.key === root; })[0] || {}).label || root) + " · " + when(d.mtime);
+          $("dcText").value = d.text; $("dcText").disabled = false; $("dcState").textContent = "";
+          $("dcSave").disabled = $("dcRevert").disabled = false;
+          renderList();
+        });
+      }
+      $("dcList").addEventListener("click", function(e) { var b = e.target.closest(".dc-file"); if (b) openFile(b.dataset.root, b.dataset.name); });
+      $("dcQ").addEventListener("input", renderList);
+      $("dcReload").addEventListener("click", loadList);
+      $("dcText").addEventListener("input", function() { $("dcState").textContent = dirty() ? "● 고친 내용 있음" : ""; });
+      $("dcRevert").addEventListener("click", function() { if (CUR && confirm("저장하지 않은 내용을 버릴까요?")) { $("dcText").value = CUR.text; $("dcState").textContent = ""; } });
+      $("dcSave").addEventListener("click", function() {
+        if (!CUR) return;
+        var btn = $("dcSave"), done = mrBusy(btn, "저장 중"), text = $("dcText").value;
+        fetch("/api/skills/docs/file", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ root: CUR.root, name: CUR.name, text: text, sha: CUR.sha }) }).then(mrJson).then(function(res) {
+          done();
+          if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); return; }
+          CUR.sha = res.data.sha; CUR.text = text; $("dcState").textContent = "✓ 저장했어요"; loadList();
+        }).catch(function(e) { done(); showToast("오류: " + e, "error"); });
+      });
+      window.addEventListener("beforeunload", function(e) { if (dirty()) { e.preventDefault(); e.returnValue = ""; } });
+      loadList();
+      var m = location.hash.match(/^#(rules|held|tasks|memory)\/(.+)$/);     // 작업 탭의 보류 파일 링크 등: /skills?tab=docs#held/W-...md
+      if (m) openFile(m[1], decodeURIComponent(m[2]));
     })();
   </script>
 {% else %}
