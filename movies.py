@@ -131,7 +131,16 @@ _YEAR_RE = re.compile(r"(?<![\dA-Za-z])((?:19|20)\d{2})(?![\dp])")
 
 def split_post_title(title: str) -> tuple[str, str, int | None]:
     """'인턴 The.Intern.2026.1080p.FHD' → ('인턴', 'The Intern', 2026)"""
-    t = re.sub(r"^\s*\[[^\]]*\]\s*", "", title)  # [무삭제] 같은 말머리
+    t = title
+    # 말머리·꼬리표 떼기: [무삭제], (자막), 'AI자막 오디세이 The.Odyssey…'의 AI자막 등(11-11: 'A'로 시작해서
+    # 한글 제목이 빈 것으로 잘려 TMDB를 못 찾고 1-Z 폴더로 갔다). 여러 개가 붙어 있어도 반복해서 뗀다.
+    while True:
+        t2 = re.sub(r"^\s*(?:\[[^\]]*\]|【[^】]*】|\((?:자막|한글|무삭제)[^)]*\)|"
+                    r"(?:AI|자체|한글|한국어|통합|고화질|정식)\s*자막|자막|무삭제|고화질)\s+", "", t, flags=re.I)
+        # '극장판'·'감독판'은 실제 제목(극장판 짱구는 못말려 등)에도 있어서 떼지 않는다
+        if t2 == t:
+            break
+        t = t2
     head = re.match(r"[^A-Za-z]*", t).group(0)  # 영문이 나오기 전까지 = 한글 제목
     rest = t[len(head):]
     ym = _YEAR_RE.search(t)

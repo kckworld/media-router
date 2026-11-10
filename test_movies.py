@@ -37,6 +37,10 @@ def test_parse_view_finds_magnet_and_separate_subtitle():
     ("외계+인 1부 (2022) Alienoid 1080p.FHDRip.H264.AAC", ("외계+인 1부", "Alienoid", 2022)),
     ("다마알 4 Dhamaal.4.2026.1080p.NF.WEB-DL", ("다마알 4", "Dhamaal 4", 2026)),
     ("게일의 원나잇 패스 Gail Daughtry and the Celebrity Sex Pass.1080p.SCOPE", ("게일의 원나잇 패스", "Gail Daughtry and the Celebrity Sex Pass", None)),
+    # 11-11: 앞의 꼬리표(AI자막 등)를 떼야 한글 제목이 남는다 — 'A'로 시작해 한글 제목이 비고 TMDB를 못 찾았다
+    ("AI자막 오디세이 The.Odyssey.2026.1080p.Bluray.10Bit.DDP5.1.x265-NeoNoir", ("오디세이", "The Odyssey", 2026)),
+    ("[자막] 한글자막 무삭제 인턴 The.Intern.2026.1080p", ("인턴", "The Intern", 2026)),
+    ("극장판 짱구는 못말려 Crayon.Shinchan.2024.1080p", ("극장판 짱구는 못말려", "Crayon Shinchan", 2024)),
 ])
 def test_split_post_title(title, expected):
     assert movies.split_post_title(title) == expected
