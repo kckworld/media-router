@@ -122,7 +122,9 @@
     }
     function renderItems() {
       var botOpts = function(sel) {
-        return Object.keys(NT.bots).map(function(b) {
+        // 11-10: 등록 안 된 봇 ID를 가리키면 드롭다운이 첫 봇을 고른 것처럼 보여 헷갈렸다 → 맨 위에 경고로 보여 줌
+        var missing = sel && !NT.bots[sel] ? '<option value="' + esc(sel) + '" selected>⚠ 등록 안 된 봇 (' + esc(sel) + ') — 골라 주세요</option>' : "";
+        return missing + Object.keys(NT.bots).map(function(b) {
           var x = NT.bots[b];
           return '<option value="' + esc(b) + '"' + (b === sel ? " selected" : "") + '>' + esc(x.name) + (x.username ? " " + esc(x.username) : "") + '</option>';
         }).join("");
@@ -158,7 +160,7 @@
       box.querySelectorAll(".f-tg").forEach(function(e) { e.hidden = ch === "kakao"; });
       box.querySelectorAll(".f-kk").forEach(function(e) { e.hidden = ch === "telegram"; });
     }
-    function saveItem(k, onlyToggle) {
+    function itemBody(k, onlyToggle) {
       var id = k.replace(/[^a-z0-9]/g, "_");
       var body = { enabled: document.getElementById("en_" + id).checked };
       if (!onlyToggle) {
@@ -167,17 +169,27 @@
         body.kakao_room = document.getElementById("room_" + id).value;
         if (!NT.items[k].caller_targets) body.chat_id = document.getElementById("chat_" + id).value.trim();
       }
-      post("/api/notify/item/" + encodeURIComponent(k), body).then(function(res) {
-        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); load(); return; }
+      return body;
+    }
+    function saveItem(k, onlyToggle) {
+      var body = itemBody(k, onlyToggle);
+      return post("/api/notify/item/" + encodeURIComponent(k), body).then(function(res) {
+        if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); load(); return false; }
         showToast(onlyToggle ? (body.enabled ? "켰어요" : "껐어요") : "저장했어요", "success");
         load();
+        return true;
       });
     }
     function testItem(k, btn) {
       var it = NT.items[k];
-      if (!confirm("'" + it.name + "'을(를) 지금 설정으로 시험 보낼까요?" + (it.channel !== "telegram" ? "\n(카톡은 10초쯤 걸려요)" : ""))) return;
+      if (!confirm("'" + it.name + "'을(를) 지금 화면의 설정으로 저장하고 시험 보낼까요?" + (document.getElementById("ch_" + k.replace(/[^a-z0-9]/g, "_")).value !== "telegram" ? "\n(카톡은 10초쯤 걸려요)" : ""))) return;
       var done = mrBusy(btn, "보내는 중");
-      post("/api/notify/test/" + encodeURIComponent(k)).then(function(res) {
+      // 11-10: 저장 안 한 채 시험을 누르면 옛 설정으로 가서 헷갈렸다 → 먼저 저장
+      post("/api/notify/item/" + encodeURIComponent(k), itemBody(k, false)).then(function(sv) {
+        if (!sv.ok || !sv.data.ok) { done(); showToast((sv.data && sv.data.error) || "저장하지 못했어요", "error"); return null; }
+        return post("/api/notify/test/" + encodeURIComponent(k));
+      }).then(function(res) {
+        if (!res) return;
         done();
         var d = res.data || {};
         if (d.skipped) showToast("꺼져 있어서 안 보냈어요(기록만 남김)", "info");
