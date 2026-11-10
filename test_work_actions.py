@@ -61,6 +61,17 @@ def test_cancel_and_rules(wk):
     assert '\n "items": [' in raw and items(tmp)["W-20261110-08"]["status"] == "완료"
 
 
+def test_done_ends_open_or_held(wk):
+    """11-10 '완료로 끝내기': 열린 일·보류한 일을 완료로(끝난 시각 기록), 이미 완료면 안 됨"""
+    c, tmp = wk
+    assert c.post("/api/skills/work/action", json={"id": "W-20261110-09", "action": "done"}).get_json()["ok"]
+    it = items(tmp)["W-20261110-09"]
+    assert it["status"] == "완료" and it["done"] and it["history"][-1]["note"] == "사용자가 MR에서 완료로 끝냄"
+    c.post("/api/skills/work/action", json={"id": "W-20261110-07", "action": "hold"})
+    assert c.post("/api/skills/work/action", json={"id": "W-20261110-07", "action": "done"}).get_json()["ok"]
+    assert c.post("/api/skills/work/action", json={"id": "W-20261110-08", "action": "done"}).status_code == 400
+
+
 def test_owner_only(wk, monkeypatch):
     c, tmp = wk
     monkeypatch.setattr(web_admin, "current_user", lambda req: "someone")

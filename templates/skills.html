@@ -390,14 +390,15 @@
         var act = b.dataset.act;
         var ask = { cancel: "'" + it.title + "'을(를) 취소할까요?\n하던 세션이 다음 단계 전에 보고 멈춰요.",
                     hold: "'" + it.title + "'을(를) 보류할까요?\n이어서 할 내용을 파일(ai-shared/held/" + it.id + ".md)로 남기고 멈춰요.",
-                    resume: "'" + it.title + "'을(를) 다시 '대기'로 돌릴까요?" }[act];
+                    resume: "'" + it.title + "'을(를) 다시 '대기'로 돌릴까요?",
+                    done: "'" + it.title + "'을(를) 완료로 끝낼까요?\n지금까지 한 결과는 그대로 두고, 세션은 다음 확인 때 이 일의 예약을 지우고 손을 떼요." }[act];
         if (!confirm(ask)) return;
         var done = mrBusy(b, "…");
         fetch("/api/skills/work/action", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: it.id, action: act }) }).then(mrJson).then(function(res) {
           done();
           if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "바꾸지 못했어요", "error"); return; }
-          showToast({ cancel: "취소했어요", hold: "보류했어요" + (res.data.held ? " (" + res.data.held + ")" : ""), resume: "대기로 돌렸어요" }[act], "success");
+          showToast({ cancel: "취소했어요", hold: "보류했어요" + (res.data.held ? " (" + res.data.held + ")" : ""), resume: "대기로 돌렸어요", done: "완료로 끝냈어요" }[act], "success");
           load();
         }).catch(function(e2) { done(); showToast("오류: " + e2, "error"); });
       });
@@ -409,10 +410,11 @@
         var hist = (it.history || []).slice().reverse();
         // 11-10: 취소(그 일 멈춤)·보류(held/<ID>.md에 남겨 두고 멈춤)·다시 하기 — 세션은 다음 단계 전에 상태를 보고 따른다
         var open = ["대기", "진행 중", "확인 필요"].indexOf(it.status) >= 0;
-        var acts = open ? '<button type="button" class="btn small" data-act="hold" data-write>⏸ 보류</button> ' +
+        var doneBtn = '<button type="button" class="btn small" data-act="done" data-write>✔ 완료로 끝내기</button> ';   // 11-10
+        var acts = open ? doneBtn + '<button type="button" class="btn small" data-act="hold" data-write>⏸ 보류</button> ' +
                           '<button type="button" class="btn small danger" data-act="cancel" data-write>✕ 취소</button>'
                  : it.status === "보류" ? '<a class="btn small" href="/skills?tab=docs#held/' + encodeURIComponent(it.id + ".md") + '">📄 보류 파일</a> ' +
-                                          '<button type="button" class="btn small primary" data-act="resume" data-write>▶ 다시 하기</button>' : "";
+                                          doneBtn + '<button type="button" class="btn small primary" data-act="resume" data-write>▶ 다시 하기</button>' : "";
         body.innerHTML = (acts ? '<div class="wk-acts" style="display:flex;gap:6px;justify-content:flex-end;margin-bottom:8px;">' + acts + "</div>" : "") +
           (hist.length ? "<h4>바뀐 기록</h4><ul class=\"wk-hist\">" + hist.map(function(h) {
           return "<li><span>" + when(h.at) + "</span><span>" + esc(h.status || "") + "</span><span>" + esc(h.note || "") + "</span></li>"; }).join("") + "</ul>" : "") +

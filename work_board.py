@@ -77,7 +77,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 _KST = timezone(timedelta(hours=9))
-ACTIONS = {"cancel": "취소", "hold": "보류", "resume": "대기"}
+ACTIONS = {"cancel": "취소", "hold": "보류", "resume": "대기", "done": "완료"}   # done: 11-10 '완료로 끝내기'(결과는 그대로 인정)
 OPEN_STATUSES = ("대기", "진행 중", "확인 필요")
 _ID_RE = re.compile(r"^W-\d{8}-\d{2,3}$")
 
@@ -110,11 +110,13 @@ def set_status(path: Path, item_id: str, action: str, note: str = "") -> tuple[d
             return None, f"'{st}' 상태라 {ACTIONS[action]}할 수 없어요."
         if action == "resume" and st != "보류":
             return None, "보류한 일만 다시 할 수 있어요."
+        if action == "done" and st not in OPEN_STATUSES + ("보류",):
+            return None, f"'{st}' 상태라 완료로 끝낼 수 없어요."
         new = ACTIONS[action]
         msg = (note or "").strip()[:200] or {"cancel": "사용자가 MR에서 취소", "hold": "사용자가 MR에서 보류",
-                                              "resume": "사용자가 MR에서 다시 하기"}[action]
+                                              "resume": "사용자가 MR에서 다시 하기", "done": "사용자가 MR에서 완료로 끝냄"}[action]
         it["status"], it["updated"] = new, _now()
-        if new == "취소":
+        if new in ("취소", "완료"):
             it["done"] = _now()
         it.setdefault("history", []).append({"at": _now(), "status": new, "note": msg})
         data["updated"] = _now()
