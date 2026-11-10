@@ -2294,11 +2294,14 @@ def api_notify_config():
     auth = authed(request)
     if auth is not True:
         return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
-    v = notify_hub.public_view(_hub())
-    tg = _tg_cfg()
-    v["bots"] = dict({"mr": {"name": "MR 봇 (연동·경로 설정)", "username": "", "builtin": True,
-                             "token_tail": ("…" + str(tg.get("bot_token") or "")[-4:]) if tg.get("bot_token") else ""}},
-                     **v["bots"])
+    d = _hub()
+    v = notify_hub.public_view(d)
+    # MR 자체 봇(연동·경로의 토큰)은 허브에서 지울 수 없는 내장 봇 — 11-10 사용자: 쓰는 알림이 없으면 목록에서 빼기
+    if any(it.get("bot") == "mr" for it in d["items"].values()):
+        tg = _tg_cfg()
+        v["bots"] = dict({"mr": {"name": "MR 봇 (연동·경로 설정)", "username": "", "builtin": True,
+                                 "token_tail": ("…" + str(tg.get("bot_token") or "")[-4:]) if tg.get("bot_token") else ""}},
+                         **v["bots"])
     return jsonify(dict(v, ok=True))
 
 

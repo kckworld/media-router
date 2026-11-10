@@ -131,6 +131,9 @@ def test_page_api_and_masking(hub, monkeypatch):
     assert c.get("/api/notify/log?q=시험&limit=abc").get_json()["ok"]
     html = c.get("/notify").get_data(as_text=True)
     assert 'id="ntItems"' in html and "보낸 기록" in html
+    # MR 봇을 쓰는 알림이 없으면 봇 목록에서 뺀다(11-10 사용자)
+    assert c.post("/api/notify/item/mr.request_done", json={"bot": "fam"}).get_json()["ok"]
+    assert "mr" not in c.get("/api/notify/config").get_json()["bots"]
 
 
 def test_first_load_migrates_request_kakao_setting(hub):
