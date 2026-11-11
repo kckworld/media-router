@@ -239,6 +239,44 @@ def query_log(path: Path, key: str = "", status: str = "", q: str = "", date_fro
             c.close()
 
 
+# ───────────────────────────── 중복 막기 (11-11) ─────────────────────────────
+# n8n 날씨봇 노드가 '실패 시 3번 재시도'라, 허브가 느리게(디스크) 답하면 같은 글을 3번 보냈다.
+# 같은 알림·같은 받는 곳·같은 글이 DEDUPE_SEC 안에 이미 나갔으면 보내지 않고 'dup'으로 기록만.
+DEDUPE_SEC = 180
+_recent: dict = {}
+_recent_lock = threading.Lock()
+
+
+def _dup_key(key: str, target: str, text: str, photo: str) -> tuple:
+    return (key, target, hash((text or "")[:TEXT_MAX]), photo or "")
+
+
+def seen_recently(key: str, target: str, text: str, photo: str = "", log_path: Path | None = None) -> bool:
+    k, now = _dup_key(key, target, text, photo), time.time()
+    with _recent_lock:
+        for kk in [kk for kk, t in _recent.items() if now - t > DEDUPE_SEC]:
+            _recent.pop(kk, None)
+        if k in _recent:
+            return True
+    if log_path and Path(log_path).exists():       # 다른 워커·재시작 뒤에도: 기록에서 확인
+        cut = (datetime.now(KST) - timedelta(seconds=DEDUPE_SEC)).strftime("%Y-%m-%d %H:%M:%S")
+        with _lock:
+            c = _db(log_path)
+            try:
+                r = c.execute("SELECT 1 FROM log WHERE key=? AND target=? AND text=? AND status='ok' AND ts>=? LIMIT 1",
+                              (key, target, (text or "")[:TEXT_MAX], cut)).fetchone()
+            finally:
+                c.close()
+        if r:
+            return True
+    return False
+
+
+def mark_sent(key: str, target: str, text: str, photo: str = "") -> None:
+    with _recent_lock:
+        _recent[_dup_key(key, target, text, photo)] = time.time()
+
+
 # ───────────────────────────── 보내기 ─────────────────────────────
 def strip_html(text: str) -> str:
     """카톡엔 텔레그램 HTML 태그를 빼고 보낸다"""
@@ -285,8 +323,18 @@ def dispatch(d: dict, key: str, text: str, *, photo: str = "", parse_mode: str =
             return False
         any_ok = False
         for chat in targets:
+            label = f"{it.get('bot')}→{chat}"
+            if seen_recently(key, label, text, photo, log_path):
+                rec("telegram", label, "dup", f"{DEDUPE_SEC // 60}분 안에 같은 글을 이미 보냄")
+                results.append({"channel": "telegram", "target": chat, "ok": True, "error": "", "dup": True})
+                any_ok = True
+                continue
+            mark_sent(key, label, text, photo)           # 보내기 전에 표시: 동시에 들어온 같은 요청도 막음
             ok, err = tg_send(token, chat, text, photo, parse_mode)
-            rec("telegram", f"{it.get('bot')}→{chat}", "ok" if ok else "fail", err or "")
+            if not ok:
+                with _recent_lock:
+                    _recent.pop(_dup_key(key, label, text, photo), None)   # 실패면 다시 시도할 수 있게
+            rec("telegram", label, "ok" if ok else "fail", err or "")
             results.append({"channel": "telegram", "target": chat, "ok": ok, "error": err or ""})
             any_ok = any_ok or ok
         return any_ok
@@ -299,8 +347,16 @@ def dispatch(d: dict, key: str, text: str, *, photo: str = "", parse_mode: str =
             return False
         poster = photo if str(photo).startswith("https://") else ""
         body = strip_html(text) if parse_mode.upper() == "HTML" else text
+        if seen_recently(key, room, text, photo, log_path):
+            rec("kakao", room, "dup", f"{DEDUPE_SEC // 60}분 안에 같은 글을 이미 보냄")
+            results.append({"channel": "kakao", "target": room, "ok": True, "error": "", "dup": True})
+            return True
+        mark_sent(key, room, text, photo)
         with _kakao_lock:
             ok, err = kakao_send(room, poster, body)
+        if not ok:
+            with _recent_lock:
+                _recent.pop(_dup_key(key, room, text, photo), None)
         if ok and photo and not poster:
             err = "사진은 https 주소가 아니라 글만 보냈어요"
         rec("kakao", room, "ok" if ok else "fail", err or "")

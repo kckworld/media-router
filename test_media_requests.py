@@ -14,6 +14,7 @@ def rq(monkeypatch, tmp_path):
     monkeypatch.setattr(web_admin, "MEDIA_REQUEST_SETTINGS", tmp_path / "settings.json")
     monkeypatch.setattr(web_admin, "NOTIFY_HUB_PATH", tmp_path / "notify_hub.json")      # 11-10 완료 안내는 알림 허브로
     monkeypatch.setattr(web_admin, "NOTIFY_LOG_PATH", tmp_path / "notify_log.sqlite3")
+    monkeypatch.setattr(web_admin.notify_hub, "_recent", {})        # 11-11 중복 막기 기억이 테스트끼리 새지 않게
     (tmp_path / "settings.json").write_text(json.dumps({"code": "1234"}), encoding="utf-8")
     monkeypatch.setattr(web_admin, "_rq_search_limit", media_requests.RateLimiter(30, 60))
     monkeypatch.setattr(web_admin, "_rq_submit_limit", media_requests.RateLimiter(5, 3600))

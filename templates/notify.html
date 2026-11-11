@@ -76,7 +76,7 @@
       <div class="card">
         <div class="nt-filter">
           <select id="lgKey" onchange="loadLog()"><option value="">모든 알림</option></select>
-          <select id="lgStatus" onchange="loadLog()"><option value="">모든 결과</option><option value="ok">보냄</option><option value="fail">실패</option><option value="off">꺼져서 안 보냄</option></select>
+          <select id="lgStatus" onchange="loadLog()"><option value="">모든 결과</option><option value="ok">보냄</option><option value="fail">실패</option><option value="off">꺼져서 안 보냄</option><option value="dup">중복이라 안 보냄</option></select>
           <input type="date" id="lgFrom" onchange="loadLog()"> <input type="date" id="lgTo" onchange="loadLog()">
           <input type="text" id="lgQ" placeholder="🔍 내용·받는 곳 검색" oninput="clearTimeout(window._lgT); window._lgT = setTimeout(loadLog, 400)">
         </div>
@@ -256,7 +256,7 @@
         from: document.getElementById("lgFrom").value, to: document.getElementById("lgTo").value, q: document.getElementById("lgQ").value.trim(), limit: "300" });
       fetch("/api/notify/log?" + p.toString(), { cache: "no-store" }).then(mrJson).then(function(res) {
         var rows = (res.data && res.data.rows) || [], body = document.getElementById("lgBody");
-        var ST = { ok: ["보냄", "ok"], fail: ["실패", "fail"], off: ["꺼짐", "off"] };
+        var ST = { ok: ["보냄", "ok"], fail: ["실패", "fail"], off: ["꺼짐", "off"], dup: ["중복(안 보냄)", "off"] };
         body.innerHTML = rows.map(function(x) {
           var st = ST[x.status] || [x.status, ""];
           return '<tr><td class="t">' + esc(x.ts.slice(5, 16)) + '</td><td>' + esc(x.name) + '</td><td>' + (CH_LABEL[x.channel] || esc(x.channel || "")) +

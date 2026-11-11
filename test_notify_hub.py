@@ -57,6 +57,31 @@ def test_kakao_fallback_and_caller_targets(tmp_path):
     assert tg == ["42"]
 
 
+def test_duplicate_within_3min_not_resent(tmp_path, monkeypatch):
+    """11-11: n8n 재시도로 같은 글이 3번 오면 한 번만 보내고 나머지는 'dup' 기록(실패한 건 다시 보낼 수 있음)"""
+    monkeypatch.setattr(nh, "_recent", {})
+    d = nh.load(tmp_path / "hub.json")
+    sent = []
+    ts = lambda t, c, text, photo, pm: sent.append(c) or (True, "")
+    log = tmp_path / "log.sqlite3"
+    for _ in range(3):
+        r = nh.dispatch(d, "n8n.weather_bot", "맑음", chat_ids=["111"], bot_token_of=lambda b: "T", tg_send=ts,
+                        kakao_send=None, log_path=log)
+        assert r["ok"]
+    assert sent == ["111"]
+    assert [x["status"] for x in nh.query_log(log, key="n8n.weather_bot")] == ["dup", "dup", "ok"]
+    nh.dispatch(d, "n8n.weather_bot", "흐림", chat_ids=["111"], bot_token_of=lambda b: "T", tg_send=ts, log_path=log)
+    assert sent == ["111", "111"]                                   # 다른 글은 보냄
+    monkeypatch.setattr(nh, "_recent", {})                          # 재시작해도 기록으로 막음
+    nh.dispatch(d, "n8n.weather_bot", "흐림", chat_ids=["111"], bot_token_of=lambda b: "T", tg_send=ts, log_path=log)
+    assert sent == ["111", "111"]
+    fails = []
+    bad = lambda t, c, text, photo, pm: fails.append(c) or (False, "x")
+    nh.dispatch(d, "n8n.weather_bot", "비", chat_ids=["222"], bot_token_of=lambda b: "T", tg_send=bad, log_path=log)
+    nh.dispatch(d, "n8n.weather_bot", "비", chat_ids=["222"], bot_token_of=lambda b: "T", tg_send=bad, log_path=log)
+    assert fails == ["222", "222"]                                  # 실패는 다시 시도 허용
+
+
 def test_validation_bots_rooms(tmp_path):
     d = nh.load(tmp_path / "hub.json")
     assert nh.set_bot(d, "mr", "x", "1:" + "a" * 35) and nh.set_bot(d, "Bad ID", "x", "1") and nh.set_bot(d, "fam", "가족", "bad")
@@ -70,6 +95,11 @@ def test_validation_bots_rooms(tmp_path):
     assert nh.delete_bot(d, "fam").startswith("이 봇을 쓰는 알림")
     assert nh.set_rooms(d, ["김창기"]).startswith("쓰는 알림이 있는 방")      # 건이네가족은 기본 알림이 씀
     assert nh.set_rooms(d, ["건이네가족", " 새 방 ", "새 방"]) is None and d["rooms"] == ["건이네가족", "새 방"]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_dedupe(monkeypatch):
+    monkeypatch.setattr(nh, "_recent", {})
 
 
 @pytest.fixture
