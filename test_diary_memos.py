@@ -90,7 +90,8 @@ def test_life_group_menu_and_swipe_order(dy, monkeypatch):
     assert 'class="icon-btn diary-btn" href="/journal?tab=memo"' in html      # 상단 ✎ 일기 버튼 → 생활 > 일기 > 메모(11-07)
     order = re.findall(r'href="([^"]+)"', re.search(r'<nav id="pageOrder".*?</nav>', html, re.S).group(0))
     assert order.index("/encode_log") + 1 == order.index("/recon") and order.index("/recon") + 1 == order.index("/journal")
-    assert order.index("/journal") + 1 == order.index("/people") and order.index("/people") + 1 == order.index("/settings")
+    assert order.index("/journal") + 1 == order.index("/people") and order.index("/people") + 1 == order.index("/notes")
+    assert order.index("/notes") + 1 == order.index("/settings")                     # 메모장(11-11)은 생활 맨 끝
     assert "/diary" not in order
     nav = re.search(r'<nav class="bottomnav".*?</nav>', html, re.S).group(0)
     assert ">생활<" in nav.replace("</svg>", ">") and 'href="/recon"' in nav

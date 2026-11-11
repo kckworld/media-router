@@ -1,0 +1,11 @@
+{% set active_page = 'notes' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <link rel="manifest" href="/static/notes.webmanifest">
+{% endblock %}
+
+{% block content %}
+    <p class="muted" style="margin:0 0 12px;">나만 쓰는 메모장이에요. 폰에서 <b>/notes?app=1</b>을 열고 "홈 화면에 추가"하면 앱처럼 쓸 수 있어요.</p>
+    {% include "_notes_body.html" %}
+{% endblock %}

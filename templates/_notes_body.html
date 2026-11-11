@@ -1,0 +1,290 @@
+{#- 메모장 본문(11-11). MR 안(notes.html)과 홈 화면 앱(notes_app.html)이 같이 쓴다. 변수는 바깥 화면의 테마를 따르고 없으면 기본값 -#}
+<style>
+  .nt { --c-bg: var(--bg, #f6f5f2); --c-card: var(--surface, #fff); --c-text: var(--text, #1f2328); --c-muted: var(--muted, #6b7280);
+        --c-line: var(--line, #e7e5e0); --c-accent: var(--accent, #3b6ef5); --c-soft: var(--chip, #f0eee9); --c-danger: var(--danger, #c0392b);
+        display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; align-items: start; color: var(--c-text); }
+  @media (max-width: 760px) { .nt { grid-template-columns: minmax(0, 1fr); } .nt.editing .nt-list { display: none; } .nt:not(.editing) .nt-ed { display: none; } }
+  .nt-list, .nt-ed { background: var(--c-card); border: 1px solid var(--c-line); border-radius: 16px; }
+  .nt-list { padding: 12px; }
+  .nt-top { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .nt-search { flex: 1; min-width: 0; border: 1px solid var(--c-line); background: var(--c-bg); color: var(--c-text); border-radius: 12px; padding: 10px 12px; font-size: 15px; }
+  .nt-new { border: 0; background: var(--c-accent); color: #fff; border-radius: 12px; padding: 10px 14px; font-size: 15px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+  .nt-cards { display: grid; gap: 8px; max-height: calc(100vh - 220px); overflow-y: auto; }
+  @media (max-width: 760px) { .nt-cards { max-height: none; } }
+  .nt-card { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; border: 1px solid transparent; background: var(--c-bg); color: var(--c-text);
+             border-radius: 12px; padding: 12px; cursor: pointer; font: inherit; }
+  .nt-card:hover { border-color: var(--c-line); }
+  .nt-card.on { border-color: var(--c-accent); background: var(--c-card); }
+  .nt-card .tx { flex: 1; min-width: 0; }
+  .nt-card .ti { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nt-card .sn { color: var(--c-muted); font-size: 13px; line-height: 1.45; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .nt-card .dt { color: var(--c-muted); font-size: 11.5px; margin-top: 5px; }
+  .nt-card img { width: 52px; height: 52px; object-fit: cover; border-radius: 10px; flex: none; }
+  .nt-empty { color: var(--c-muted); text-align: center; padding: 30px 8px; font-size: 14px; }
+  .nt-ed { padding: 16px 18px 22px; min-height: 60vh; }
+  .nt-bar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .nt-bar .sp { flex: 1; }
+  .nt-ib { border: 1px solid var(--c-line); background: var(--c-card); color: var(--c-text); border-radius: 10px; padding: 7px 10px; font-size: 14px; cursor: pointer; }
+  .nt-ib.on { background: var(--c-soft); border-color: var(--c-accent); }
+  .nt-ib.danger { color: var(--c-danger); }
+  .nt-back { display: none; }
+  @media (max-width: 760px) { .nt-back { display: inline-block; } }
+  .nt-state { color: var(--c-muted); font-size: 12px; }
+  .nt-title { width: 100%; border: 0; background: transparent; color: var(--c-text); font-size: 22px; font-weight: 800; padding: 6px 0; outline: none; }
+  .nt-title::placeholder, .nt-body::placeholder { color: var(--c-muted); opacity: .7; }
+  .nt-body { width: 100%; min-height: 50vh; border: 0; background: transparent; color: var(--c-text); font: inherit; font-size: 16px; line-height: 1.7; resize: none; outline: none; padding: 4px 0; }
+  .nt-view { font-size: 16px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; min-height: 40vh; padding: 4px 0; cursor: text; }
+  .nt-view img { display: block; max-width: 100%; border-radius: 12px; margin: 10px 0; }
+  .nt-view a { color: var(--c-accent); }
+  .nt-view .ph { color: var(--c-muted); }
+  .nt-tools { display: flex; gap: 6px; margin-top: 10px; align-items: center; }
+  .nt-hint { color: var(--c-muted); font-size: 12px; }
+  .nt-modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-end; justify-content: center; z-index: 50; }
+  .nt-sheet { background: var(--c-card); color: var(--c-text); width: 100%; max-width: 460px; border-radius: 18px 18px 0 0; padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); }
+  @media (min-width: 761px) { .nt-modal { align-items: center; } .nt-sheet { border-radius: 18px; } }
+  .nt-sheet h3 { margin: 0 0 12px; font-size: 17px; }
+  .nt-sheet .row { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+  .nt-sheet .link { flex: 1; min-width: 0; font-size: 13px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--c-line); background: var(--c-bg); color: var(--c-text); }
+  .nt-sheet .big { width: 100%; border: 0; border-radius: 12px; padding: 12px; font-size: 15px; font-weight: 700; cursor: pointer; background: var(--c-accent); color: #fff; }
+  .nt-sheet .sub { color: var(--c-muted); font-size: 12.5px; line-height: 1.5; }
+  .nt-toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: #222; color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 14px; z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .nt-toast.on { opacity: .92; }
+  .nt [hidden], .nt-modal[hidden] { display: none !important; }
+</style>
+
+<div class="nt" id="nt">
+  <section class="nt-list">
+    <div class="nt-top">
+      <input class="nt-search" id="ntQ" type="search" placeholder="🔍 메모 검색">
+      <button class="nt-new" id="ntNew" type="button" data-write>＋ 새 메모</button>
+    </div>
+    <div class="nt-cards" id="ntCards"><div class="nt-empty">불러오는 중…</div></div>
+  </section>
+
+  <section class="nt-ed" id="ntEd">
+    <div class="nt-empty" id="ntNone">왼쪽에서 메모를 고르거나 ＋ 새 메모를 눌러 주세요.</div>
+    <div id="ntEdit" hidden>
+      <div class="nt-bar">
+        <button class="nt-ib nt-back" id="ntBack" type="button">← 목록</button>
+        <span class="nt-state" id="ntState"></span>
+        <span class="sp"></span>
+        <button class="nt-ib" id="ntMode" type="button" data-write>✏️ 편집</button>
+        <button class="nt-ib" id="ntPin" type="button" title="고정" data-write>📌</button>
+        <button class="nt-ib" id="ntCopy" type="button" title="글 복사">📋</button>
+        <button class="nt-ib" id="ntShare" type="button" title="공유">↗</button>
+        <button class="nt-ib danger" id="ntDel" type="button" title="삭제" data-write>🗑</button>
+      </div>
+      <input class="nt-title" id="ntTitle" maxlength="{{ title_max }}" placeholder="제목" autocomplete="off">
+      <div class="nt-view" id="ntView"></div>
+      <textarea class="nt-body" id="ntBody" placeholder="내용을 적어 주세요" hidden></textarea>
+      <div class="nt-tools" id="ntTools" hidden>
+        <button class="nt-ib" id="ntPhoto" type="button" data-write>📷 사진</button>
+        <input type="file" id="ntFile" accept="image/*" multiple hidden>
+        <span class="nt-hint">사진은 커서 자리에 들어가요 · PC에선 붙여 넣기(Ctrl+V)도 돼요</span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="nt-modal" id="ntModal" hidden>
+  <div class="nt-sheet">
+    <h3>공유</h3>
+    <button class="big" id="ntShareApp" type="button">📱 폰 공유 창으로 보내기 (카톡·문자 등)</button>
+    <div class="sub" style="margin:6px 0 14px;">글만 보내요. 사진까지 보이게 하려면 아래 링크를 쓰세요.</div>
+    <div class="row"><b style="flex:1;">🔗 읽기 전용 링크</b><button class="nt-ib" id="ntLinkToggle" type="button" data-write>만들기</button></div>
+    <div class="row" id="ntLinkRow" hidden>
+      <input class="link" id="ntLink" readonly>
+      <button class="nt-ib" id="ntLinkCopy" type="button">복사</button>
+    </div>
+    <div class="sub">링크를 아는 사람은 로그인 없이 이 메모(사진 포함)를 볼 수만 있어요. [끄기]를 누르면 바로 안 열려요.</div>
+    <div class="row" style="justify-content:flex-end;"><button class="nt-ib" id="ntModalClose" type="button">닫기</button></div>
+  </div>
+</div>
+<div class="nt-toast" id="ntToast"></div>
+
+<script>
+(function() {
+  var $ = function(id) { return document.getElementById(id); };
+  var NOTES = [], CUR = null, timer = null, saving = false, pending = false;
+  var IMG = /\[\[사진:([0-9a-f]{16}\.jpg)\]\]/g;
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+  function toast(m) { var t = $("ntToast"); t.textContent = m; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(function() { t.classList.remove("on"); }, 1800); }
+  function api(url, body) {
+    return fetch(url, body === undefined ? { cache: "no-store" } : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function(r) { return r.json().then(function(d) { return { status: r.status, d: d }; }); });
+  }
+  function plain(n) { var b = (n.body || "").replace(IMG, "(사진)").trim(); return ((n.title || "").trim() + (n.title && b ? "\n\n" : "") + b).trim(); }
+  function when(s) {
+    if (!s) return ""; var d = new Date(s.replace(" ", "T") + "+09:00"), now = new Date();
+    if (d.toDateString() === now.toDateString()) return "오늘 " + s.slice(11, 16);
+    return (d.getFullYear() === now.getFullYear() ? "" : d.getFullYear() + ". ") + (d.getMonth() + 1) + "월 " + d.getDate() + "일";
+  }
+  function firstImg(n) { var m = /\[\[사진:([0-9a-f]{16}\.jpg)\]\]/.exec(n.body || ""); return m ? m[1] : ""; }
+  function renderList() {
+    var q = $("ntQ").value.trim().toLowerCase();
+    var list = NOTES.filter(function(n) { return !q || (n.title + "\n" + n.body).toLowerCase().indexOf(q) >= 0; });
+    $("ntCards").innerHTML = list.length ? list.map(function(n) {
+      var snip = (n.body || "").replace(IMG, " ").replace(/\s+/g, " ").trim(), img = firstImg(n);
+      return '<button type="button" class="nt-card' + (CUR && CUR.id === n.id ? " on" : "") + '" data-id="' + n.id + '"><div class="tx">' +
+        '<div class="ti">' + (n.pinned ? "📌 " : "") + esc(n.title || "제목 없음") + '</div>' +
+        (snip ? '<div class="sn">' + esc(snip.slice(0, 140)) + '</div>' : "") +
+        '<div class="dt">' + esc(when(n.updated)) + (n.share ? " · 🔗 공유 중" : "") + '</div></div>' +
+        (img ? '<img loading="lazy" src="/notes/img/' + img + '" alt="">' : "") + '</button>';
+    }).join("") : '<div class="nt-empty">' + (q ? "찾는 메모가 없어요." : "아직 메모가 없어요.<br>＋ 새 메모로 시작해 보세요.") + '</div>';
+  }
+  function linkify(t) { return t.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>'); }
+  function renderView() {
+    var b = CUR.body || "", out = "", pos = 0, m; IMG.lastIndex = 0;
+    while ((m = IMG.exec(b))) { out += linkify(esc(b.slice(pos, m.index))) + '<img src="/notes/img/' + m[1] + '" alt="">'; pos = IMG.lastIndex; }
+    out += linkify(esc(b.slice(pos)));
+    $("ntView").innerHTML = out.trim() ? out : '<span class="ph">눌러서 내용을 적어 보세요</span>';
+  }
+  function setMode(edit) {
+    $("ntView").hidden = edit; $("ntBody").hidden = !edit; $("ntTools").hidden = !edit;
+    $("ntMode").textContent = edit ? "👁 보기" : "✏️ 편집"; $("ntMode").classList.toggle("on", edit);
+    if (edit) { $("ntBody").value = CUR.body || ""; grow(); } else renderView();
+  }
+  function grow() { var t = $("ntBody"); t.style.height = "auto"; t.style.height = Math.max(t.scrollHeight, window.innerHeight * 0.5) + "px"; }
+  function open(id, edit) {
+    flush();
+    CUR = NOTES.filter(function(n) { return n.id === id; })[0] || null;
+    $("ntNone").hidden = !!CUR; $("ntEdit").hidden = !CUR;
+    $("nt").classList.toggle("editing", !!CUR);
+    if (!CUR) return renderList();
+    $("ntTitle").value = CUR.title || ""; $("ntPin").classList.toggle("on", !!CUR.pinned);
+    $("ntState").textContent = "저장됨 · " + when(CUR.updated);
+    setMode(!!edit); renderList();
+    try { history.replaceState(null, "", location.pathname + location.search.replace(/([?&])n=[^&]*/, "") + "#" + CUR.id); } catch (e) {}
+  }
+  function load(keep) {
+    return api("/api/notes").then(function(r) {
+      if (!r.d.ok) { $("ntCards").innerHTML = '<div class="nt-empty">불러오지 못했어요.</div>'; return; }
+      NOTES = r.d.notes || [];
+      if (keep && CUR) CUR = NOTES.filter(function(n) { return n.id === CUR.id; })[0] || null;
+      renderList();
+    });
+  }
+  function upsert(n) { NOTES = NOTES.filter(function(x) { return x.id !== n.id; }); NOTES.push(n);
+    NOTES.sort(function(a, b) { return (b.pinned - a.pinned) || (a.updated < b.updated ? 1 : a.updated > b.updated ? -1 : 0); }); }
+  function schedule() { pending = true; $("ntState").textContent = "입력 중…"; clearTimeout(timer); timer = setTimeout(save, 900); }
+  function flush() { if (pending && CUR) { clearTimeout(timer); save(); } }
+  function save() {
+    if (!CUR || saving) { if (saving) { clearTimeout(timer); timer = setTimeout(save, 400); } return; }
+    var title = $("ntTitle").value, body = $("ntBody").hidden ? CUR.body : $("ntBody").value;
+    pending = false; saving = true; $("ntState").textContent = "저장 중…";
+    var id = CUR.id;
+    api("/api/notes/" + id, { base: String(CUR.rev || 1), title: title, body: body }).then(function(r) {
+      saving = false;
+      if (r.status === 409) {
+        if (confirm("다른 기기에서 이 메모가 바뀌었어요.\n[확인] 그 내용을 불러오기 / [취소] 지금 화면 내용으로 덮어쓰기")) {
+          upsert(r.d.note); if (CUR && CUR.id === id) open(id, false);
+        } else { CUR.rev = r.d.note.rev; save(); }
+        return;
+      }
+      if (!r.d.ok) { $("ntState").textContent = "⚠ 저장 못 함: " + (r.d.error || ""); return; }
+      upsert(r.d.note); if (CUR && CUR.id === id) { CUR = r.d.note; $("ntState").textContent = "저장됨 · " + when(CUR.updated); }
+      renderList();
+    }).catch(function() { saving = false; pending = true; $("ntState").textContent = "⚠ 연결이 끊겼어요 — 다시 시도할게요"; clearTimeout(timer); timer = setTimeout(save, 5000); });
+  }
+  // 사진: 폰 원본은 커서 화면에서 긴 쪽 1600px JPEG로 줄여 올린다(서버도 다시 확인)
+  function shrink(file) {
+    return new Promise(function(res) {
+      var img = new Image(), url = URL.createObjectURL(file);
+      img.onload = function() {
+        var s = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement("canvas");
+        c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+        var g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url); c.toBlob(function(b) { res(b || file); }, "image/jpeg", 0.85);
+      };
+      img.onerror = function() { URL.revokeObjectURL(url); res(file); };
+      img.src = url;
+    });
+  }
+  function addPhotos(files) {
+    if (!CUR || !files || !files.length) return;
+    if ($("ntBody").hidden) setMode(true);
+    var t = $("ntBody"), at = t.selectionStart != null ? t.selectionStart : t.value.length;
+    $("ntState").textContent = "사진 올리는 중…";
+    Array.prototype.reduce.call(files, function(p, f) {
+      return p.then(function() { return shrink(f); }).then(function(b) {
+        var fd = new FormData(); fd.append("file", b, "photo.jpg");
+        return fetch("/api/notes/image", { method: "POST", body: fd }).then(function(r) { return r.json(); });
+      }).then(function(d) {
+        if (!d.ok) { toast(d.error || "사진을 못 올렸어요"); return; }
+        var mark = (at > 0 && t.value[at - 1] !== "\n" ? "\n" : "") + "[[사진:" + d.name + "]]\n";
+        t.value = t.value.slice(0, at) + mark + t.value.slice(at); at += mark.length;
+        t.selectionStart = t.selectionEnd = at; grow(); schedule();
+      });
+    }, Promise.resolve()).then(function() { $("ntFile").value = ""; });
+  }
+  function copyText(s) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(s);
+    var ta = document.createElement("textarea"); ta.value = s; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } finally { document.body.removeChild(ta); }
+    return Promise.resolve();
+  }
+  function showShare() {
+    var on = !!CUR.share_url; $("ntLinkToggle").textContent = on ? "끄기" : "만들기";
+    $("ntLinkRow").hidden = !on; $("ntLink").value = CUR.share_url || ""; $("ntModal").hidden = false;
+  }
+  $("ntQ").addEventListener("input", renderList);
+  $("ntCards").addEventListener("click", function(e) { var b = e.target.closest(".nt-card"); if (b) open(b.dataset.id, false); });
+  $("ntNew").addEventListener("click", function() {
+    flush();
+    api("/api/notes", { title: "", body: "" }).then(function(r) {
+      if (!r.d.ok) return toast(r.d.error || "만들지 못했어요");
+      upsert(r.d.note); open(r.d.note.id, true); $("ntTitle").focus();
+    });
+  });
+  $("ntBack").addEventListener("click", function() { flush(); CUR = null; $("nt").classList.remove("editing"); $("ntEdit").hidden = true; $("ntNone").hidden = false; renderList(); });
+  $("ntTitle").addEventListener("input", schedule);
+  $("ntBody").addEventListener("input", function() { grow(); schedule(); });
+  $("ntBody").addEventListener("paste", function(e) {
+    var items = (e.clipboardData && e.clipboardData.files) || [];
+    if (items.length) { e.preventDefault(); addPhotos(items); }
+  });
+  $("ntView").addEventListener("click", function(e) { if (!e.target.closest("a")) setMode(true); });   // 글을 누르면 바로 편집
+  $("ntMode").addEventListener("click", function() { var edit = $("ntBody").hidden; if (!edit) { CUR.body = $("ntBody").value; flush(); } setMode(edit); });
+  $("ntPhoto").addEventListener("click", function() { $("ntFile").click(); });
+  $("ntFile").addEventListener("change", function() { addPhotos(this.files); });
+  $("ntPin").addEventListener("click", function() {
+    api("/api/notes/" + CUR.id, { pinned: !CUR.pinned }).then(function(r) {
+      if (!r.d.ok) return toast(r.d.error || "못 바꿨어요");
+      upsert(r.d.note); CUR = r.d.note; $("ntPin").classList.toggle("on", !!CUR.pinned); renderList(); toast(CUR.pinned ? "📌 고정했어요" : "고정을 풀었어요");
+    });
+  });
+  $("ntCopy").addEventListener("click", function() {
+    var n = { title: $("ntTitle").value, body: $("ntBody").hidden ? CUR.body : $("ntBody").value };
+    copyText(plain(n)).then(function() { toast("📋 복사했어요"); });
+  });
+  $("ntDel").addEventListener("click", function() {
+    if (!confirm("'" + ($("ntTitle").value || "제목 없음") + "' 메모를 지울까요?\n사진도 같이 지워져요.")) return;
+    pending = false; clearTimeout(timer);
+    api("/api/notes/" + CUR.id + "/delete", {}).then(function(r) {
+      if (!r.d.ok) return toast("지우지 못했어요");
+      NOTES = NOTES.filter(function(x) { return x.id !== CUR.id; }); CUR = null;
+      $("nt").classList.remove("editing"); $("ntEdit").hidden = true; $("ntNone").hidden = false; renderList(); toast("지웠어요");
+    });
+  });
+  $("ntShare").addEventListener("click", function() { flush(); showShare(); });
+  $("ntModalClose").addEventListener("click", function() { $("ntModal").hidden = true; });
+  $("ntModal").addEventListener("click", function(e) { if (e.target === this) this.hidden = true; });
+  $("ntShareApp").addEventListener("click", function() {
+    var n = { title: $("ntTitle").value, body: $("ntBody").hidden ? CUR.body : $("ntBody").value }, text = plain(n);
+    if (navigator.share) navigator.share({ title: n.title || "메모", text: text }).catch(function() {});
+    else copyText(text).then(function() { toast("이 기기에선 공유 창이 없어 글을 복사했어요"); });
+  });
+  $("ntLinkToggle").addEventListener("click", function() {
+    var on = !CUR.share_url;
+    if (!on && !confirm("링크를 끌까요? 이미 보낸 링크도 더는 안 열려요.")) return;
+    api("/api/notes/" + CUR.id + "/share", { on: on }).then(function(r) {
+      if (!r.d.ok) return toast(r.d.error || "못 바꿨어요");
+      upsert(r.d.note); CUR = r.d.note; showShare(); renderList(); toast(on ? "🔗 링크를 만들었어요" : "링크를 껐어요");
+    });
+  });
+  $("ntLinkCopy").addEventListener("click", function() { copyText($("ntLink").value).then(function() { toast("링크를 복사했어요"); }); });
+  window.addEventListener("pagehide", flush);       // 앱을 닫거나 다른 화면으로 갈 때 쓰던 내용 저장
+  document.addEventListener("visibilitychange", function() { if (document.hidden) flush(); else if (!pending && !saving) load(true).then(function() { if (CUR && $("ntBody").hidden) open(CUR.id, false); }); });
+  load().then(function() { var id = (location.hash || "").slice(1); if (id && NOTES.some(function(n) { return n.id === id; })) open(id, false); });
+})();
+</script>

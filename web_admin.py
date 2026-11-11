@@ -1576,7 +1576,8 @@ def _pub_gate():
         if authed(request) is not True or session_role(request) != "admin" or current_user(request) != accounts.OWNER:
             return make_response("Not Found", 404)
     ip = _public_ip(request)
-    poster = request.path.startswith("/pub/poster/") or request.path.startswith("/pub/guide/img/")
+    poster = (request.path.startswith("/pub/poster/") or request.path.startswith("/pub/guide/img/")
+              or (request.path.startswith("/pub/n/") and "/img/" in request.path))     # 공유 메모 사진(11-11)
     if not (_pub_poster_limit if poster else _pub_limit).allow(ip) or not _pub_total.allow("all"):
         return make_response("요청이 너무 많아요. 잠시 뒤에 다시 해 주세요.", 429)
     return None
@@ -2862,6 +2863,130 @@ def api_diary_delete():
     body = request.get_json(silent=True) or {}
     ok = diary_memos.delete(DIARY_DIR, str(body.get("date") or ""), str(body.get("id") or ""))
     return jsonify({"ok": ok}), (200 if ok else 404)
+
+
+# ── 생활 > 메모장 (2026-11-11 사용자): 나만 쓰는 웹 동기화 메모 — 제목·본문·사진·고정·복사·공유. 소유자만(menu owner_only)
+#    홈 화면 앱은 /notes?app=1(notes.webmanifest), 공유 링크는 공개 사이트 /pub/n/<비밀값>(읽기 전용, 끄면 바로 안 열림)
+import notes as notes_store
+NOTES_DIR = DATA_DIR / "notes"
+
+
+def _notes_share_url(n: dict) -> str:
+    host = sorted(REQUEST_PUBLIC_HOSTS)[0] if REQUEST_PUBLIC_HOSTS else request.host
+    return f"https://{host}/pub/n/{n['share']}" if n.get("share") else ""
+
+
+def _note_out(n: dict) -> dict:
+    return dict(n, share_url=_notes_share_url(n))
+
+
+@app.route("/notes", methods=["GET"])
+def notes_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("notes_app.html" if request.args.get("app") else "notes.html", authed=True,
+                           title_max=notes_store.TITLE_MAX)
+
+
+@app.route("/api/notes", methods=["GET", "POST"])
+def api_notes():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    if request.method == "GET":
+        return _no_store(jsonify({"ok": True, "notes": [_note_out(n) for n in notes_store.sorted_notes(notes_store.load(NOTES_DIR))]}))
+    b = request.get_json(silent=True) or {}
+    n, err = notes_store.create(NOTES_DIR, b.get("title"), b.get("body"))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "note": _note_out(n)})
+
+
+@app.route("/api/notes/<nid>", methods=["POST"])
+def api_notes_update(nid):
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    b = request.get_json(silent=True) or {}
+    n, err = notes_store.update(NOTES_DIR, nid, str(b.get("base") or ""), b.get("title"), b.get("body"),
+                                b.get("pinned") if "pinned" in b else None)
+    if err == "conflict":
+        return jsonify({"ok": False, "conflict": True, "note": _note_out(n),
+                        "error": "다른 기기에서 이 메모가 바뀌었어요."}), 409
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "note": _note_out(n)})
+
+
+@app.route("/api/notes/<nid>/delete", methods=["POST"])
+def api_notes_delete(nid):
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    ok = notes_store.delete(NOTES_DIR, nid)
+    return jsonify({"ok": ok}), (200 if ok else 404)
+
+
+@app.route("/api/notes/<nid>/share", methods=["POST"])
+def api_notes_share(nid):
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    n, err = notes_store.set_share(NOTES_DIR, nid, bool((request.get_json(silent=True) or {}).get("on")))
+    if err:
+        return jsonify({"ok": False, "error": err}), 404
+    return jsonify({"ok": True, "note": _note_out(n)})
+
+
+@app.route("/api/notes/image", methods=["POST"])
+def api_notes_image():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    f = request.files.get("file")
+    name, err = notes_store.save_image(NOTES_DIR, f.read() if f else b"")
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "name": name})
+
+
+@app.route("/notes/img/<name>", methods=["GET"])
+def notes_image(name):
+    auth = authed(request)
+    if auth is not True:
+        return make_response("Not Found", 404)
+    p = notes_store.image_path(NOTES_DIR, name)
+    if p is None:
+        return make_response("Not Found", 404)
+    r = send_file(p, mimetype="image/jpeg", max_age=86400)
+    r.headers["Cache-Control"] = "private, max-age=86400"
+    return r
+
+
+@app.route("/pub/n/<token>", methods=["GET"])
+def pub_note(token):
+    """공유된 메모(읽기 전용). 공개 사이트 문지기·접속 한도·보안 헤더를 그대로 받는다"""
+    n = notes_store.by_token(NOTES_DIR, token)
+    if not n:
+        return make_response("Not Found", 404)
+    r = make_response(render_template("public/note.html", note=n, parts=notes_store.parts(n.get("body", "")), token=token))
+    r.headers["Cache-Control"] = "no-store"
+    r.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return r
+
+
+@app.route("/pub/n/<token>/img/<name>", methods=["GET"])
+def pub_note_image(token, name):
+    n = notes_store.by_token(NOTES_DIR, token)
+    if not n or name not in notes_store.IMG_RE.findall(n.get("body", "")):   # 그 메모에 든 사진만
+        return make_response("Not Found", 404)
+    p = notes_store.image_path(NOTES_DIR, name)
+    if p is None:
+        return make_response("Not Found", 404)
+    r = send_file(p, mimetype="image/jpeg", max_age=0)
+    r.headers["Cache-Control"] = "no-store"
+    return r
 
 
 @app.route("/requests", methods=["GET"])

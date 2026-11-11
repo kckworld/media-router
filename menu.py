@@ -44,7 +44,9 @@ GROUPS = [
          "legacy_hidden": True, "caution": True},
         {"key": "journal", "label": "일기", "href": "/journal", "prefixes": ["/journal", "/api/journal", "/diary", "/api/diary"],
          "legacy_hidden": True, "caution": True},
-        {"key": "people", "label": "검색직", "href": "/people", "prefixes": ["/people", "/api/people"], "owner_only": True}]},
+        {"key": "people", "label": "검색직", "href": "/people", "prefixes": ["/people", "/api/people"], "owner_only": True},
+        # 메모장(11-11): 나만 쓰는 웹 동기화 메모. 공유 링크는 공개 사이트 /pub/n/… (menu 밖, _pub_gate)
+        {"key": "notes", "label": "메모장", "href": "/notes", "prefixes": ["/notes", "/api/notes"], "owner_only": True}]},
     {"key": "settings", "label": "설정", "pages": [
         {"key": "settings", "label": "연동·경로", "href": "/settings", "prefixes": ["/settings"], "owner_only": True},
         {"key": "users", "label": "사용자 매핑", "href": "/users", "prefixes": ["/users", "/api/users"], "owner_only": True},

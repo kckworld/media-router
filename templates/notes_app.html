@@ -1,0 +1,40 @@
+<!doctype html>
+{#- 홈 화면 앱(manifest start_url /notes?app=1)으로 열 때의 단독 화면(11-11). MR 안에서는 생활 > 메모장 -#}
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#3b6ef5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="메모장">
+<link rel="manifest" href="/static/notes.webmanifest">
+<link rel="apple-touch-icon" href="/static/notes-icon-180.png">
+<link rel="icon" href="/static/notes-icon-192.png">
+<title>메모장</title>
+<style>
+  :root { --bg: #f6f5f2; --surface: #fff; --text: #1f2328; --muted: #6b7280; --line: #e7e5e0; --accent: #3b6ef5; --chip: #eef1fb; --danger: #c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141518; --surface: #1d1f23; --text: #eceef2; --muted: #9aa1ab; --line: #2c2f35; --accent: #7a9cff; --chip: #262b38; --danger: #ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: max(14px, env(safe-area-inset-top)) 14px calc(28px + env(safe-area-inset-bottom)); }
+  header { display: flex; align-items: center; justify-content: space-between; margin: 2px 2px 12px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.3px; }
+  .back { color: var(--muted); font-size: 14px; text-decoration: none; padding: 8px 4px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>📝 메모장</h1>
+    <a class="back" href="/notes">Media Router</a>
+  </header>
+  {% include "_notes_body.html" %}
+</main>
+</body>
+</html>
