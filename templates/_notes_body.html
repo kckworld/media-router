@@ -1,8 +1,9 @@
 {#- 메모장 본문(11-11). MR 안(notes.html)과 홈 화면 앱(notes_app.html)이 같이 쓴다. 변수는 바깥 화면의 테마를 따르고 없으면 기본값 -#}
 <style>
-  .nt { --c-bg: var(--bg, #f6f5f2); --c-card: var(--surface, #fff); --c-text: var(--text, #1f2328); --c-muted: var(--muted, #6b7280);
-        --c-line: var(--line, #e7e5e0); --c-accent: var(--accent, #3b6ef5); --c-soft: var(--chip, #f0eee9); --c-danger: var(--danger, #c0392b);
-        display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; align-items: start; color: var(--c-text); }
+  /* 색 변수: 본문(.nt)뿐 아니라 그 밖에 있는 공유 창(.nt-modal)에도 — 11-11 MR 화면 안에서 공유 창 배경이 비었다 */
+  .nt, .nt-modal { --c-bg: var(--bg, #f6f5f2); --c-card: var(--surface, #fff); --c-text: var(--text, #1f2328); --c-muted: var(--muted, #6b7280);
+        --c-line: var(--line, #e7e5e0); --c-accent: var(--accent, #3b6ef5); --c-soft: var(--chip, #f0eee9); --c-danger: var(--danger, #c0392b); }
+  .nt { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; align-items: start; color: var(--c-text); }
   @media (max-width: 760px) { .nt { grid-template-columns: minmax(0, 1fr); } .nt.editing .nt-list { display: none; } .nt:not(.editing) .nt-ed { display: none; } }
   .nt-list, .nt-ed { background: var(--c-card); border: 1px solid var(--c-line); border-radius: 16px; }
   .nt-list { padding: 12px; }
@@ -40,7 +41,7 @@
   .nt-tools { display: flex; gap: 6px; margin-top: 10px; align-items: center; }
   .nt-hint { color: var(--c-muted); font-size: 12px; }
   .nt-modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-end; justify-content: center; z-index: 50; }
-  .nt-sheet { background: var(--c-card); color: var(--c-text); width: 100%; max-width: 460px; border-radius: 18px 18px 0 0; padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); }
+  .nt-sheet { background: var(--c-card); color: var(--c-text); box-shadow: 0 12px 40px rgba(0,0,0,.25); width: 100%; max-width: 460px; border-radius: 18px 18px 0 0; padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); }
   @media (min-width: 761px) { .nt-modal { align-items: center; } .nt-sheet { border-radius: 18px; } }
   .nt-sheet h3 { margin: 0 0 12px; font-size: 17px; }
   .nt-sheet .row { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
