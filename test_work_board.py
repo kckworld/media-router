@@ -88,7 +88,7 @@ def test_owner_only(wk, monkeypatch):
 def test_work_tab_page(wk, monkeypatch):
     c, tmp = wk
     h = c.get("/skills?tab=work").get_data(as_text=True)
-    assert 'id="wkList"' in h and 'id="wkSess"' in h and 'aria-current="page">작업<' in h and "/api/skills/work" in h
+    assert 'id="wkList"' in h and 'id="wkSess"' in h and 'id="wkSessAll"' in h and 'aria-current="page">작업<' in h and "/api/skills/work" in h
     assert 'id="sessList"' not in h                                                   # 세션 관리 카드는 다른 탭
     h = c.get("/skills").get_data(as_text=True)
     assert 'id="sessList"' in h and 'href="/skills?tab=work"' in h and 'id="wkList"' not in h
