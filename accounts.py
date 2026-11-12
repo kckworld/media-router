@@ -207,8 +207,14 @@ def bump_all(path: Path, by: str = OWNER) -> None:
 LOGIN_LOG_MAX = 200
 
 
+NAS_TEST_UA = "NAS 시험(Claude)"
+
+
 def ua_summary(ua: str) -> str:
     ua = ua or ""
+    # 11-12: Claude가 NAS 안에서 파이썬으로 MR을 시험할 때(Python-urllib·python-requests) — 예전엔 "? · ?"로 보였다
+    if ua.lower().startswith(("python-urllib", "python-requests", "python-httpx", "aiohttp")):
+        return NAS_TEST_UA
     dev = ("iPhone" if "iPhone" in ua else "iPad" if "iPad" in ua else "Android" if "Android" in ua
            else "Windows" if "Windows" in ua else "Mac" if "Macintosh" in ua else "Linux" if "Linux" in ua else "?")
     br = ("Edge" if "Edg/" in ua else "Samsung" if "SamsungBrowser" in ua else "Chrome" if "Chrome/" in ua
@@ -235,6 +241,12 @@ def log_login(path: Path, ok: bool, user: str, ip: str, ua: str, note: str = "")
 def login_log(path: Path) -> list[dict]:
     try:
         items = json.loads(path.with_name("login_log.json").read_text(encoding="utf-8"))
-        return list(reversed(items)) if isinstance(items, list) else []
+        if not isinstance(items, list):
+            return []
+        # 11-12 전 기록: NAS 자신(…1)에서 기기를 모르는 접속(? · ?)은 Claude의 파이썬 시험이었다(작업 폴더 스크립트로 확인)
+        for it in items:
+            if isinstance(it, dict) and it.get("ua") == "? · ?" and it.get("ip") == "…1":
+                it["ua"] = NAS_TEST_UA
+        return list(reversed(items))
     except (OSError, ValueError):
         return []
