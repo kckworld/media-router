@@ -64,6 +64,11 @@ ra_ts() { echo "[run_all $(date '+%H:%M:%S')]"; }
 #   resume/stop   [▶ 시작]/[⏹ 종료] — control.json(/volume1/video 아래, 컨테이너에선 읽기 전용)
 #   trash-emptied v1이 남긴 Drive 휴지통 비움 기록 — 볼륨 여유 공간을 잰다
 # 배치 잠금보다 앞이라 배치가 도는 중에도 바로 처리된다(reencode.py가 자기 잠금으로 run끼리 겹치지 않게 함).
+# 상단 사용량 칩(2026-11-12): agy 로그인 토큰(1시간짜리)이 만료됐을 때 MR이 'agy-refresh'를 보내면 `agy models`로 갱신만
+if [ "${SSH_ORIGINAL_COMMAND:-}" = "agy-refresh" ]; then
+    timeout 60 /var/services/homes/kck9010/.local/bin/agy models >/dev/null 2>&1
+    exit 0
+fi
 case "${SSH_ORIGINAL_COMMAND:-}" in reencode-*)
     set -- ${SSH_ORIGINAL_COMMAND#reencode-}
     re_cmd="${1:-}"

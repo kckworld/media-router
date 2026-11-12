@@ -81,6 +81,13 @@
           {#- 일기 메모(11-03): 메뉴 탭에 넣으면 스와이프 순서에 끼어 /diary(단독 화면)에서 막혀서 상단 바에 따로 둔다 -#}
           <a class="icon-btn diary-btn" href="/journal?tab=memo" aria-label="일기 메모 쓰기">{{ icon('diary', 18) }}<span class="diary-btn-text">일기</span></a>
           {%- endif %}
+          {%- if usage %}
+          {#- Claude·안티그래비티 사용량(11-12, 소유자만): 5분마다 갱신, 70%↑ 주황·90%↑ 빨강, 누르면 설정 > Claude -#}
+          <a class="usage-chip" href="/skills" title="{{ usage.title }}" aria-label="사용량. {{ usage.title }}">
+            {%- if usage.week is not none %}<span class="u-seg {{ usage.claude_lvl }}{{ ' old' if usage.claude_old }}"><b class="u-lbl">Claude</b><span class="u-wide">5h {{ usage.five or 0 }}% · 주 </span>{{ usage.week }}%</span>{% endif -%}
+            {%- if usage.agy is not none %}<span class="u-seg {{ usage.agy_lvl }}{{ ' old' if usage.agy_old }}"><b class="u-lbl">agy</b>{{ usage.agy }}%</span>{% endif -%}
+          </a>
+          {%- endif %}
           {%- if who_label %}
           {#- 지금 접속한 계정(11-07): 소유자는 '소유자', 일반 계정은 이름. 휴대폰에선 아이콘+앞 글자만 -#}
           <span class="who-chip" title="접속 계정: {{ who_label }}" aria-label="접속 계정 {{ who_label }}">{{ icon('people', 16) }}<span class="who-text">{{ who_label }}</span></span>

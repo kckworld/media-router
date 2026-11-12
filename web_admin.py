@@ -929,7 +929,17 @@ def _inject_role():
     return {"viewer": role == "viewer", "has_login": bool(PASSWORD), "processing_pause": processing_pause_state(),
             "nav_all": menu.nav_for(who, perms, layout), "can_edit": can_edit,
             "can_journal": menu.level(who, perms, "journal") != "none",
-            "who_label": _who_label(request, role, u)}
+            "who_label": _who_label(request, role, u),
+            "usage": _usage_chip(role, u)}
+
+
+def _usage_chip(role, u):
+    """상단 사용량 칩(11-12): 소유자만. 5분마다 _usage_meter_loop가 저장한 값을 읽기만"""
+    if role != "admin" and u != accounts.OWNER:
+        return None
+    if role is None and PASSWORD:
+        return None
+    return usage_meter.view(usage_meter.load(USAGE_METER_PATH))
 
 
 def _who_label(req, role, u) -> str:
@@ -3367,6 +3377,38 @@ def _reencode_scheduler_loop() -> None:
 
 
 threading.Thread(target=_reencode_scheduler_loop, daemon=True).start()
+
+
+# ── 상단 바 사용량 (2026-11-12 사용자): Claude 5시간·주간 + 안티그래비티. 5분마다 읽어 data/usage_meter.json에 ──
+import usage_meter
+USAGE_METER_PATH = DATA_DIR / "usage_meter.json"
+USAGE_METER_EVERY = 300
+
+
+def _agy_token_refresh():
+    """agy 토큰(1시간짜리)이 만료됐으면 호스트에서 `agy models`를 한 번 돌려 갱신(run_all.sh 'agy-refresh')"""
+    if not Path(RUN_BATCH_SSH_KEY).exists():
+        return
+    args = ["ssh", "-i", RUN_BATCH_SSH_KEY, "-p", RUN_BATCH_SSH_PORT, "-o", "StrictHostKeyChecking=no",
+            "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", "agy-refresh"]
+    try:
+        subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, timeout=90)
+    except Exception:
+        app.logger.warning("agy 토큰 갱신 요청 실패")
+
+
+def _usage_meter_loop():
+    time.sleep(20)
+    while True:
+        try:
+            usage_meter.refresh(USAGE_METER_PATH, refresh_agy=_agy_token_refresh)
+        except Exception:
+            app.logger.exception("사용량 읽기 실패")
+        time.sleep(USAGE_METER_EVERY)
+
+
+if os.getenv("USAGE_METER_OFF") != "1":
+    threading.Thread(target=_usage_meter_loop, daemon=True).start()
 
 
 @app.route("/api/reencode", methods=["GET"])
