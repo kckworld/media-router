@@ -39,6 +39,10 @@
     </nav>
 
     {% if tab == 'memo' %}
+    <p class="muted" style="margin:0 0 12px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+      <a class="btn small" href="/diary?app=1" target="_blank" rel="noopener">📱 일기 메모 앱 바로가기</a>
+      <span>열린 화면에서 "홈 화면에 추가"하면 앱처럼 쓸 수 있어요.</span>
+    </p>
     <div class="card">
       {% set autofocus = False %}
       {% include "_diary_body.html" %}

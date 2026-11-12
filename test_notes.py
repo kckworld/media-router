@@ -86,7 +86,8 @@ def test_share_link_read_only(nt, monkeypatch):
 
 def test_owner_only_and_pages(nt, monkeypatch):
     c, d = nt
-    assert 'id="ntCards"' in c.get("/notes").get_data(as_text=True)
+    notes_html = c.get("/notes").get_data(as_text=True)
+    assert 'id="ntCards"' in notes_html and 'href="/notes?app=1"' in notes_html   # 앱 바로가기 버튼(11-12)
     app_html = c.get("/notes?app=1").get_data(as_text=True)
     assert "notes.webmanifest" in app_html and "notes-icon-180.png" in app_html
     m = json.loads(open("static/notes.webmanifest", encoding="utf-8").read())

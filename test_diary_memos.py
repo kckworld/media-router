@@ -23,6 +23,7 @@ def test_write_list_delete(dy):
     c, base = dy
     assert c.get("/diary").headers["Location"].endswith("/journal?tab=memo")              # MR 안에선 생활 > 일기 [메모]
     html = c.get("/journal?tab=memo").get_data(as_text=True)
+    assert 'href="/diary?app=1"' in html                                                  # 앱 바로가기 버튼(11-12)
     assert 'id="writeBtn"' in html and 'id="pageOrder"' in html
     app_html = c.get("/diary?app=1").get_data(as_text=True)
     assert "/static/diary.webmanifest" in app_html and 'id="writeBtn"' in app_html and "pageOrder" not in app_html

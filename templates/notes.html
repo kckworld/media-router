@@ -6,6 +6,9 @@
 {% endblock %}
 
 {% block content %}
-    <p class="muted" style="margin:0 0 12px;">나만 쓰는 메모장이에요. 폰에서 <b>/notes?app=1</b>을 열고 "홈 화면에 추가"하면 앱처럼 쓸 수 있어요.</p>
+    <p class="muted" style="margin:0 0 12px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+      <a class="btn small" href="/notes?app=1" target="_blank" rel="noopener">📱 메모장 앱 바로가기</a>
+      <span>나만 쓰는 메모장이에요. 열린 화면에서 "홈 화면에 추가"하면 앱처럼 쓸 수 있어요.</span>
+    </p>
     {% include "_notes_body.html" %}
 {% endblock %}
