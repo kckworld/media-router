@@ -37,6 +37,23 @@
     .rc-ex > summary { cursor: pointer; color: var(--muted); margin-top: 10px; }
     .rc-foot { color: var(--muted); font-size: 12px; margin-top: 10px; }
     .rc-empty { color: var(--muted); padding: 12px 2px; }
+    /* 11-13: 카드별 최소 사용액 */
+    .ms-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+    .ms-head b { font-size: 16px; color: var(--text); }
+    .ms-head .btn { margin-left: auto; }
+    .ms-list { list-style: none; margin: 0; padding: 0; }
+    .ms-list li { padding: 8px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; font-size: 13px; }
+    .ms-list li:last-child { border-bottom: 0; }
+    .ms-name { color: var(--text); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+    .ms-left { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .ms-left.need { color: var(--danger, #b3261e); }
+    .ms-left.done { color: var(--success, #188038); }
+    .ms-sub { grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .ms-bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+    .ms-bar i { display: block; height: 100%; background: var(--danger, #b3261e); }
+    .ms-bar i.done { background: var(--success, #188038); }
+    .ms-list input { width: 9em; max-width: 40vw; text-align: right; font-variant-numeric: tabular-nums; }
+    .ms-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
   </style>
 {% endblock %}
 
@@ -52,6 +69,12 @@
         <span class="hint" id="runState" role="status" aria-live="polite"></span>
       </div>
       <div class="hint" style="margin-top:8px;">가계부를 고친 뒤 편한가계부 앱에서 구글 드라이브 백업을 한 번 하고 누르세요(가장 새 백업으로 비교해요). 1~5분 걸려요.</div>
+    </div>
+
+    <div class="card" id="msCard">
+      <div class="ms-head"><b>이번 달 최소 사용액</b><span class="hint" id="msInfo"></span>
+        <button type="button" class="btn small" id="msEdit" data-write>최소액 설정</button></div>
+      <div id="msBody"><div class="rc-empty">불러오는 중...</div></div>
     </div>
 
     <div class="card">
@@ -96,6 +119,72 @@
         return '<div class="rc-disc">＋ ' + esc(s.label) + ' <b>' + won(s.amt) + '</b> (' + Number(s.count) + '건, 가계부 제외)</div>';
       }).join("") + '<div class="rc-disc">이번 결제 합계 <b>' + won(g.withdraw_total) + '</b> <span class="muted">(문자로 오는 결제 예정 금액)</span></div>';
     }
+    // 11-13: 현대카드 — 카드별로 나눠 적은 이체(대금 결제) 합계가 한 번에 나가는 출금액과 맞는지
+    function transferLine(g) {
+      var t = g.transfer;
+      if (!t) return "";
+      var pm = (+String(t.pay_month || "").slice(5)) || "";
+      if (t.status === "none") return '<div class="rc-disc">카드별 이체 <b>아직 안 적음</b> (' + pm + '월 12일경 출금)</div>';
+      if (t.status === "ok") return '<div class="rc-disc">카드별 이체 합계 <b>' + won(t.total) + '</b> <span class="ok">✓ 출금액과 같음</span></div>';
+      var d = Number(t.diff) || 0;
+      return '<div class="rc-hint">⚠️ 카드별 이체 합계 ' + won(t.total) + ' — 출금액보다 ' + won(Math.abs(d)) + (d > 0 ? " 많아요" : " 적어요") + '</div>';
+    }
+    function transferBody(g) {
+      var t = g.transfer;
+      if (!t || !(t.by_asset || []).length) return "";
+      return '<h4>카드별 이체 (' + esc((t.dates || []).join(", ")) + ')</h4><ul class="rc-list">' + t.by_asset.map(function(x) {
+        var same = Number(x.transfer) === Number(x.used);
+        return '<li><span></span><span>' + esc(x.asset) + '<div class="sub">사용 ' + won(x.used) + (same ? " ✓" : " · 이체와 " + won(Number(x.transfer) - Number(x.used)) + " 차이") +
+          '</div></span><span class="amt">' + won(x.transfer) + '</span></li>'; }).join("") + '</ul>';
+    }
+    // 11-13: 카드별 최소 사용액 — 이번 달 가계부 사용액(spend.json, 하루 한 번 백업 기준) vs 넣어 둔 최소액
+    var SPEND = null, MINS = {}, msEditing = false;
+    function msNames() {
+      var a = Object.keys((SPEND && SPEND.assets) || {});
+      Object.keys(MINS).forEach(function(k) { if (a.indexOf(k) < 0) a.push(k); });
+      return a.sort();
+    }
+    function renderSpend() {
+      var body = document.getElementById("msBody"), info = document.getElementById("msInfo"), btn = document.getElementById("msEdit");
+      var used = (SPEND && SPEND.assets) || {}, now = new Date();
+      var cur = now.getFullYear() + "-" + ("0" + (now.getMonth() + 1)).slice(-2);
+      var last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(), daysLeft = last - now.getDate() + 1;
+      info.textContent = SPEND ? ((SPEND.month === cur ? "말일까지 " + daysLeft + "일" : SPEND.month + " 기준") + " · 가계부 백업 " + (SPEND.mmbak_time || "-").slice(5).replace("T", " ")) : "";
+      btn.textContent = msEditing ? "취소" : "최소액 설정";
+      if (msEditing) {
+        body.innerHTML = '<ul class="ms-list">' + msNames().map(function(n) {
+          return '<li><span class="ms-name">' + esc(n) + '<div class="ms-sub">이번 달 ' + won(used[n] || 0) + '</div></span>' +
+            '<input type="text" inputmode="numeric" data-asset="' + esc(n) + '" value="' + (MINS[n] ? Number(MINS[n]).toLocaleString("ko-KR") : "") + '" placeholder="없음" aria-label="' + esc(n) + ' 최소 사용액"></li>';
+        }).join("") + '</ul><div class="hint" style="margin-top:6px;">비워 두면 확인 안 해요. 20일·25일·말일 전날 오전 10시에 모자란 카드를 텔레그램으로 알려요.</div>' +
+          '<div class="ms-actions"><button type="button" class="btn small primary" id="msSave" data-write>저장</button></div>';
+        document.getElementById("msSave").onclick = saveMins;
+        return;
+      }
+      var names = Object.keys(MINS).sort();
+      if (!names.length) { body.innerHTML = '<div class="rc-empty">아직 넣은 최소액이 없어요. [최소액 설정]에서 카드마다 넣어 주세요.</div>'; return; }
+      body.innerHTML = '<ul class="ms-list">' + names.map(function(n) {
+        var m = Number(MINS[n]) || 0, u = Number(used[n]) || 0, left = m - u, pct = m ? Math.max(0, Math.min(100, u * 100 / m)) : 100;
+        return '<li><span class="ms-name">' + esc(n) + '</span>' +
+          (left > 0 ? '<span class="ms-left need">' + won(left) + ' 더</span>' : '<span class="ms-left done">✓ 채움</span>') +
+          '<div class="ms-bar"><i class="' + (left > 0 ? "" : "done") + '" style="width:' + pct.toFixed(1) + '%"></i></div>' +
+          '<div class="ms-sub">' + won(u) + ' / ' + won(m) + (left > 0 && SPEND && SPEND.month === cur ? " · 하루 " + won(Math.ceil(left / daysLeft)) + "꼴" : "") + '</div></li>';
+      }).join("") + '</ul>';
+    }
+    function saveMins() {
+      var assets = {}, bad = "";
+      document.querySelectorAll("#msBody input[data-asset]").forEach(function(el) {
+        var v = el.value.replace(/[,\s원]/g, "");
+        if (v && !/^\d+$/.test(v)) bad = el.getAttribute("data-asset");
+        assets[el.getAttribute("data-asset")] = v ? Number(v) : 0;
+      });
+      if (bad) { showToast(bad + ": 숫자만 넣어 주세요", "error"); return; }
+      fetch("/api/recon/min_spend", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ assets: assets }) })
+        .then(mrJson).then(function(res) {
+          if (!res.ok || !res.data.ok) { showToast((res.data && res.data.error) || "저장하지 못했어요", "error"); return; }
+          MINS = res.data.assets || {}; msEditing = false; renderSpend(); showToast("최소액을 저장했어요.", "success");
+        });
+    }
+    document.getElementById("msEdit").onclick = function() { msEditing = !msEditing; renderSpend(); };
     function render(d) {
       var warn = document.getElementById("rcWarn"), cards = document.getElementById("rcCards"), foot = document.getElementById("rcFoot");
       if (!d) { warn.innerHTML = ""; cards.innerHTML = '<div class="rc-empty">이 달 대조 결과가 없어요.</div>'; foot.textContent = ""; return; }
@@ -108,7 +197,8 @@
         if (g.status === "error") body += '<p>' + esc(g.error || "오류") + '</p>';
         if (st.length) body += '<h4>명세서에만 있음 ' + st.length + '건</h4>' + rows(st, "st");
         if (ld.length) body += '<h4>가계부에만 있음 ' + ld.length + '건</h4>' + rows(ld, "ld");
-        if (g.ledger_by_asset && Object.keys(g.ledger_by_asset).length) {
+        body += transferBody(g);
+        if (!g.transfer && g.ledger_by_asset && Object.keys(g.ledger_by_asset).length) {
           body += '<h4>가계부 자산별</h4><ul class="rc-list">' + Object.keys(g.ledger_by_asset).map(function(k) {
             return '<li><span></span><span>' + esc(k) + '</span><span class="amt">' + won(g.ledger_by_asset[k]) + '</span></li>'; }).join("") + '</ul>';
         }
@@ -118,10 +208,10 @@
             rows(ex.map(function(x) { return Object.assign({}, x, { card: (x.card || "") + (x.excluded ? " · " + x.excluded : "") }); }), "st") + '</details>';
         }
         if (g.statement) body += '<div class="rc-foot">명세서: ' + esc(g.statement) + '</div>';
-        return '<details class="rc-card"' + (g.status === "diff" || g.status === "error" ? " open" : "") + '><summary>' +
+        return '<details class="rc-card"' + (g.status === "diff" || g.status === "error" || (g.transfer && g.transfer.status === "diff") ? " open" : "") + '><summary>' +
           '<span class="rc-name">' + esc(g.name) + '</span><span class="rc-state ' + esc(g.status) + '">' + (STATE[g.status] || esc(g.status)) + '</span>' +
           '<div class="rc-nums"><div><span>출금액</span><b>' + won(g.compare_total) + '</b></div><div><span>가계부</span><b>' + won(g.ledger_total) + '</b></div>' +
-          '<div class="' + (hasDiff ? "bad" : "") + '"><span>차이</span><b>' + (g.diff == null ? "-" : won(g.diff)) + '</b></div></div>' + discLine(g) + sepLine(g) + '</summary>' +
+          '<div class="' + (hasDiff ? "bad" : "") + '"><span>차이</span><b>' + (g.diff == null ? "-" : won(g.diff)) + '</b></div></div>' + discLine(g) + sepLine(g) + transferLine(g) + '</summary>' +
           '<div class="rc-body">' + (body || '<p class="rc-foot">더 볼 내용이 없어요.</p>') + '</div></details>';
       }).join("") || '<div class="rc-empty">카드가 없어요.</div>';
       foot.textContent = "기준 가계부 백업: " + (d.mmbak_time || "-") + " · 비교한 때: " + (d.made_at || "-");
@@ -144,6 +234,8 @@
         }
         document.getElementById("monthSel").value = month;
         render(res.data.data);
+        SPEND = res.data.spend || null;
+        if (!msEditing) { MINS = res.data.min_spend || {}; renderSpend(); }
         var running = showRun(res.data.run);
         clearTimeout(pollTimer);
         if (running) pollTimer = setTimeout(load, 5000);

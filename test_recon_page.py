@@ -87,3 +87,29 @@ def test_separate_charges_shown(rc):
     html = rc.get("/recon").get_data(as_text=True)
     assert "function sepLine(g)" in html and "g.separate_charges" in html and "g.withdraw_total" in html
     assert html.count("sepLine(g)") == 2 and "가계부 제외" in html
+
+
+def test_transfer_and_min_spend_ui(rc):
+    # 11-13: 현대카드 카드별 이체 합계 검증 + 카드별 최소 사용액
+    html = rc.get("/recon").get_data(as_text=True)
+    assert "function transferLine(g)" in html and "function transferBody(g)" in html and "transferLine(g) +" in html
+    assert 'id="msCard"' in html and "최소액 설정" in html and "/api/recon/min_spend" in html
+
+
+def test_min_spend_save_and_read(rc):
+    d = web_admin.RECON_DIR
+    (d / "spend.json").write_text(json.dumps({"month": "2026-11", "assets": {"현대카드 기아차": 120000}}), encoding="utf-8")
+    assert rc.get("/api/recon").get_json()["min_spend"] == {}
+    r = rc.post("/api/recon/min_spend", json={"assets": {"현대카드 기아차": "300,000", "우리카드": 0}})
+    assert r.get_json() == {"ok": True, "assets": {"현대카드 기아차": 300000}}        # 0·빈칸은 안 씀
+    j = rc.get("/api/recon").get_json()
+    assert j["min_spend"] == {"현대카드 기아차": 300000} and j["spend"]["assets"]["현대카드 기아차"] == 120000
+    assert rc.post("/api/recon/min_spend", json={"assets": {"x": "abc"}}).status_code == 400
+    assert rc.post("/api/recon/min_spend", json={"assets": {"x": -1}}).status_code == 400
+    assert rc.post("/api/recon/min_spend", json={"assets": []}).status_code == 400
+    assert json.loads((d / "min_spend.json").read_text(encoding="utf-8"))["assets"] == {"현대카드 기아차": 300000}
+
+
+def test_min_spend_viewer_blocked(rc, monkeypatch):
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
+    assert rc.post("/api/recon/min_spend", json={"assets": {"a": 1}}).status_code == 403

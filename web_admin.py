@@ -2771,7 +2771,45 @@ def api_recon():
             data = None
     with _recon_lock:
         run = dict(_recon_run)
-    return jsonify({"ok": True, "months": months, "month": month, "data": data, "run": run})
+    return jsonify({"ok": True, "months": months, "month": month, "data": data, "run": run,
+                    "spend": _recon_read("spend.json"), "min_spend": (_recon_read("min_spend.json") or {}).get("assets") or {}})
+
+
+# 카드별 최소 사용액(11-13): 사용자가 화면에서 넣은 최소액(자산 이름 → 원). 이번 달 사용액(spend.json)은 recon.py가 4시간마다 만듦,
+# 20일·25일·말일 전날 10시에 모자란 카드를 텔레그램으로(recon.py auto).
+def _recon_read(name: str):
+    try:
+        return json.loads((RECON_DIR / name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+@app.route("/api/recon/min_spend", methods=["POST"])
+def api_recon_min_spend():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    raw = (request.get_json(silent=True) or {}).get("assets")
+    if not isinstance(raw, dict) or len(raw) > 40:
+        return jsonify({"ok": False, "error": "값이 이상해요."}), 400
+    out = {}
+    for k, v in raw.items():
+        try:
+            n = int(str(v).replace(",", "").strip() or 0)
+        except ValueError:
+            return jsonify({"ok": False, "error": f"{str(k)[:40]}: 숫자만 넣어 주세요."}), 400
+        if not isinstance(k, str) or not k.strip() or len(k) > 60 or not 0 <= n <= 100_000_000:
+            return jsonify({"ok": False, "error": "값이 이상해요."}), 400
+        if n:
+            out[k.strip()] = n
+    RECON_DIR.mkdir(parents=True, exist_ok=True)
+    path = RECON_DIR / "min_spend.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"assets": out, "updated_at": datetime.now().isoformat(timespec="seconds")},
+                              ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(path)
+    os.chmod(path, 0o644)
+    return jsonify({"ok": True, "assets": out})
 
 
 @app.route("/api/recon/run", methods=["POST"])
