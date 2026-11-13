@@ -46,7 +46,7 @@
 {% block content %}
     <div class="card">
       <div class="fx-top">
-        <div class="fx-left" id="fxLeft">이번 달 남은 고정비<b>-</b></div>
+        <div class="fx-left" id="fxLeft" role="button" tabindex="0" style="cursor:pointer;" title="안 낸 것만 보기">이번 달 남은 고정비<b>-</b></div>
         <button type="button" class="btn small" id="fxRefresh" data-write>새로 계산</button>
       </div>
       <div class="fx-month" id="fxMonth"></div>
@@ -56,7 +56,7 @@
     </div>
 
     <div class="card">
-      <div class="fx-view"><button type="button" class="btn small" id="vCat">카테고리별</button><button type="button" class="btn small" id="vDay">날짜순</button></div>
+      <div class="fx-view"><button type="button" class="btn small" id="vCat">카테고리별</button><button type="button" class="btn small" id="vDay">날짜순</button><button type="button" class="btn small" id="vLeft">안 낸 것</button></div>
       <ul class="fx-list" id="fxList"><li class="fx-empty">불러오는 중...</li></ul>
       <details class="fx-more" id="fxExWrap" hidden><summary id="fxExSum"></summary><ul class="fx-list" id="fxEx"></ul></details>
       <details class="fx-more" id="cdWrap" hidden><summary id="cdSum"></summary>
@@ -143,9 +143,22 @@
           "📈 <b>" + esc(i.name) + "</b> " + won(i.prev_amount) + " → " + won(i.amount)) + '</div>'; }).join("") + '</div>' : "";
       var month = live.filter(function(i) { return i.cycle === "month"; }), year = live.filter(function(i) { return i.cycle === "year"; });
       document.getElementById("vCat").classList.toggle("on", VIEW === "cat");
-      document.getElementById("vDay").classList.toggle("on", VIEW !== "cat");
+      document.getElementById("vDay").classList.toggle("on", VIEW === "day");
+      document.getElementById("vLeft").classList.toggle("on", VIEW === "left");
       renderCats(d);
-      if (VIEW === "cat") {
+      if (VIEW === "left") {
+        // 11-14: 이번 달 아직 안 낸 것만(남은 고정비 계산과 같은 기준) — 결제일 순, 안 보임은 따로 표시
+        var ym = String(d.today || "").slice(0, 7);
+        var left = live.filter(function(i) {
+          if (i.status === "paid") return false;
+          return i.cycle === "month" || String(i.next_date || "").slice(0, 7) === ym;
+        }).sort(function(a, b) { return String(a.next_date).localeCompare(String(b.next_date)) || a.name.localeCompare(b.name); });
+        var due = left.filter(function(i) { return i.status !== "missing"; }), miss = left.filter(function(i) { return i.status === "missing"; });
+        var sum = function(xs) { return xs.reduce(function(a, i) { return a + (Number(i.amount) || 0); }, 0); };
+        list.innerHTML = (due.length ? '<li class="fx-h" style="border:0;padding:0;">아직 안 낸 것 ' + due.length + '개 · ' + won(sum(due)) + '</li>' + due.map(function(i) { return row(i, false); }).join("") : "") +
+          (miss.length ? '<li class="fx-h" style="border:0;padding:0;">결제일이 지났는데 안 보임 ' + miss.length + '개 · ' + won(sum(miss)) + '</li>' + miss.map(function(i) { return row(i, false); }).join("") : "") ||
+          '<li class="fx-empty">이번 달 고정비는 다 냈어요. 🎉</li>';
+      } else if (VIEW === "cat") {
         var groups = {}, order = (d.categories || []).slice();
         live.forEach(function(i) { (groups[i.category] = groups[i.category] || []).push(i); if (order.indexOf(i.category) < 0) order.push(i.category); });
         list.innerHTML = order.filter(function(c) { return groups[c]; }).map(function(c) {
@@ -195,6 +208,9 @@
     function setView(v) { VIEW = v; try { localStorage.setItem("fxView", v); } catch (e) {} if (D) render(D); }
     document.getElementById("vCat").onclick = function() { setView("cat"); };
     document.getElementById("vDay").onclick = function() { setView("day"); };
+    document.getElementById("vLeft").onclick = function() { setView("left"); };
+    document.getElementById("fxLeft").onclick = function() { setView("left"); document.getElementById("fxList").scrollIntoView({ behavior: "smooth", block: "start" }); };
+    document.getElementById("fxLeft").onkeydown = function(e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); this.onclick(); } };
     document.getElementById("catAdd").onclick = function() {
       var n = document.getElementById("catName").value.trim();
       if (!n) { showToast("카테고리 이름을 넣어 주세요", "error"); return; }

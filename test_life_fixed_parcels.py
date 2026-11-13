@@ -91,6 +91,7 @@ def test_fixed_categories(lf):
     c.post("/api/fixed/rules", json={"action": "exclude", "key": "kt"})
     assert rules()["cat_list"] == ["차량"]                                             # 다른 동작이 카테고리를 안 지움
     html = c.get("/fixed").get_data(as_text=True)
+    assert 'id="vLeft"' in html and 'VIEW === "left"' in html and "아직 안 낸 것" in html   # 11-14 안 낸 것만 보기
     assert "이번 달 남은 고정비" in html and 'id="vCat"' in html and "data-cat=" in html and "add_category" in html
 
 
