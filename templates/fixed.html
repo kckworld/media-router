@@ -59,6 +59,9 @@
       <div class="fx-view"><button type="button" class="btn small" id="vCat">카테고리별</button><button type="button" class="btn small" id="vDay">날짜순</button></div>
       <ul class="fx-list" id="fxList"><li class="fx-empty">불러오는 중...</li></ul>
       <details class="fx-more" id="fxExWrap" hidden><summary id="fxExSum"></summary><ul class="fx-list" id="fxEx"></ul></details>
+      <details class="fx-more" id="cdWrap" hidden><summary id="cdSum"></summary>
+        <div class="hint" style="margin:6px 0;">자동 규칙에 안 맞아 빠진 반복 지출이에요. 고정비면 [고정비로]를 누르세요.</div>
+        <ul class="fx-list" id="fxCd"></ul></details>
       <details class="fx-more" id="catWrap">
         <summary>카테고리 관리</summary>
         <div class="fx-cats" id="fxCats"></div>
@@ -73,7 +76,11 @@
           <label>주기<select id="adCycle"><option value="month">매달</option><option value="year">매년</option></select></label>
           <label id="adMonthL" hidden>월<input type="number" id="adMonth" min="1" max="12" value="1"></label>
           <label>일<input type="number" id="adDay" min="1" max="31" value="1"></label>
+          <label>가계부에서 찾을 글자(선택)<input type="text" id="adMatch" maxlength="40" placeholder="예: 쿠팡(쿠페이)"></label>
+          <label>금액 범위 최소(선택)<input type="text" inputmode="numeric" id="adMin" placeholder="3945"></label>
+          <label>최대(선택)<input type="text" inputmode="numeric" id="adMax" placeholder="7890"></label>
         </div>
+        <div class="hint" style="margin-top:4px;">찾을 글자를 넣으면 결제일 ±5일 안에 그 글자·금액 범위의 지출이 있으면 '냄'으로 보고, 이번 달 실제 금액을 보여 줘요(할인으로 금액이 바뀌는 구독용).</div>
         <div style="text-align:right;margin-top:8px;"><button type="button" class="btn small primary" id="adBtn" data-write>추가</button></div>
       </details>
       <div class="hint" style="margin-top:10px;">가계부 지출에서 매달 비슷한 날·금액으로 3번 넘게 나온 것을 고정비로 봐요(매년은 1년 간격 두 번). 고정비가 아니면 [제외]하세요.
@@ -90,12 +97,14 @@
     function md(iso) { var m = /\d{4}-(\d{2})-(\d{2})/.exec(iso || ""); return m ? (+m[1]) + "/" + (+m[2]) : ""; }
     function when(i) { return i.cycle === "year" ? "매년 " + i.month + "/" + i.day : "매달 " + i.day + "일"; }
     function chip(i) {
-      if (i.manual) return '<span class="fx-chip manual">직접 넣음 · 다음 ' + md(i.next_date) + '</span>';
+      if (i.manual && !i.match) return '<span class="fx-chip manual">직접 넣음 · 다음 ' + md(i.next_date) + '</span>';
       var s = "";
       if (i.status === "paid") s = '<span class="fx-chip paid">✓ ' + (i.cycle === "year" ? "올해 냄" : "이번 달 냄") + '</span>';
       else if (i.status === "missing") s = '<span class="fx-chip missing">❓ 결제 안 보임</span>';
       else s = '<span class="fx-chip due">' + md(i.next_date) + ' 예정</span>';
       if (i.up) s += ' <span class="fx-chip up">📈 ' + won(i.prev_amount) + '에서 오름</span>';
+      if (i.varies) s += ' <span class="fx-chip manual">금액 변동</span>';
+      if (i.forced) s += ' <span class="fx-chip manual">후보에서 넣음</span>';
       return s;
     }
     function catSel(i) {
@@ -105,10 +114,13 @@
         cats.map(function(c) { return '<option' + (c === i.category ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("") + '</select>';
     }
     function row(i, excluded) {
+      var paidAmt = (i.status === "paid" && i.this_month_amt && i.this_month_amt !== i.amount) ? '<div class="fx-sub" style="justify-content:flex-end;">이번 달 ' + won(i.this_month_amt) + '</div>' : '';
+      var how = i.manual && i.match ? ' · 가계부 "' + esc(i.match) + '" ' + (i.min !== i.max ? won(i.min) + '~' + won(i.max) : won(i.min)) : '';
       var btn = i.manual ? '<button type="button" class="btn small" data-write data-del="' + esc((i.key || "").slice(7)) + '">삭제</button>'
         : '<button type="button" class="btn small" data-write data-' + (excluded ? "inc" : "exc") + '="' + esc(i.key) + '">' + (excluded ? "다시 넣기" : "제외") + '</button>';
-      return '<li><span class="fx-name">' + esc(i.name) + '</span><span class="fx-amt">' + won(i.amount) + '</span>' +
-        '<span class="fx-sub">' + (excluded ? "" : catSel(i)) + when(i) + (i.asset ? ' · ' + esc(i.asset) : '') + ' ' + chip(i) + '</span><span class="fx-act">' + btn + '</span></li>';
+      if (i.forced && !excluded) btn = '<button type="button" class="btn small" data-write data-unforce="' + esc(i.key) + '">후보로</button>' + btn;
+      return '<li><span class="fx-name">' + esc(i.name) + '</span><span class="fx-amt">' + won(i.amount) + paidAmt + '</span>' +
+        '<span class="fx-sub">' + (excluded ? "" : catSel(i)) + when(i) + (i.asset ? ' · ' + esc(i.asset) : '') + how + ' ' + chip(i) + '</span><span class="fx-act">' + btn + '</span></li>';
     }
     function render(d) {
       D = d;
@@ -144,6 +156,14 @@
       list.innerHTML = (month.length ? '<li class="fx-h" style="border:0;padding:0;">매달 ' + month.length + '개 · ' + won(d.month_total) + '</li>' + month.map(function(i) { return row(i, false); }).join("") : "") +
         (year.length ? '<li class="fx-h" style="border:0;padding:0;">매년 ' + year.length + '개 · ' + won(d.year_only_total) + '</li>' + year.map(function(i) { return row(i, false); }).join("") : "") ||
         '<li class="fx-empty">찾은 고정비가 없어요.</li>';
+      var cd = d.candidates || [], cw = document.getElementById("cdWrap");
+      cw.hidden = !cd.length;
+      document.getElementById("cdSum").textContent = "고정비 후보 " + cd.length + "개";
+      document.getElementById("fxCd").innerHTML = cd.map(function(x) {
+        return '<li><span class="fx-name">' + esc(x.name) + '</span><span class="fx-amt">' + won(x.amount) + '</span>' +
+          '<span class="fx-sub">최근 6달 중 ' + x.months + '달 · ' + esc(x.app_cat || "") + (x.asset ? ' · ' + esc(x.asset) : '') + ' · ' + esc(x.why) + '</span>' +
+          '<span class="fx-act"><button type="button" class="btn small" data-write data-force="' + esc(x.key) + '">고정비로</button></span></li>';
+      }).join("");
       var w = document.getElementById("fxExWrap");
       w.hidden = !ex.length;
       document.getElementById("fxExSum").textContent = "제외한 것 " + ex.length + "개";
@@ -187,6 +207,14 @@
         post("/api/fixed/rules", { action: "del_category", name: dc.getAttribute("data-delcat") }, "지웠어요");
         return;
       }
+      var fb = e.target.closest("button[data-force],button[data-unforce]");
+      if (fb) {
+        fb.disabled = true;
+        var isF = fb.hasAttribute("data-force");
+        post("/api/fixed/rules", { action: isF ? "force" : "unforce", key: fb.getAttribute(isF ? "data-force" : "data-unforce") }, isF ? "고정비로 넣었어요" : "후보로 돌렸어요")
+          .finally(function() { fb.disabled = false; });
+        return;
+      }
       var b = e.target.closest("button[data-exc],button[data-inc],button[data-del]");
       if (!b) return;
       b.disabled = true;
@@ -198,9 +226,11 @@
     document.getElementById("adCycle").onchange = function(e) { document.getElementById("adMonthL").hidden = e.target.value !== "year"; };
     document.getElementById("adBtn").onclick = function() {
       var body = { action: "add", name: document.getElementById("adName").value.trim(), amount: document.getElementById("adAmt").value.replace(/[,\s원]/g, ""),
-        cycle: document.getElementById("adCycle").value, month: document.getElementById("adMonth").value, day: document.getElementById("adDay").value };
+        cycle: document.getElementById("adCycle").value, month: document.getElementById("adMonth").value, day: document.getElementById("adDay").value,
+        match: document.getElementById("adMatch").value.trim(), min: document.getElementById("adMin").value.replace(/[,\s원]/g, ""), max: document.getElementById("adMax").value.replace(/[,\s원]/g, "") };
+      if ((body.min && !/^\d+$/.test(body.min)) || (body.max && !/^\d+$/.test(body.max))) { showToast("금액 범위는 숫자로 넣어 주세요", "error"); return; }
       if (!body.name || !/^\d+$/.test(body.amount)) { showToast("이름과 금액(숫자)을 넣어 주세요", "error"); return; }
-      post("/api/fixed/rules", body, "추가했어요").then(function(ok) { if (ok) { document.getElementById("adName").value = ""; document.getElementById("adAmt").value = ""; } });
+      post("/api/fixed/rules", body, "추가했어요").then(function(ok) { if (ok) { ["adName", "adAmt", "adMatch", "adMin", "adMax"].forEach(function(id) { document.getElementById(id).value = ""; }); } });
     };
     document.getElementById("fxRefresh").onclick = function() {
       var b = this; b.disabled = true; b.textContent = "계산 중…";

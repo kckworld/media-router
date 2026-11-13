@@ -94,6 +94,28 @@ def test_fixed_categories(lf):
     assert "이번 달 남은 고정비" in html and 'id="vCat"' in html and "data-cat=" in html and "add_category" in html
 
 
+def test_fixed_force_and_manual_match(lf):
+    # 11-13: 후보를 고정비로 넣기/빼기, 직접 추가에 찾을 글자·금액 범위(쿠팡 와우 50% 할인)
+    c, d, _ = lf
+    rules = lambda: json.loads((d / "fixed_rules.json").read_text(encoding="utf-8"))
+    c.post("/api/fixed/rules", json={"action": "exclude", "key": "학원"})
+    assert c.post("/api/fixed/rules", json={"action": "force", "key": "학원"}).get_json()["ok"]
+    assert rules()["force"] == ["학원"] and rules()["exclude"] == []                 # 넣으면 제외도 풀림
+    c.post("/api/fixed/rules", json={"action": "exclude", "key": "학원"})
+    assert rules()["force"] == [] and rules()["exclude"] == ["학원"]                 # 제외하면 넣은 것도 풀림
+    c.post("/api/fixed/rules", json={"action": "force", "key": "학원"})
+    c.post("/api/fixed/rules", json={"action": "unforce", "key": "학원"})
+    assert rules()["force"] == []
+    r = c.post("/api/fixed/rules", json={"action": "add", "name": "쿠팡 와우", "amount": "7890", "day": 24,
+                                         "match": "쿠팡(쿠페이)", "min": "3,945", "max": "7890"})
+    assert r.get_json()["ok"]
+    m = rules()["manual"][0]
+    assert m["match"] == "쿠팡(쿠페이)" and m["min"] == 3945 and m["max"] == 7890
+    assert c.post("/api/fixed/rules", json={"action": "add", "name": "x", "amount": 1, "day": 1, "min": 9, "max": 3}).status_code == 400
+    html = c.get("/fixed").get_data(as_text=True)
+    assert 'id="fxCd"' in html and "data-force=" in html and 'id="adMatch"' in html and "금액 변동" in html
+
+
 def test_parcels_received_and_edit(lf):
     c, d, calls = lf
     rules = lambda: json.loads((d / "parcels_rules.json").read_text(encoding="utf-8"))

@@ -2874,7 +2874,8 @@ def api_fixed_refresh():
 @app.route("/api/fixed/rules", methods=["POST"])
 def api_fixed_rules():
     """{action: exclude|include, key} · {action: add, name, amount, cycle(month|year), day, month} · {action: delete, id}
-    · {action: category, key, category} (빈칸이면 자동 추정으로) · {action: add_category|del_category, name} (11-13)"""
+    · {action: category, key, category} (빈칸이면 자동 추정으로) · {action: add_category|del_category, name} (11-13)
+    · {action: force|unforce, key} 후보를 고정비로 넣기/빼기 · add에 match(가계부에서 찾을 글자)·min·max(금액 범위) (11-13)"""
     bad = _life_auth()
     if bad:
         return bad
@@ -2884,25 +2885,39 @@ def api_fixed_rules():
     manual = [m for m in rules.get("manual") or [] if isinstance(m, dict)]
     cats = {str(k): str(v) for k, v in (rules.get("categories") or {}).items()}
     cat_list = [str(x) for x in rules.get("cat_list") or []]
+    force = [str(x) for x in rules.get("force") or []]
     act = str(b.get("action") or "")
     if act in ("exclude", "include"):
         key = str(b.get("key") or "").strip()[:80]
         if not key:
             return jsonify({"ok": False, "error": "항목이 없어요."}), 400
         ex = [k for k in ex if k != key] + ([key] if act == "exclude" else [])
+        if act == "exclude":
+            force = [k for k in force if k != key]
+    elif act in ("force", "unforce"):
+        key = str(b.get("key") or "").strip()[:80]
+        if not key:
+            return jsonify({"ok": False, "error": "항목이 없어요."}), 400
+        force = [k for k in force if k != key] + ([key] if act == "force" else [])
+        ex = [k for k in ex if k != key]
     elif act == "add":
         name = str(b.get("name") or "").strip()[:40]
         try:
             amount = int(str(b.get("amount") or "").replace(",", "").strip())
             day = int(b.get("day") or 0)
             month = int(b.get("month") or 1)
+            lo = int(str(b.get("min") or "0").replace(",", "").strip() or 0)
+            hi = int(str(b.get("max") or "0").replace(",", "").strip() or 0)
         except ValueError:
             return jsonify({"ok": False, "error": "금액·날짜는 숫자로 넣어 주세요."}), 400
         cycle = "year" if b.get("cycle") == "year" else "month"
         if not name or not 0 < amount <= 100_000_000 or not 1 <= day <= 31 or not 1 <= month <= 12 or len(manual) >= 50:
             return jsonify({"ok": False, "error": "이름·금액·날짜를 확인해 주세요."}), 400
+        if lo < 0 or hi < 0 or (lo and hi and lo > hi):
+            return jsonify({"ok": False, "error": "금액 범위를 확인해 주세요."}), 400
         manual.append({"id": secrets.token_hex(4), "name": name, "amount": amount, "cycle": cycle, "day": day,
-                       "month": month if cycle == "year" else None})
+                       "month": month if cycle == "year" else None, "match": str(b.get("match") or "").strip()[:40],
+                       "min": lo or None, "max": hi or None})
     elif act == "delete":
         mid = str(b.get("id") or "")
         manual = [m for m in manual if str(m.get("id")) != mid]
@@ -2928,7 +2943,7 @@ def api_fixed_rules():
             cats = {k: v for k, v in cats.items() if v != name}
     else:
         return jsonify({"ok": False, "error": "알 수 없는 동작이에요."}), 400
-    _recon_write("fixed_rules.json", {"exclude": ex, "manual": manual, "categories": cats, "cat_list": cat_list,
+    _recon_write("fixed_rules.json", {"exclude": ex, "manual": manual, "categories": cats, "cat_list": cat_list, "force": force,
                                       "updated_at": datetime.now().isoformat(timespec="seconds")})
     ok, msg = _life_refresh("fixed")
     return jsonify({"ok": True, "refreshed": ok, "error": "" if ok else msg, "data": _recon_read("fixed.json")})
