@@ -69,6 +69,14 @@ def test_parse_channel_formats():
     assert p["title"] == "강원도 영월 절임배추 10kg" and p["shop"] == "토스쇼핑" and p["price"] == 30305 and "view.php" in p["url"]
 
 
+def test_parse_price_slash_shipping():
+    # 11-14 뽐뿌 '(가격/배송비)': 배송비가 더 싸도 슬래시 앞이 가격
+    p = hotdeal.parse(" [뽐뿌] [겜우리] PS5 마블 울버린 (34,700원/2,500원) \nhttps://www.ppomppu.co.kr/zboard/view.php?id=ppomppu&no=748766")
+    assert p["price"] == 34700 and p["title"] == "PS5 마블 울버린" and p["shop"] == "겜우리"
+    assert hotdeal.parse("[뽐뿌] [쿠팡] 사탕 (900원/3,500원)")["price"] == 900
+    assert hotdeal.parse("[뽐뿌] [네이버] 김 (3,990원/네멤무료)")["price"] == 3990
+
+
 def test_parse_jirum_format():
     # 11-13 뽐질: 첫 줄 '👍대박 16,660원 (37.1% 할인)', 둘째 줄 상품명, '- 할인: 9,826원'은 판매가 아님
     t = ("👍대박 16,660원 (37.1% 할인)\n양푼이 우거지 감자탕, 5kg, 1팩\n\n📌 가격 현황\n- 정상가: 26,486원\n- 할인: 9,826원\n\n"

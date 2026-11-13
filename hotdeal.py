@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 DUP_WINDOW = 48 * 3600
-PARSE_VER = 4          # 파싱 규칙을 바꾸면 올림 → 수집 때 저장된 딜을 다시 정리
+PARSE_VER = 5          # 파싱 규칙을 바꾸면 올림 → 수집 때 저장된 딜을 다시 정리
 _lock = threading.Lock()
 
 # 쇼핑몰 판별: 도메인 끝부분 → 이름
@@ -161,6 +161,11 @@ def parse(text: str, urls=()) -> dict:
         if len(c) <= 8 and re.search(r"(특가|핫딜|알림|세일)$", c):
             continue
         title = re.sub(r"\s*\(\s*[\d,]+\s*원[^)]*\)\s*(\(무료\)|\(유료\))?\s*$", "", c).strip() or c   # 끝의 '(30,305원/무료)'는 가격 칸에
+    if price is None:
+        # 뽐뿌·클리앙 '(34,700원/2,500원)' = (가격/배송비) → 슬래시 앞이 가격(11-14: 배송비 2,500원이 가격으로 잡힘)
+        m = re.search(r"\(\s*((?:\d{1,3}(?:,\d{3})+|\d{3,8}))\s*원\s*/[^)]*\)", text)
+        if m:
+            price = int(m.group(1).replace(",", ""))
     if price is None:
         prices = []
         for l in text.splitlines():
