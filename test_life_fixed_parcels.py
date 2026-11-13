@@ -74,6 +74,46 @@ def test_owner_only(lf, monkeypatch):
     assert c.post("/api/parcels/hide", json={"id": "x"}).status_code in (302, 403)
 
 
+def test_fixed_categories(lf):
+    # 11-13: 항목별 카테고리, 카테고리 추가·삭제, 화면에 이번 달 남은 고정비·보기 전환
+    c, d, _ = lf
+    rules = lambda: json.loads((d / "fixed_rules.json").read_text(encoding="utf-8"))
+    assert c.post("/api/fixed/rules", json={"action": "category", "key": "kt", "category": "통신비"}).get_json()["ok"]
+    assert rules()["categories"] == {"kt": "통신비"} and rules()["cat_list"] == ["통신비"]
+    c.post("/api/fixed/rules", json={"action": "add_category", "name": "차량"})
+    assert rules()["cat_list"] == ["통신비", "차량"]
+    c.post("/api/fixed/rules", json={"action": "del_category", "name": "통신비"})
+    assert rules()["cat_list"] == ["차량"] and rules()["categories"] == {}           # 그 카테고리 항목은 자동 추정으로
+    c.post("/api/fixed/rules", json={"action": "category", "key": "kt", "category": "차량"})
+    c.post("/api/fixed/rules", json={"action": "category", "key": "kt", "category": ""})
+    assert rules()["categories"] == {}
+    assert c.post("/api/fixed/rules", json={"action": "add_category", "name": " "}).status_code == 400
+    c.post("/api/fixed/rules", json={"action": "exclude", "key": "kt"})
+    assert rules()["cat_list"] == ["차량"]                                             # 다른 동작이 카테고리를 안 지움
+    html = c.get("/fixed").get_data(as_text=True)
+    assert "이번 달 남은 고정비" in html and 'id="vCat"' in html and "data-cat=" in html and "add_category" in html
+
+
+def test_parcels_received_and_edit(lf):
+    c, d, calls = lf
+    rules = lambda: json.loads((d / "parcels_rules.json").read_text(encoding="utf-8"))
+    assert c.post("/api/parcels/received", json={"id": "G마켓:1"}).get_json()["ok"]
+    assert "G마켓:1" in rules()["received"] and calls[-1] == "parcels"
+    assert c.post("/api/parcels/edit", json={"id": "G마켓:1", "item": "양말", "total": "11,900", "shop": "G마켓", "eta": "2026-11-15"}).get_json()["ok"]
+    assert rules()["edits"]["G마켓:1"] == {"item": "양말", "shop": "G마켓", "eta": "2026-11-15", "total": 11900}
+    assert "G마켓:1" in rules()["received"]                                       # 수정해도 받음 표시는 남음
+    c.post("/api/parcels/received", json={"id": "G마켓:1", "received": False})
+    assert rules()["received"] == {} and "G마켓:1" in rules()["edits"]
+    c.post("/api/parcels/hide", json={"id": "G마켓:1"})
+    assert rules()["hidden"] == ["G마켓:1"] and "G마켓:1" in rules()["edits"]       # 숨겨도 수정은 남음
+    c.post("/api/parcels/edit", json={"id": "G마켓:1"})
+    assert rules()["edits"] == {}                                                  # 다 비우면 고친 것 지움
+    for bad in ({"id": "x", "total": "abc"}, {"id": "x", "eta": "11/15"}, {"item": "x"}):
+        assert c.post("/api/parcels/edit", json=bad).status_code == 400
+    html = c.get("/parcels").get_data(as_text=True)
+    assert "data-got=" in html and "data-edit=" in html and "/api/parcels/edit" in html
+
+
 def test_run_all_life_refresh_command():
     s = open("run_all.sh", encoding="utf-8").read()
     assert '"life-refresh fixed"|"life-refresh parcels")' in s and "fixed_costs.py" in s and "parcels.py" in s

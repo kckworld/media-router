@@ -2873,7 +2873,8 @@ def api_fixed_refresh():
 
 @app.route("/api/fixed/rules", methods=["POST"])
 def api_fixed_rules():
-    """{action: exclude|include, key} · {action: add, name, amount, cycle(month|year), day, month} · {action: delete, id}"""
+    """{action: exclude|include, key} · {action: add, name, amount, cycle(month|year), day, month} · {action: delete, id}
+    · {action: category, key, category} (빈칸이면 자동 추정으로) · {action: add_category|del_category, name} (11-13)"""
     bad = _life_auth()
     if bad:
         return bad
@@ -2881,6 +2882,8 @@ def api_fixed_rules():
     rules = _recon_read("fixed_rules.json") or {}
     ex = [str(x) for x in rules.get("exclude") or []]
     manual = [m for m in rules.get("manual") or [] if isinstance(m, dict)]
+    cats = {str(k): str(v) for k, v in (rules.get("categories") or {}).items()}
+    cat_list = [str(x) for x in rules.get("cat_list") or []]
     act = str(b.get("action") or "")
     if act in ("exclude", "include"):
         key = str(b.get("key") or "").strip()[:80]
@@ -2903,9 +2906,29 @@ def api_fixed_rules():
     elif act == "delete":
         mid = str(b.get("id") or "")
         manual = [m for m in manual if str(m.get("id")) != mid]
+        cats.pop("manual:" + mid, None)
+    elif act == "category":
+        key, cat = str(b.get("key") or "").strip()[:80], str(b.get("category") or "").strip()[:20]
+        if not key:
+            return jsonify({"ok": False, "error": "항목이 없어요."}), 400
+        if cat:
+            cats[key] = cat
+            if cat not in cat_list:
+                cat_list.append(cat)
+        else:
+            cats.pop(key, None)
+    elif act in ("add_category", "del_category"):
+        name = str(b.get("name") or "").strip()[:20]
+        if not name or len(cat_list) >= 50:
+            return jsonify({"ok": False, "error": "카테고리 이름을 넣어 주세요."}), 400
+        if act == "add_category":
+            cat_list = [c for c in cat_list if c != name] + [name]
+        else:
+            cat_list = [c for c in cat_list if c != name]
+            cats = {k: v for k, v in cats.items() if v != name}
     else:
         return jsonify({"ok": False, "error": "알 수 없는 동작이에요."}), 400
-    _recon_write("fixed_rules.json", {"exclude": ex, "manual": manual,
+    _recon_write("fixed_rules.json", {"exclude": ex, "manual": manual, "categories": cats, "cat_list": cat_list,
                                       "updated_at": datetime.now().isoformat(timespec="seconds")})
     ok, msg = _life_refresh("fixed")
     return jsonify({"ok": True, "refreshed": ok, "error": "" if ok else msg, "data": _recon_read("fixed.json")})
@@ -2946,12 +2969,70 @@ def api_parcels_hide():
     pid = str(b.get("id") or "").strip()[:120]
     if not pid:
         return jsonify({"ok": False, "error": "항목이 없어요."}), 400
-    hidden = [str(x) for x in (_recon_read("parcels_rules.json") or {}).get("hidden") or [] if str(x) != pid]
-    if b.get("hidden", True):
-        hidden.append(pid)
-    _recon_write("parcels_rules.json", {"hidden": hidden[-500:]})
+    rules = _parcel_rules()
+    rules["hidden"] = [x for x in rules["hidden"] if x != pid] + ([pid] if b.get("hidden", True) else [])
+    return _parcel_save(rules)
+
+
+def _parcel_rules() -> dict:
+    r = _recon_read("parcels_rules.json") or {}
+    return {"hidden": [str(x) for x in r.get("hidden") or []][-500:],
+            "received": {str(k): str(v) for k, v in (r.get("received") or {}).items()},
+            "edits": {str(k): v for k, v in (r.get("edits") or {}).items() if isinstance(v, dict)}}
+
+
+def _parcel_save(rules: dict):
+    for k in ("received", "edits"):          # 오래된 것부터 500개까지만
+        if len(rules[k]) > 500:
+            rules[k] = dict(list(rules[k].items())[-500:])
+    _recon_write("parcels_rules.json", rules)
     ok, msg = _life_refresh("parcels")
     return jsonify({"ok": True, "refreshed": ok, "error": "" if ok else msg, "data": _recon_read("parcels.json")})
+
+
+@app.route("/api/parcels/received", methods=["POST"])
+def api_parcels_received():
+    """{id, received: true|false} — 받은 건 [받음] (11-13)"""
+    bad = _life_auth()
+    if bad:
+        return bad
+    b = request.get_json(silent=True) or {}
+    pid = str(b.get("id") or "").strip()[:120]
+    if not pid:
+        return jsonify({"ok": False, "error": "항목이 없어요."}), 400
+    rules = _parcel_rules()
+    rules["received"].pop(pid, None)
+    if b.get("received", True):
+        rules["received"][pid] = datetime.now().isoformat(timespec="minutes")
+    return _parcel_save(rules)
+
+
+@app.route("/api/parcels/edit", methods=["POST"])
+def api_parcels_edit():
+    """{id, item, total, shop, eta(YYYY-MM-DD|"")} — 메일에서 제대로 못 읽은 건 직접 고치기. 모두 빈칸이면 고친 것 지움 (11-13)"""
+    bad = _life_auth()
+    if bad:
+        return bad
+    b = request.get_json(silent=True) or {}
+    pid = str(b.get("id") or "").strip()[:120]
+    if not pid:
+        return jsonify({"ok": False, "error": "항목이 없어요."}), 400
+    e = {"item": str(b.get("item") or "").strip()[:80], "shop": str(b.get("shop") or "").strip()[:20]}
+    total = str(b.get("total") if b.get("total") is not None else "").replace(",", "").replace("원", "").strip()
+    if total and not total.isdigit():
+        return jsonify({"ok": False, "error": "금액은 숫자로 넣어 주세요."}), 400
+    eta = str(b.get("eta") or "").strip()
+    if eta and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", eta):
+        return jsonify({"ok": False, "error": "도착일이 이상해요."}), 400
+    e["eta"] = eta
+    if total:
+        e["total"] = int(total)
+    e = {k: v for k, v in e.items() if v not in ("", None)}
+    rules = _parcel_rules()
+    rules["edits"].pop(pid, None)
+    if e:
+        rules["edits"][pid] = e
+    return _parcel_save(rules)
 
 
 @app.route("/api/recon/run", methods=["POST"])

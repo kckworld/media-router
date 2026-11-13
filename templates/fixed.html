@@ -27,22 +27,44 @@
     .fx-form input, .fx-form select { width: 100%; box-sizing: border-box; }
     details.fx-more > summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 10px; }
     .fx-empty { color: var(--muted); padding: 12px 2px; }
+    /* 11-13: 이번 달 남은 고정비 · 카테고리 */
+    .fx-left { font-size: 13px; color: var(--muted); }
+    .fx-left b { display: block; font-size: 24px; color: var(--text); font-variant-numeric: tabular-nums; }
+    .fx-month { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .fx-month b { color: var(--text); }
+    .fx-month .bad b { color: var(--danger, #b3261e); }
+    .fx-view { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+    .fx-view .btn.on { background: var(--accent, #1a73e8); color: #fff; border-color: transparent; }
+    .fx-cat { font-size: 12px; padding: 1px 4px; max-width: 7.5em; }
+    .fx-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .fx-cats span { border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 13px; display: inline-flex; align-items: center; gap: 2px; }
+    .fx-cats span.def { padding-right: 10px; color: var(--muted); }
+    .fx-cats button { border: 0; background: none; cursor: pointer; color: var(--muted); font-size: 14px; padding: 0 4px; }
   </style>
 {% endblock %}
 
 {% block content %}
     <div class="card">
       <div class="fx-top">
-        <div class="fx-sum" id="fxSum">불러오는 중...</div>
+        <div class="fx-left" id="fxLeft">이번 달 남은 고정비<b>-</b></div>
         <button type="button" class="btn small" id="fxRefresh" data-write>새로 계산</button>
       </div>
+      <div class="fx-month" id="fxMonth"></div>
+      <div class="fx-sum" id="fxSum" style="font-size:14px;margin-top:8px;"></div>
       <div class="hint" id="fxInfo" style="margin-top:6px;"></div>
       <div id="fxAlert"></div>
     </div>
 
     <div class="card">
+      <div class="fx-view"><button type="button" class="btn small" id="vCat">카테고리별</button><button type="button" class="btn small" id="vDay">날짜순</button></div>
       <ul class="fx-list" id="fxList"><li class="fx-empty">불러오는 중...</li></ul>
       <details class="fx-more" id="fxExWrap" hidden><summary id="fxExSum"></summary><ul class="fx-list" id="fxEx"></ul></details>
+      <details class="fx-more" id="catWrap">
+        <summary>카테고리 관리</summary>
+        <div class="fx-cats" id="fxCats"></div>
+        <div style="display:flex;gap:6px;"><input type="text" id="catName" maxlength="20" placeholder="새 카테고리 (예: 차량)" style="flex:1;min-width:0;">
+          <button type="button" class="btn small" id="catAdd" data-write>추가</button></div>
+      </details>
       <details class="fx-more">
         <summary>＋ 직접 추가 (가계부에 안 잡히는 고정비·연간 구독)</summary>
         <div class="fx-form">
@@ -61,7 +83,8 @@
 
 {% block scripts %}
   <script>
-    var D = null;
+    var D = null, VIEW = "cat";
+    try { VIEW = localStorage.getItem("fxView") || "cat"; } catch (e) {}
     function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
     function won(n) { return Number(n || 0).toLocaleString("ko-KR") + "원"; }
     function md(iso) { var m = /\d{4}-(\d{2})-(\d{2})/.exec(iso || ""); return m ? (+m[1]) + "/" + (+m[2]) : ""; }
@@ -75,11 +98,17 @@
       if (i.up) s += ' <span class="fx-chip up">📈 ' + won(i.prev_amount) + '에서 오름</span>';
       return s;
     }
+    function catSel(i) {
+      var cats = (D && D.categories) || [];
+      if (cats.indexOf(i.category) < 0) cats = cats.concat([i.category]);
+      return '<select class="fx-cat" data-write data-cat="' + esc(i.key) + '" aria-label="' + esc(i.name) + ' 카테고리" title="' + (i.category_auto ? "자동으로 고른 것" : "직접 고른 것") + '">' +
+        cats.map(function(c) { return '<option' + (c === i.category ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("") + '</select>';
+    }
     function row(i, excluded) {
       var btn = i.manual ? '<button type="button" class="btn small" data-write data-del="' + esc((i.key || "").slice(7)) + '">삭제</button>'
         : '<button type="button" class="btn small" data-write data-' + (excluded ? "inc" : "exc") + '="' + esc(i.key) + '">' + (excluded ? "다시 넣기" : "제외") + '</button>';
       return '<li><span class="fx-name">' + esc(i.name) + '</span><span class="fx-amt">' + won(i.amount) + '</span>' +
-        '<span class="fx-sub">' + when(i) + (i.asset ? ' · ' + esc(i.asset) : '') + ' ' + chip(i) + '</span><span class="fx-act">' + btn + '</span></li>';
+        '<span class="fx-sub">' + (excluded ? "" : catSel(i)) + when(i) + (i.asset ? ' · ' + esc(i.asset) : '') + ' ' + chip(i) + '</span><span class="fx-act">' + btn + '</span></li>';
     }
     function render(d) {
       D = d;
@@ -89,6 +118,10 @@
         list.innerHTML = '<li class="fx-empty">[새로 계산]을 누르면 가계부에서 고정비를 찾아요.</li>';
         return;
       }
+      var tm = d.this_month || {};
+      document.getElementById("fxLeft").innerHTML = "이번 달 남은 고정비<b>" + won(tm.left) + "</b>";
+      document.getElementById("fxMonth").innerHTML = '<span>남은 것 <b>' + (tm.left_count || 0) + '건</b></span><span>이미 낸 것 <b>' + won(tm.paid) + '</b> (' + (tm.paid_count || 0) + '건)</span>' +
+        (tm.unseen_count ? '<span class="bad">결제 안 보임 <b>' + won(tm.unseen) + '</b> (' + tm.unseen_count + '건)</span>' : '');
       document.getElementById("fxSum").innerHTML = "매달 약 " + won(d.per_month) + "<small>1년 약 " + won(d.per_year) + "</small>";
       document.getElementById("fxInfo").textContent = "가계부 백업 " + String(d.mmbak_time || "-").slice(5).replace("T", " ") + " 기준 · 계산 " + String(d.made_at || "").slice(5, 16).replace("T", " ");
       var live = d.items.filter(function(i) { return !i.excluded; }), ex = d.items.filter(function(i) { return i.excluded; });
@@ -97,6 +130,17 @@
         return '<div>' + (i.status === "missing" ? "❓ <b>" + esc(i.name) + "</b> " + when(i) + " 결제가 안 보여요 — 해지했나요?" :
           "📈 <b>" + esc(i.name) + "</b> " + won(i.prev_amount) + " → " + won(i.amount)) + '</div>'; }).join("") + '</div>' : "";
       var month = live.filter(function(i) { return i.cycle === "month"; }), year = live.filter(function(i) { return i.cycle === "year"; });
+      document.getElementById("vCat").classList.toggle("on", VIEW === "cat");
+      document.getElementById("vDay").classList.toggle("on", VIEW !== "cat");
+      renderCats(d);
+      if (VIEW === "cat") {
+        var groups = {}, order = (d.categories || []).slice();
+        live.forEach(function(i) { (groups[i.category] = groups[i.category] || []).push(i); if (order.indexOf(i.category) < 0) order.push(i.category); });
+        list.innerHTML = order.filter(function(c) { return groups[c]; }).map(function(c) {
+          var xs = groups[c], m = xs.reduce(function(a, i) { return a + (i.cycle === "month" ? i.amount : Math.round(i.amount / 12)); }, 0);
+          return '<li class="fx-h" style="border:0;padding:0;">' + esc(c) + ' ' + xs.length + '개 · 매달 약 ' + won(m) + '</li>' + xs.map(function(i) { return row(i, false); }).join("");
+        }).join("") || '<li class="fx-empty">찾은 고정비가 없어요.</li>';
+      } else
       list.innerHTML = (month.length ? '<li class="fx-h" style="border:0;padding:0;">매달 ' + month.length + '개 · ' + won(d.month_total) + '</li>' + month.map(function(i) { return row(i, false); }).join("") : "") +
         (year.length ? '<li class="fx-h" style="border:0;padding:0;">매년 ' + year.length + '개 · ' + won(d.year_only_total) + '</li>' + year.map(function(i) { return row(i, false); }).join("") : "") ||
         '<li class="fx-empty">찾은 고정비가 없어요.</li>';
@@ -104,6 +148,13 @@
       w.hidden = !ex.length;
       document.getElementById("fxExSum").textContent = "제외한 것 " + ex.length + "개";
       document.getElementById("fxEx").innerHTML = ex.map(function(i) { return row(i, true); }).join("");
+    }
+    function renderCats(d) {
+      var def = d.cat_default || [];
+      document.getElementById("fxCats").innerHTML = (d.categories || []).map(function(c) {
+        return def.indexOf(c) >= 0 ? '<span class="def">' + esc(c) + '</span>'
+          : '<span>' + esc(c) + '<button type="button" data-write data-delcat="' + esc(c) + '" aria-label="' + esc(c) + ' 지우기">✕</button></span>';
+      }).join("");
     }
     function post(url, body, msg) {
       return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
@@ -115,7 +166,27 @@
           return true;
         });
     }
+    document.addEventListener("change", function(e) {
+      var s = e.target.closest("select[data-cat]");
+      if (!s) return;
+      s.disabled = true;
+      post("/api/fixed/rules", { action: "category", key: s.getAttribute("data-cat"), category: s.value }, s.value + "(으)로 바꿨어요");
+    });
+    function setView(v) { VIEW = v; try { localStorage.setItem("fxView", v); } catch (e) {} if (D) render(D); }
+    document.getElementById("vCat").onclick = function() { setView("cat"); };
+    document.getElementById("vDay").onclick = function() { setView("day"); };
+    document.getElementById("catAdd").onclick = function() {
+      var n = document.getElementById("catName").value.trim();
+      if (!n) { showToast("카테고리 이름을 넣어 주세요", "error"); return; }
+      post("/api/fixed/rules", { action: "add_category", name: n }, "카테고리를 추가했어요").then(function(ok) { if (ok) document.getElementById("catName").value = ""; });
+    };
     document.addEventListener("click", function(e) {
+      var dc = e.target.closest("button[data-delcat]");
+      if (dc) {
+        if (!confirm(dc.getAttribute("data-delcat") + " 카테고리를 지울까요? 이 카테고리의 항목은 자동 추정으로 돌아가요.")) return;
+        post("/api/fixed/rules", { action: "del_category", name: dc.getAttribute("data-delcat") }, "지웠어요");
+        return;
+      }
       var b = e.target.closest("button[data-exc],button[data-inc],button[data-del]");
       if (!b) return;
       b.disabled = true;
