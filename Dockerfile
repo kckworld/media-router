@@ -25,6 +25,7 @@ EXPOSE 5080
 # 메모리에 들고 있어서, worker를 여러 개로 늘리면 이 상태가 worker마다 따로
 # 놀아 run_batch 쿨다운/로그인 잠금이 제대로 안 걸린다. gunicorn을 쓰는 이유는
 # 그 자체로도: 느린 요청 하나가 전체를 막지 않고, 워커가 죽으면 자동 재기동됨.
-CMD ["gunicorn", "--bind", "0.0.0.0:5080", "--workers", "1", "--threads", "4", \
+# (11-14) 스레드 4→8: SSH로 호스트를 부르는 저장·텔레그램 확인처럼 몇 초 걸리는 요청이 겹치면 다른 화면까지 기다려서
+CMD ["gunicorn", "--bind", "0.0.0.0:5080", "--workers", "1", "--threads", "8", \
      "--worker-class", "gthread", "--timeout", "60", \
      "--access-logfile", "-", "--error-logfile", "-", "web_admin:app"]

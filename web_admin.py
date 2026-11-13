@@ -4375,6 +4375,22 @@ def sort_rules_for_list(rules, sort_key, sort_dir):
     reverse = (sort_dir == "desc")
     return sorted(rules, key=keyfunc, reverse=reverse)
 
+# (11-14) 'MR이 전반적으로 느림' — 1초 넘게 걸린 요청은 주소·시간만 남긴다(내용·인자는 안 남김)
+@app.before_request
+def _req_timer_start():
+    request.environ["mr.t0"] = time.monotonic()
+
+
+@app.after_request
+def _req_timer_log(r):
+    t0 = request.environ.get("mr.t0")
+    if t0 is not None:
+        dt = time.monotonic() - t0
+        if dt >= 1.0 and not request.path.startswith("/static/"):
+            app.logger.warning("느린 요청 %s %s %.1f초 (%s)", request.method, request.path, dt, r.status_code)
+    return r
+
+
 @app.after_request
 def add_security_headers(r):
     r.headers["Content-Security-Policy"] = "upgrade-insecure-requests"

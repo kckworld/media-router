@@ -36,6 +36,7 @@ class TG:
         self.session = self.dir / "tg"            # Telethon이 tg.session을 만든다
         self.api_file = self.dir / "api.json"
         self._pending = {}                         # 로그인 중: phone, phone_code_hash
+        self._status = (0.0, None)                 # (시각, 상태) — 확인에 4초쯤 걸려 10분 기억(11-14 MR 느림)
 
     # ── API 키
     def api(self):
@@ -74,7 +75,7 @@ class TG:
         return TelegramClient(str(self.session), aid, ah, device_model="MR hotdeal", app_version="1.0",
                               receive_updates=False)
 
-    def _run(self, coro_fn, timeout=120):
+    def _run(self, coro_fn, timeout=120, wait=None):
         """매번 새 이벤트 루프·클라이언트(스레드에서 불러도 안전). 세션 파일은 sqlite라 한 번에 하나만."""
         async def main():
             client = self._client()
@@ -84,11 +85,28 @@ class TG:
             finally:
                 await client.disconnect()
                 self._secure()
-        with _RUN_LOCK:
+        # wait: 수집이 세션을 쓰고 있으면 몇 초까지 기다릴지(None=끝날 때까지). 화면 요청은 짧게 — 수집(최대 8분)을 기다리며
+        # MR 요청 처리 자리를 붙잡지 않게(11-14)
+        if not _RUN_LOCK.acquire(timeout=-1 if wait is None else wait):
+            raise RuntimeError("지금 핫딜을 가져오는 중이에요. 잠시 뒤 다시 해 주세요")
+        try:
             return asyncio.run(asyncio.wait_for(main(), timeout))
+        finally:
+            _RUN_LOCK.release()
 
     # ── 로그인
-    def status(self) -> dict:
+    def status(self, fresh: bool = False) -> dict:
+        t, cached = self._status
+        if cached and not fresh and time.time() - t < 600:
+            return dict(cached, pending=bool(self._pending))
+        if cached and _RUN_LOCK.locked():                 # 수집 중이면 기다리지 않고 기억해 둔 값
+            return dict(cached, pending=bool(self._pending), busy=True)
+        out = self._status_now()
+        if not out.get("error"):
+            self._status = (time.time(), out)
+        return out
+
+    def _status_now(self) -> dict:
         aid, _ = self.api()
         out = {"api": bool(aid), "api_source": self.api_source(), "telethon": HAVE_TELETHON,
                "session": (self.dir / "tg.session").exists(), "authorized": False, "me": "",
@@ -100,7 +118,7 @@ class TG:
                         return None
                     me = await c.get_me()
                     return (me.first_name or "") + (" @" + me.username if me.username else "")
-                me = self._run(f, timeout=30)
+                me = self._run(f, timeout=30, wait=5)
                 out["authorized"], out["me"] = me is not None, me or ""
             except Exception as e:
                 out["error"] = type(e).__name__
@@ -110,7 +128,8 @@ class TG:
         async def f(c):
             r = await c.send_code_request(phone)
             return r.phone_code_hash
-        h = self._run(f, timeout=90)        # 한국 번호는 DC5로 옮겨 가며 느릴 수 있음(11-13)
+        h = self._run(f, timeout=90, wait=20)        # 한국 번호는 DC5로 옮겨 가며 느릴 수 있음(11-13)
+        self._status = (0.0, None)
         self._pending = {"phone": phone, "hash": h, "at": time.time()}
 
     def sign_in(self, code: str = "", password: str = "") -> str:
@@ -127,7 +146,8 @@ class TG:
             except errors.SessionPasswordNeededError:
                 return "password"
             return "ok"
-        r = self._run(f, timeout=60)
+        r = self._run(f, timeout=60, wait=20)
+        self._status = (0.0, None)
         if r == "ok":
             self._pending = {}
         return r
@@ -137,9 +157,10 @@ class TG:
             async def f(c):
                 if await c.is_user_authorized():
                     await c.log_out()
-            self._run(f, timeout=30)
+            self._run(f, timeout=30, wait=20)
         except Exception:
             pass
+        self._status = (0.0, None)
         for p in self.dir.glob("tg.session*"):
             p.unlink(missing_ok=True)
         self._pending = {}
@@ -154,7 +175,7 @@ class TG:
                     out.append({"chat_id": str(d.id), "username": getattr(e, "username", "") or "",
                                 "title": d.name or "", "broadcast": bool(getattr(e, "broadcast", False))})
             return out
-        return self._run(f, timeout=90)
+        return self._run(f, timeout=90, wait=20)
 
     # ── 수집
     def collect(self, channels: list, on_channel, log=lambda *a: None, budget: int = 240) -> dict:
