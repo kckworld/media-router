@@ -83,7 +83,7 @@
         <div class="hint" style="margin-top:4px;">찾을 글자를 넣으면 결제일 ±5일 안에 그 글자·금액 범위의 지출이 있으면 '냄'으로 보고, 이번 달 실제 금액을 보여 줘요(할인으로 금액이 바뀌는 구독용).</div>
         <div style="text-align:right;margin-top:8px;"><button type="button" class="btn small primary" id="adBtn" data-write>추가</button></div>
       </details>
-      <div class="hint" style="margin-top:10px;">가계부 지출에서 매달 비슷한 날·금액으로 3번 넘게 나온 것을 고정비로 봐요(매년은 1년 간격 두 번). 고정비가 아니면 [제외]하세요.
+      <div class="hint" style="margin-top:10px;">우리 생활비 통장에서 매달 비슷한 날·금액으로 3번 넘게 나간 것을 고정비로 봐요(매년은 1년 간격 두 번, 관리비는 말일 기준). 고정비가 아니면 [제외]하세요.
         금액이 오르거나, 새로 생기거나, 결제일+5일이 지나도 안 보이거나, 연간 갱신 7일 전이면 오전 10시에 텔레그램으로 알려요.</div>
     </div>
 {% endblock %}
@@ -95,7 +95,13 @@
     function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
     function won(n) { return Number(n || 0).toLocaleString("ko-KR") + "원"; }
     function md(iso) { var m = /\d{4}-(\d{2})-(\d{2})/.exec(iso || ""); return m ? (+m[1]) + "/" + (+m[2]) : ""; }
-    function when(i) { return i.cycle === "year" ? "매년 " + i.month + "/" + i.day : "매달 " + i.day + "일"; }
+    function when(i) {
+      if (i.rule === "month_end") return "매달 말일(휴일이면 전 평일) · " + md(i.next_date);   // 관리비(11-14)
+      return i.cycle === "year" ? "매년 " + i.month + "/" + i.day : "매달 " + i.day + "일";
+    }
+    // 고정비는 '우리 생활비' 통장 것만 보므로 그 이름은 안 적음(11-14). 카드 등 다른 곳만 표시
+    var HOME_ACC = "우리 생활비";
+    function accTxt(a) { return a && a !== HOME_ACC ? ' · ' + esc(a) : ''; }
     function chip(i) {
       if (i.manual && !i.match) return '<span class="fx-chip manual">직접 넣음 · 다음 ' + md(i.next_date) + '</span>';
       var s = "";
@@ -120,7 +126,7 @@
         : '<button type="button" class="btn small" data-write data-' + (excluded ? "inc" : "exc") + '="' + esc(i.key) + '">' + (excluded ? "다시 넣기" : "제외") + '</button>';
       if (i.forced && !excluded) btn = '<button type="button" class="btn small" data-write data-unforce="' + esc(i.key) + '">후보로</button>' + btn;
       return '<li><span class="fx-name">' + esc(i.name) + '</span><span class="fx-amt">' + won(i.amount) + paidAmt + '</span>' +
-        '<span class="fx-sub">' + (excluded ? "" : catSel(i)) + when(i) + (i.asset ? ' · ' + esc(i.asset) : '') + how + ' ' + chip(i) + '</span><span class="fx-act">' + btn + '</span></li>';
+        '<span class="fx-sub">' + (excluded ? "" : catSel(i)) + when(i) + accTxt(i.asset) + how + ' ' + chip(i) + '</span><span class="fx-act">' + btn + '</span></li>';
     }
     function render(d) {
       D = d;
@@ -174,7 +180,7 @@
       document.getElementById("cdSum").textContent = "고정비 후보 " + cd.length + "개";
       document.getElementById("fxCd").innerHTML = cd.map(function(x) {
         return '<li><span class="fx-name">' + esc(x.name) + '</span><span class="fx-amt">' + won(x.amount) + '</span>' +
-          '<span class="fx-sub">최근 6달 중 ' + x.months + '달 · ' + esc(x.app_cat || "") + (x.asset ? ' · ' + esc(x.asset) : '') + ' · ' + esc(x.why) + '</span>' +
+          '<span class="fx-sub">최근 6달 중 ' + x.months + '달 · ' + esc(x.app_cat || "") + accTxt(x.asset) + ' · ' + esc(x.why) + '</span>' +
           '<span class="fx-act"><button type="button" class="btn small" data-write data-force="' + esc(x.key) + '">고정비로</button></span></li>';
       }).join("");
       var w = document.getElementById("fxExWrap");
