@@ -177,7 +177,7 @@ def test_collect_saves_and_notifies(hd, monkeypatch):
     st = web_admin._hd_store()
     st.add_channel("-1001", "a", "딜")
     sent = []
-    monkeypatch.setattr(web_admin, "hub_notify", lambda key, text, *a, **k: sent.append((key, text)))
+    monkeypatch.setattr(web_admin, "hub_notify", lambda key, text, *a, **k: sent.append((key, text)) or {"ok": True})
 
     class FakeTG:
         def api(self):
@@ -201,3 +201,34 @@ def test_collect_saves_and_notifies(hd, monkeypatch):
 def test_hub_items_registered():
     import notify_hub
     assert "mr.hotdeal_keyword" in notify_hub.DEFAULT_ITEMS and "mr.hotdeal_feed" in notify_hub.DEFAULT_ITEMS
+
+
+def test_notify_retry_after_failure(hd, monkeypatch):
+    # 11-14: 텔레그램 전송 실패(ConnectionError)한 알림은 다음 수집 때 다시, 3번까지
+    st = web_admin._hd_store()
+    st.add_channel("-1001", "a", "딜")
+    calls, ok = [], {"v": False}
+    monkeypatch.setattr(web_admin, "hub_notify", lambda key, text, *a, **k: calls.append(key) or {"ok": ok["v"]})
+    n = {"i": 0}
+
+    class FakeTG:
+        def api(self):
+            return (1, "h")
+
+        def collect(self, chans, on_channel, log=None):
+            n["i"] += 1
+            if n["i"] == 1:
+                on_channel(chans[0], [(10, int(time.time()), "당근패드 토스 40% 딜", [], "https://t.me/a/10")], 10, "")
+            else:
+                on_channel(chans[0], [], 10, "")
+            return {}
+    monkeypatch.setitem(web_admin._hd, "tg", FakeTG())
+    (web_admin.HOTDEAL_DIR / "tg.session").write_text("x")
+    st.set_meta("settings", {"kw_on": False, "feed_on": True, "keywords": [], "keep_days": 90})
+    web_admin._hd_collect()
+    assert calls == ["mr.hotdeal_feed"] and len(st.meta("notify_retry")) == 1
+    web_admin._hd_collect()                                  # 또 실패 → tries 2
+    assert st.meta("notify_retry")[0]["tries"] == 2
+    ok["v"] = True
+    web_admin._hd_collect()                                  # 이번엔 성공 → 비움
+    assert len(calls) == 3 and st.meta("notify_retry") == []

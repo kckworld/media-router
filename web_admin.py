@@ -4445,12 +4445,25 @@ def _hd_collect() -> None:
         st.purge(int(cfg.get("keep_days") or 90))
         fresh = [r for r in new_rows if r["ts"] >= time.time() - 6 * 3600]   # 처음 7일 백필은 알림 안 함
         kws = [k for k in cfg.get("keywords") or [] if k]
+        # (11-14) 텔레그램 연결이 잠깐 끊겨(ConnectionError) 알림 한 건이 빠짐 → 실패한 건 다음 회차에 다시(최대 3번)
+        def send(key, text):
+            try:
+                res = hub_notify(key, text)
+            except Exception:
+                res = {"ok": False}
+            return bool((res or {}).get("ok"))
+        retry = []
+        for q in (st.meta("notify_retry", []) or [])[:50]:
+            if not send(q["key"], q["text"]) and int(q.get("tries") or 1) < 3:
+                retry.append(dict(q, tries=int(q.get("tries") or 1) + 1))
         for r in fresh[:30]:
             hit = hotdeal_store.match_keywords(r, kws) if cfg.get("kw_on") else []
-            if hit:
-                hub_notify("mr.hotdeal_keyword", hotdeal_store.feed_text(r, hit))
-            elif cfg.get("feed_on") and not r["is_dup"]:
-                hub_notify("mr.hotdeal_feed", hotdeal_store.feed_text(r))
+            key = "mr.hotdeal_keyword" if hit else ("mr.hotdeal_feed" if cfg.get("feed_on") and not r["is_dup"] else "")
+            if key:
+                text = hotdeal_store.feed_text(r, hit or None)
+                if not send(key, text):
+                    retry.append({"key": key, "text": text, "tries": 1})
+        st.set_meta("notify_retry", retry)
     except Exception as e:
         err = "%s: %s" % (type(e).__name__, str(e)[:120])
         app.logger.warning("핫딜 수집 실패: %s", type(e).__name__)
