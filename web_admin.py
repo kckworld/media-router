@@ -4591,6 +4591,8 @@ def api_hotdeal_login():
             return jsonify({"ok": True})
         if act == "send":
             phone = re.sub(r"[\s-]", "", str(b.get("phone") or ""))
+            if re.fullmatch(r"01\d{8,9}", phone):          # 010… 국내 번호면 +82로(11-13 사용자가 010으로 넣어 거절됨)
+                phone = "+82" + phone[1:]
             if not re.fullmatch(r"\+\d{8,15}", phone):
                 return jsonify({"ok": False, "error": "전화번호는 +82로 시작하게 넣어 주세요."}), 400
             tg.send_code(phone)
@@ -4610,10 +4612,15 @@ def api_hotdeal_login():
             tg.logout()
             return jsonify({"ok": True})
     except Exception as e:
-        app.logger.info("핫딜 로그인 %s 실패: %s", act, type(e).__name__)
-        msg = {"PhoneCodeInvalidError": "인증코드가 틀렸어요.", "PhoneCodeExpiredError": "인증코드가 만료됐어요. 다시 받아 주세요.",
+        # (11-13) 처음엔 info로만 남겨 원인을 못 봄 → warning + 텔레그램 오류 문구(전화번호·코드는 안 들어 있음)
+        app.logger.warning("핫딜 로그인 %s 실패: %s %s", act, type(e).__name__, str(e)[:160])
+        msg = {"TimeoutError": "텔레그램 응답이 늦어요. 잠시 뒤 다시 해 주세요.",
+               "SendCodeUnavailableError": "인증코드를 더 보낼 수 없어요. 텔레그램 앱으로 이미 온 코드를 쓰거나 잠시 뒤 다시 해 주세요.",
+               "PhoneNumberFloodError": "인증 요청이 너무 많아 막혔어요. 몇 시간 뒤 다시 해 주세요.",
+               "PhoneNumberBannedError": "이 번호는 텔레그램에서 막혀 있어요.",
+               "ApiIdInvalidError": "API ID·HASH가 틀렸어요. 다시 넣어 주세요.","PhoneCodeInvalidError": "인증코드가 틀렸어요.", "PhoneCodeExpiredError": "인증코드가 만료됐어요. 다시 받아 주세요.",
                "PasswordHashInvalidError": "2단계 비밀번호가 틀렸어요.", "PhoneNumberInvalidError": "전화번호가 이상해요.",
-               "FloodWaitError": "요청이 많아 잠시 막혔어요. 나중에 다시 해 주세요."}.get(type(e).__name__, "실패했어요 (%s)" % type(e).__name__)
+               "FloodWaitError": "요청이 많아 잠시 막혔어요. 나중에 다시 해 주세요."}.get(type(e).__name__, "실패했어요 (%s: %s)" % (type(e).__name__, str(e)[:80]))
         return jsonify({"ok": False, "error": msg}), 400
     return jsonify({"ok": False, "error": "알 수 없는 동작이에요."}), 400
 

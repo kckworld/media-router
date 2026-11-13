@@ -109,6 +109,15 @@ def test_login_api_validation_and_no_secrets(hd):
     assert hd.post("/api/hotdeal/login", json={"action": "api", "api_id": "123", "api_hash": "a" * 32}).get_json()["ok"]
     assert (web_admin.HOTDEAL_DIR / "api.json").stat().st_mode & 0o777 == 0o600
     assert hd.post("/api/hotdeal/login", json={"action": "send", "phone": "010-1234"}).status_code == 400
+    sent = []
+    web_admin._hd_tg().send_code = lambda phone: sent.append(phone)
+    assert hd.post("/api/hotdeal/login", json={"action": "send", "phone": "010-1234-5678"}).get_json()["ok"]
+    assert sent == ["+821012345678"]                                                  # 010 → +82(11-13)
+    def boom(phone):
+        raise TimeoutError()
+    web_admin._hd_tg().send_code = boom
+    r = hd.post("/api/hotdeal/login", json={"action": "send", "phone": "+821012345678"})
+    assert r.status_code == 400 and "늦어요" in r.get_json()["error"]
     assert hd.post("/api/hotdeal/login", json={"action": "code", "code": ""}).status_code == 400
 
 

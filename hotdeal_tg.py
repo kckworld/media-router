@@ -110,7 +110,7 @@ class TG:
         async def f(c):
             r = await c.send_code_request(phone)
             return r.phone_code_hash
-        h = self._run(f, timeout=60)
+        h = self._run(f, timeout=90)        # 한국 번호는 DC5로 옮겨 가며 느릴 수 있음(11-13)
         self._pending = {"phone": phone, "hash": h, "at": time.time()}
 
     def sign_in(self, code: str = "", password: str = "") -> str:
