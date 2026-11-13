@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 DUP_WINDOW = 48 * 3600
-PARSE_VER = 2          # 파싱 규칙을 바꾸면 올림 → 수집 때 저장된 딜을 다시 정리
+PARSE_VER = 3          # 파싱 규칙을 바꾸면 올림 → 수집 때 저장된 딜을 다시 정리
 _lock = threading.Lock()
 
 # 쇼핑몰 판별: 도메인 끝부분 → 이름
@@ -34,8 +34,8 @@ SHOPS = [
     ("wemakeprice.com", "위메프"), ("aliexpress.com", "알리"), ("a.aliexpress.com", "알리"), ("s.click.aliexpress.com", "알리"),
     ("temu.com", "테무"), ("amazon.com", "아마존"), ("amazon.co.jp", "아마존JP"), ("amzn.to", "아마존"),
     ("hmall.com", "현대H몰"), ("gsshop.com", "GS샵"), ("cjonstyle.com", "CJ온스타일"), ("oliveyoung.co.kr", "올리브영"),
-    ("kakao.com", "카카오"), ("e-himart.co.kr", "하이마트"), ("lotteimall.com", "롯데아이몰"), ("danawa.com", "다나와"),
-    ("ppomppu.co.kr", "뽐뿌"), ("quasarzone.com", "퀘이사존"), ("fmkorea.com", "에펨코리아"), ("ruliweb.com", "루리웹"),
+    ("kakao.com", "카카오"), ("toss.shopping", "토스쇼핑"), ("toss.im", "토스쇼핑"), ("naver.net", "네이버"), ("e-himart.co.kr", "하이마트"), ("lotteimall.com", "롯데아이몰"), ("danawa.com", "다나와"),
+    ("ppomppu.co.kr", "뽐뿌"), ("clien.net", "클리앙"), ("quasarzone.com", "퀘이사존"), ("fmkorea.com", "에펨코리아"), ("ruliweb.com", "루리웹"),
 ]
 # 트래킹 파라미터(중복 판별 열쇠에서 뺌)
 TRACK = re.compile(r"^(utm_|fbclid|gclid|ref|src|source|campaign|affiliate|af_|click|traceid|clickid|lptag|subid|"
@@ -89,7 +89,7 @@ SHOP_WORDS = {"지마켓": "G마켓", "g마켓": "G마켓", "gmarket": "G마켓"
               "토스": "토스쇼핑", "토스쇼핑": "토스쇼핑", "알리": "알리", "알리익스프레스": "알리", "aliexpress": "알리", "테무": "테무",
               "아마존": "아마존", "amazon": "아마존", "위메프": "위메프", "티몬": "티몬", "하이마트": "하이마트", "오늘의집": "오늘의집",
               "올리브영": "올리브영", "29cm": "29CM", "gs샵": "GS샵", "현대h몰": "현대H몰", "cj온스타일": "CJ온스타일",
-              "카카오": "카카오", "카카오톡선물하기": "카카오", "톡딜": "카카오", "홈플러스": "홈플러스", "다이소": "다이소", "인터파크": "인터파크",
+              "카카오": "카카오", "카카오톡선물하기": "카카오", "톡딜": "카카오", "카카오톡딜": "카카오", "카카오쇼핑": "카카오", "홈플러스": "홈플러스", "다이소": "다이소", "인터파크": "인터파크",
               "yes24": "예스24", "교보문고": "교보문고", "에누리": "에누리", "다나와": "다나와", "롯데홈쇼핑": "롯데홈쇼핑", "cj더마켓": "CJ더마켓",
               "lg전자": "LG전자", "삼성전자": "삼성전자", "삼성닷컴": "삼성전자", "애플": "애플", "스팀": "스팀", "에픽": "에픽"}
 # 커뮤니티 이름 태그는 쇼핑몰이 아님
@@ -97,7 +97,11 @@ COMMUNITY = {"뽐뿌", "해외뽐뿌", "해뽐", "클리앙", "퀘이사존", "�
 IMG = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)(?:[?#]|$)", re.I)
 # 머리말 줄('🛍 쇼핑 특가', '🔥 핫딜 알림')·정보 줄(💰 가격, 🏬 쇼핑몰, 🔗 링크, 📢 홍보, ※ 안내)은 제목이 아님
 HEADER = re.compile(r"^(?:쇼핑\s*특가|오늘의\s*특가|특가|핫딜|핫딜\s*알림|타임\s*딜|가격\s*하락|가격하락\s*알림|새\s*글|알림|공지|광고)$")
-INFO_PREFIX = ("💰", "🏬", "🔗", "📢", "※", "👉", "▶", "➡", "🛒")
+INFO_PREFIX = ("💰", "🏬", "🔗", "📢", "※", "👉", "▶", "➡", "🛒", "📌", "📦", "✱", "-", "•", "·")
+# '정상가 26,486원', '할인: 9,826원', '적립', '쿠폰' 줄의 금액은 판매가가 아님(11-13 뽐질)
+NOT_PRICE = re.compile(r"정상가|정가|원가|할인\s*[:：]|할인\s*금액|할인액|적립|쿠폰|캐시백|포인트|배송비|이상\s*구매|최소")
+# 첫 줄이 '👍대박 16,660원 (37.1% 할인)'처럼 가격 머리말이면 가격으로 쓰고 제목은 다음 줄에서
+PRICE_HEAD = re.compile(r"^(?:(?:대박|초특가|특가|역대가|역대급|최저가|핫딜|할인가|판매가|가격)\s*[:：]?\s*)?((?:\d{1,3}(?:,\d{3})+|\d{3,8}))\s*원(?:\s*\([^)]*\))?\s*$")
 
 
 def _shop_word(s: str) -> str:
@@ -144,13 +148,24 @@ def parse(text: str, urls=()) -> dict:
                 continue
             shop_text = shop_text or _shop_word(t) or (t if len(t) <= 10 else "")
         c = _clean_line(_strip_emoji(line))
+        m = PRICE_HEAD.match(c)
+        if m and not title:
+            if price is None:
+                price = int(m.group(1).replace(",", ""))
+            continue
         if title or len(c) < 2 or re.fullmatch(r"[\d,\s원%↓→\-()/]+", c) or HEADER.match(c.replace(" ", " ")):
             continue
         if len(c) <= 8 and re.search(r"(특가|핫딜|알림|세일)$", c):
             continue
         title = re.sub(r"\s*\(\s*[\d,]+\s*원[^)]*\)\s*(\(무료\)|\(유료\))?\s*$", "", c).strip() or c   # 끝의 '(30,305원/무료)'는 가격 칸에
     if price is None:
-        prices = [int(p.replace(",", "")) for p in PRICE.findall(text)]
+        prices = []
+        for l in text.splitlines():
+            if re.search(r"→|->|⇒", l):                      # '정가 19,900원 → 12,900원'은 화살표 뒤가 판매가
+                tail = PRICE.findall(re.split(r"→|->|⇒", l)[-1])
+                prices += [int(tail[0].replace(",", ""))] if tail else []
+            elif not NOT_PRICE.search(l):
+                prices += [int(x.replace(",", "")) for x in PRICE.findall(l)]
         prices = [p for p in prices if 100 <= p <= 100_000_000]
         price = min(prices) if prices else None          # '정가 39,900원 → 12,900원'이면 싼 쪽
     shop = _shop_word(shop_text) or shop_text

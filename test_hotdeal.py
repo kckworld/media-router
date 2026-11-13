@@ -69,6 +69,16 @@ def test_parse_channel_formats():
     assert p["title"] == "강원도 영월 절임배추 10kg" and p["shop"] == "토스쇼핑" and p["price"] == 30305 and "view.php" in p["url"]
 
 
+def test_parse_jirum_format():
+    # 11-13 뽐질: 첫 줄 '👍대박 16,660원 (37.1% 할인)', 둘째 줄 상품명, '- 할인: 9,826원'은 판매가 아님
+    t = ("👍대박 16,660원 (37.1% 할인)\n양푼이 우거지 감자탕, 5kg, 1팩\n\n📌 가격 현황\n- 정상가: 26,486원\n- 할인: 9,826원\n\n"
+         "📦 특가 바로가기\nhttps://toss.shopping/_m/pdWrSfVu\n\n✱ 이 포스팅은 토스쇼핑 쉐어링크 활동의 일환으로")
+    p = hotdeal.parse(t)
+    assert p["title"] == "양푼이 우거지 감자탕, 5kg, 1팩" and p["price"] == 16660 and p["shop"] == "토스쇼핑"
+    p = hotdeal.parse("에어팟 프로2\n정가 359,000원\n할인: 160,000원\n판매가 199,000원")
+    assert p["price"] == 199000
+
+
 def test_reparse_all(st):
     st.add_channel("-1", "a", "a")
     ch = st.channels()[0]
