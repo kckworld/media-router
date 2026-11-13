@@ -4390,6 +4390,234 @@ def health(): return "ok", 200
 @app.route("/favicon.ico")
 def favicon(): return app.send_static_file("favicon.ico")
 
+# ── 생활 > 핫딜 (2026-11-13): 구독 중인 텔레그램 핫딜 채널을 내 계정(Telethon)으로 읽어 모아 보기·검색. 소유자만.
+#    저장·파싱·검색 hotdeal.py, 텔레그램 hotdeal_tg.py. 5분마다 MR 안 주기 작업이 새 메시지만 가져옴(처음은 7일치).
+#    홈 화면 앱은 /hotdeal?app=1(hotdeal.webmanifest) — 메모장과 같은 방식. 세션(data/hotdeal/tg.session)은 절대 내보내지 않음.
+import hotdeal as hotdeal_store
+import hotdeal_tg
+HOTDEAL_DIR = DATA_DIR / "hotdeal"
+HOTDEAL_INTERVAL = 300
+_hd = {"store": None, "tg": None}
+_hd_run = {"running": False, "at": 0, "new": 0, "error": ""}
+_hd_lock = threading.Lock()
+HOTDEAL_DEFAULTS = {"kw_on": False, "feed_on": False, "keywords": [], "keep_days": 90}
+
+
+def _hd_store():
+    if _hd["store"] is None:
+        _hd["store"] = hotdeal_store.Store(HOTDEAL_DIR / "hotdeal.db")
+    return _hd["store"]
+
+
+def _hd_tg():
+    if _hd["tg"] is None:
+        _hd["tg"] = hotdeal_tg.TG(HOTDEAL_DIR)
+    return _hd["tg"]
+
+
+def _hd_settings() -> dict:
+    return dict(HOTDEAL_DEFAULTS, **(_hd_store().meta("settings", {}) or {}))
+
+
+def _hd_collect() -> None:
+    """한 번 수집: 켜 둔 채널의 새 메시지 → 저장 → (켜 두면) 키워드 알림·전체 피드 → 오래된 것 지움"""
+    with _hd_lock:
+        if _hd_run["running"]:
+            return
+        _hd_run["running"] = True
+    st, tg, new_rows, err = _hd_store(), _hd_tg(), [], ""
+    try:
+        chans = st.channels(only_enabled=True)
+        if chans and tg.api()[0] and (HOTDEAL_DIR / "tg.session").exists():
+            def on_msg(ch, mid, ts, text, urls, link):
+                row = st.add_deal(ch, mid, ts, text, urls, link)
+                if row:
+                    new_rows.append(row)
+                return bool(row)
+            res = tg.collect(chans, on_msg, log=lambda *a: app.logger.info("핫딜 %s", " ".join(map(str, a))))
+            now = int(time.time())
+            for cid, r in res.items():
+                st.update_channel(cid, last_msg_id=r["last"], last_error=r["error"], **({"last_ok": now} if not r["error"] else {}))
+        cfg = _hd_settings()
+        st.purge(int(cfg.get("keep_days") or 90))
+        fresh = [r for r in new_rows if r["ts"] >= time.time() - 6 * 3600]   # 처음 7일 백필은 알림 안 함
+        kws = [k for k in cfg.get("keywords") or [] if k]
+        for r in fresh[:30]:
+            hit = hotdeal_store.match_keywords(r, kws) if cfg.get("kw_on") else []
+            if hit:
+                hub_notify("mr.hotdeal_keyword", hotdeal_store.feed_text(r, hit))
+            elif cfg.get("feed_on") and not r["is_dup"]:
+                hub_notify("mr.hotdeal_feed", hotdeal_store.feed_text(r))
+    except Exception as e:
+        err = "%s: %s" % (type(e).__name__, str(e)[:120])
+        app.logger.warning("핫딜 수집 실패: %s", type(e).__name__)
+    finally:
+        with _hd_lock:
+            _hd_run.update(running=False, at=int(time.time()), new=len(new_rows), error=err)
+    if new_rows:
+        app.logger.info("핫딜 새 딜 %d개", len(new_rows))
+
+
+def _hd_loop() -> None:
+    time.sleep(60)
+    while True:
+        try:
+            _hd_collect()
+        except Exception:
+            pass
+        time.sleep(HOTDEAL_INTERVAL)
+
+
+if not app.config.get("TESTING") and os.environ.get("HOTDEAL_LOOP", "1") != "0":
+    threading.Thread(target=_hd_loop, daemon=True).start()
+
+
+@app.route("/hotdeal", methods=["GET"])
+def hotdeal_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("hotdeal_app.html" if request.args.get("app") else "hotdeal.html", authed=True)
+
+
+@app.route("/api/hotdeal/search", methods=["GET"])
+def api_hotdeal_search():
+    bad = _life_auth()
+    if bad:
+        return bad
+    a = request.args
+    try:
+        res = _hd_store().search(q=a.get("q", "")[:100], shop=a.get("shop", "")[:40], chat_id=a.get("ch", "")[:40],
+                                 days=int(a.get("days") or 0), sort=a.get("sort", "new"), hide_dup=a.get("dup", "0") != "1",
+                                 limit=int(a.get("limit") or 40), offset=int(a.get("offset") or 0))
+    except ValueError:
+        return jsonify({"ok": False, "error": "값이 이상해요."}), 400
+    res["channels"] = len(_hd_store().channels())
+    return jsonify(dict(res, ok=True))
+
+
+@app.route("/api/hotdeal/channels", methods=["GET", "POST"])
+def api_hotdeal_channels():
+    """GET 채널·설정·실행 상태 / POST {action: add|update|delete, chat_id, ...}"""
+    bad = _life_auth()
+    if bad:
+        return bad
+    st = _hd_store()
+    if request.method == "GET":
+        with _hd_lock:
+            run = dict(_hd_run)
+        return jsonify({"ok": True, "channels": st.channels(), "settings": _hd_settings(), "run": run, "stats": st.stats()})
+    b = request.get_json(silent=True) or {}
+    act, cid = str(b.get("action") or ""), str(b.get("chat_id") or "").strip()
+    if not re.fullmatch(r"-?\d{1,20}", cid):
+        return jsonify({"ok": False, "error": "채널이 이상해요."}), 400
+    if act == "add":
+        st.add_channel(cid, str(b.get("username") or "")[:64], str(b.get("title") or "")[:100])
+    elif act == "update":
+        kw = {}
+        if "enabled" in b:
+            kw["enabled"] = 1 if b.get("enabled") else 0
+        if "display" in b:
+            name = str(b.get("display") or "").strip()[:40]
+            if not name:
+                return jsonify({"ok": False, "error": "이름을 넣어 주세요."}), 400
+            kw["display"] = name
+        if not st.update_channel(cid, **kw):
+            return jsonify({"ok": False, "error": "채널이 없어요."}), 404
+    elif act == "delete":
+        st.delete_channel(cid, with_deals=bool(b.get("with_deals")))
+    else:
+        return jsonify({"ok": False, "error": "알 수 없는 동작이에요."}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/hotdeal/settings", methods=["POST"])
+def api_hotdeal_settings():
+    bad = _life_auth()
+    if bad:
+        return bad
+    b = request.get_json(silent=True) or {}
+    try:
+        keep = int(b.get("keep_days") or 90)
+    except ValueError:
+        return jsonify({"ok": False, "error": "보관 기간은 숫자로 넣어 주세요."}), 400
+    kws = [str(k).strip()[:30] for k in (b.get("keywords") or []) if str(k).strip()][:50]
+    _hd_store().set_meta("settings", {"kw_on": bool(b.get("kw_on")), "feed_on": bool(b.get("feed_on")),
+                                      "keywords": kws, "keep_days": max(7, min(730, keep))})
+    return jsonify({"ok": True})
+
+
+@app.route("/api/hotdeal/run", methods=["POST"])
+def api_hotdeal_run():
+    bad = _life_auth()
+    if bad:
+        return bad
+    with _hd_lock:
+        if _hd_run["running"]:
+            return jsonify({"ok": False, "error": "이미 가져오는 중이에요."}), 409
+    threading.Thread(target=_hd_collect, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/hotdeal/dialogs", methods=["GET"])
+def api_hotdeal_dialogs():
+    bad = _life_auth()
+    if bad:
+        return bad
+    try:
+        return jsonify({"ok": True, "dialogs": _hd_tg().dialogs()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": "채널 목록을 못 가져왔어요 (%s) — 로그인을 확인해 주세요." % type(e).__name__}), 502
+
+
+@app.route("/api/hotdeal/login", methods=["GET", "POST"])
+def api_hotdeal_login():
+    """GET 상태 / POST {action: api(api_id, api_hash) | send(phone) | code(code) | password(password) | logout}.
+    세션 파일·인증 값은 응답·로그에 내보내지 않는다."""
+    bad = _life_auth()
+    if bad:
+        return bad
+    tg = _hd_tg()
+    if request.method == "GET":
+        return jsonify(dict(tg.status(), ok=True))
+    b = request.get_json(silent=True) or {}
+    act = str(b.get("action") or "")
+    try:
+        if act == "api":
+            aid, ah = str(b.get("api_id") or "").strip(), str(b.get("api_hash") or "").strip()
+            if not aid.isdigit() or not re.fullmatch(r"[0-9a-f]{32}", ah):
+                return jsonify({"ok": False, "error": "API ID는 숫자, HASH는 32자리예요."}), 400
+            tg.save_api(aid, ah)
+            return jsonify({"ok": True})
+        if act == "send":
+            phone = re.sub(r"[\s-]", "", str(b.get("phone") or ""))
+            if not re.fullmatch(r"\+\d{8,15}", phone):
+                return jsonify({"ok": False, "error": "전화번호는 +82로 시작하게 넣어 주세요."}), 400
+            tg.send_code(phone)
+            return jsonify({"ok": True})
+        if act == "code":
+            code = re.sub(r"\D", "", str(b.get("code") or ""))
+            if not code:
+                return jsonify({"ok": False, "error": "인증코드를 넣어 주세요."}), 400
+            return jsonify({"ok": True, "step": tg.sign_in(code=code)})
+        if act == "password":
+            pw = str(b.get("password") or "")
+            if not pw:
+                return jsonify({"ok": False, "error": "비밀번호를 넣어 주세요."}), 400
+            tg.sign_in(password=pw)
+            return jsonify({"ok": True})
+        if act == "logout":
+            tg.logout()
+            return jsonify({"ok": True})
+    except Exception as e:
+        app.logger.info("핫딜 로그인 %s 실패: %s", act, type(e).__name__)
+        msg = {"PhoneCodeInvalidError": "인증코드가 틀렸어요.", "PhoneCodeExpiredError": "인증코드가 만료됐어요. 다시 받아 주세요.",
+               "PasswordHashInvalidError": "2단계 비밀번호가 틀렸어요.", "PhoneNumberInvalidError": "전화번호가 이상해요.",
+               "FloodWaitError": "요청이 많아 잠시 막혔어요. 나중에 다시 해 주세요."}.get(type(e).__name__, "실패했어요 (%s)" % type(e).__name__)
+        return jsonify({"ok": False, "error": msg}), 400
+    return jsonify({"ok": False, "error": "알 수 없는 동작이에요."}), 400
+
+
 @app.route("/apple-touch-icon.png")
 @app.route("/apple-touch-icon-precomposed.png")
 def apple_touch_icon(): return app.send_static_file("apple-touch-icon.png")

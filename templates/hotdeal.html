@@ -1,0 +1,14 @@
+{% set active_page = 'hotdeal' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <link rel="manifest" href="/static/hotdeal.webmanifest">
+{% endblock %}
+
+{% block content %}
+    <p class="muted" style="margin:0 0 12px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+      <a class="btn small" href="/hotdeal?app=1" target="_blank" rel="noopener">📱 핫딜 앱 바로가기</a>
+      <span>구독 중인 텔레그램 핫딜 채널을 모아 봐요. 열린 화면에서 "홈 화면에 추가"하면 앱처럼 쓸 수 있어요.</span>
+    </p>
+    {% include "_hotdeal_body.html" %}
+{% endblock %}

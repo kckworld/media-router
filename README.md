@@ -88,6 +88,31 @@ sudo /usr/local/bin/docker exec media_router python media_router.py
 
 ---
 
+## 핫딜 (생활 > 핫딜, 2026-11-13)
+
+구독 중인 텔레그램 핫딜 채널 메시지를 **내 텔레그램 계정**(Telethon)으로 읽어 한 양식(상품명·가격·쇼핑몰·바로가기·원문)으로 모으고 검색한다. 텔레그램에는 **읽기만** 한다(쓰기·반응 없음). 소유자만 볼 수 있다.
+
+- **바로가기(홈 화면 앱)**: 핫딜 화면의 [📱 핫딜 앱 바로가기] → 열린 화면에서 "홈 화면에 추가". 주소 `/hotdeal?app=1`, `static/hotdeal.webmanifest` (메모장과 같은 방식)
+- **수집**: MR 안 주기 작업이 5분마다 켜 둔 채널의 새 메시지만 가져온다(채널별 `last_msg_id` 이후, 처음은 최근 7일). FloodWait이 나면 그 채널만 다음으로 미룬다. 마지막 수집 시각·새 딜 수·채널별 오류는 핫딜 > 채널 관리에 보인다. 끄려면 컨테이너 환경변수 `HOTDEAL_LOOP=0`
+- **파싱**: 정규식·휴리스틱만(첫 줄=제목, `[\d,]+원` 중 가장 싼 값=가격, 메시지 링크·숨은 텍스트 링크·버튼 링크 중 첫 상품 링크, 도메인으로 쇼핑몰). 잘 안 맞는 채널은 `hotdeal.py`의 `CHANNEL_PARSERS`에 전용 함수를 추가. 파싱이 안 돼도 원문은 저장(원문 검색 가능)
+- **저장**: `data/hotdeal/hotdeal.db`(MR 본 DB와 분리) — `hotdeal_channels`, `hotdeals`, `hotdeals_fts`(FTS5 trigram, 3글자 이상. 2글자 이하는 LIKE). 같은 상품(트래킹 파라미터 뺀 URL, 쿠팡 productId·네이버 products 번호)이 48시간 안에 또 오면 중복 표시. 보관 기간(기본 90일)이 지나면 자동 삭제
+- **알림(기본 꺼짐)**: 핫딜 > 채널 관리 > 알림·보관에서 "키워드 알림"(키워드가 들어간 새 딜만)·"새 딜 전체 피드"를 켠다. 보내는 곳은 설정 > 알림의 `핫딜 키워드 알림`·`핫딜 전체 피드`
+
+### 처음 설정 / 다시 로그인
+1. my.telegram.org → API development tools에서 API ID·HASH 발급
+2. `.env`에 `TG_API_ID=…`, `TG_API_HASH=…`를 넣고 `./deploy.sh` (또는 핫딜 > 채널 관리 화면에서 직접 입력 → `data/hotdeal/api.json`, 600)
+3. 핫딜 > 채널 관리 > 텔레그램 로그인: 전화번호(+82…) → 텔레그램 앱으로 온 인증코드 → (2단계 인증이면) 비밀번호
+   - 예비(터미널): `sudo /usr/local/bin/docker exec -it media_router python hotdeal_login.py`
+4. 로그아웃·다른 계정으로 바꾸기: 같은 화면 [로그아웃] 후 3번 다시
+
+### 채널 추가
+핫딜 > 채널 관리 > [내 구독 채널에서 추가] → 원하는 채널 [추가]. 채널마다 켜기/끄기·표시 이름 바꾸기·빼기(모은 딜도 지움)가 된다.
+터미널로 목록만 보기: `sudo /usr/local/bin/docker exec -it media_router python hotdeal_login.py --list`
+
+> ⚠️ `data/hotdeal/tg.session`에는 텔레그램 계정 전체 권한이 들어 있다. 권한 600, `data/`는 git·이미지에서 빠져 있고, 웹·로그에 내보내지 않는다. 의심되면 텔레그램 앱 설정 > 기기에서 "MR hotdeal" 세션을 끊는다.
+
+---
+
 ## 테스트
 
 `find_matches`(패턴 AND/OR/exclude 조합), `extract_episode_number`(에피소드 번호 추출),

@@ -163,6 +163,9 @@ def test_page_api_and_masking(hub, monkeypatch):
     assert 'id="ntItems"' in html and "보낸 기록" in html
     # MR 봇을 쓰는 알림이 없으면 봇 목록에서 뺀다(11-10 사용자)
     assert c.post("/api/notify/item/mr.request_done", json={"bot": "fam"}).get_json()["ok"]
+    for k in ("mr.hotdeal_keyword", "mr.hotdeal_feed"):          # 핫딜 알림(11-13)도 기본은 MR 봇
+        assert "mr" in c.get("/api/notify/config").get_json()["bots"]
+        assert c.post("/api/notify/item/" + k, json={"bot": "fam"}).get_json()["ok"]
     assert "mr" not in c.get("/api/notify/config").get_json()["bots"]
 
 

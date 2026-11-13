@@ -49,7 +49,9 @@ GROUPS = [
          "legacy_hidden": True, "caution": True},
         {"key": "people", "label": "검색직", "href": "/people", "prefixes": ["/people", "/api/people"], "owner_only": True},
         # 메모장(11-11): 나만 쓰는 웹 동기화 메모. 공유 링크는 공개 사이트 /pub/n/… (menu 밖, _pub_gate)
-        {"key": "notes", "label": "메모장", "href": "/notes", "prefixes": ["/notes", "/api/notes"], "owner_only": True}]},
+        {"key": "notes", "label": "메모장", "href": "/notes", "prefixes": ["/notes", "/api/notes"], "owner_only": True},
+        # 핫딜(11-13): 텔레그램 핫딜 채널 모아 보기. 홈 화면 앱 /hotdeal?app=1
+        {"key": "hotdeal", "label": "핫딜", "href": "/hotdeal", "prefixes": ["/hotdeal", "/api/hotdeal"], "owner_only": True}]},
     {"key": "settings", "label": "설정", "pages": [
         {"key": "settings", "label": "연동·경로", "href": "/settings", "prefixes": ["/settings"], "owner_only": True},
         {"key": "users", "label": "사용자 매핑", "href": "/users", "prefixes": ["/users", "/api/users"], "owner_only": True},

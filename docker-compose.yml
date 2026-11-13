@@ -58,6 +58,9 @@ services:
       - GAMING_PC_SSH_KEY=/app/secrets/kck_gaming_key
       - DRIVE_ROOT_PATH=/app/drive_root
       # 다운로드 현황 탭(qBittorrent WebUI API, 보기 전용, 2026-10-14). 계정은 .env
+      # 핫딜(2026-11-13): my.telegram.org API (.env의 TG_API_ID/TG_API_HASH, 없으면 핫딜 화면에서 넣음)
+      - TG_API_ID=${TG_API_ID:-}
+      - TG_API_HASH=${TG_API_HASH:-}
       - QBIT_URL=http://127.0.0.1:8080
       - QBIT_USERNAME=${QBIT_USERNAME:-}
       - QBIT_PASSWORD=${QBIT_PASSWORD:-}

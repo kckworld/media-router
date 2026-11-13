@@ -50,6 +50,11 @@ DEFAULT_ITEMS = {
                        "chat_id": "", "kakao_room": ""},
     "n8n.ohtani": {"name": "오타니 선발 알림", "source": "n8n", "channel": "telegram", "bot": "telegram_account",
                    "chat_id": "", "kakao_room": ""},
+    # 핫딜(11-13): 핫딜 화면에서 켜야 보냄(기본 꺼짐) — 여기선 보내는 곳만
+    "mr.hotdeal_keyword": {"name": "핫딜 키워드 알림", "source": "MR", "channel": "telegram", "bot": "mr",
+                           "chat_id": "", "kakao_room": ""},
+    "mr.hotdeal_feed": {"name": "핫딜 전체 피드", "source": "MR", "channel": "telegram", "bot": "mr",
+                        "chat_id": "", "kakao_room": ""},
     "n8n.error": {"name": "n8n 에러 알림", "source": "n8n", "channel": "telegram", "bot": "telegram_account",
                   "chat_id": "", "kakao_room": ""},
 }

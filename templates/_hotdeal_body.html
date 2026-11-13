@@ -1,0 +1,239 @@
+{#- 핫딜 본문(11-13): MR 안(생활 > 핫딜)과 홈 화면 앱(/hotdeal?app=1)이 같이 쓴다. 보조 함수는 여기서 스스로 정의 -#}
+<style>
+  .hd-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .hd-tabs button { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; padding: 6px 14px; font-size: 14px; cursor: pointer; }
+  .hd-tabs button.on { background: var(--accent, #3b6ef5); border-color: transparent; color: #fff; }
+  .hd-search { display: flex; gap: 6px; }
+  .hd-search input { flex: 1; min-width: 0; font-size: 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); }
+  .hd-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; align-items: center; font-size: 13px; }
+  .hd-filters select { font-size: 13px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); max-width: 46vw; }
+  .hd-filters label { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+  .hd-count { color: var(--muted); font-size: 12px; margin: 4px 2px 8px; }
+  .hd-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .hd-card { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 10px 12px; }
+  .hd-card.dup { opacity: .6; }
+  .hd-title { font-weight: 600; color: var(--text); overflow-wrap: anywhere; line-height: 1.4; }
+  .hd-meta { font-size: 13px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .hd-meta b { color: var(--danger, #c0392b); font-size: 15px; }
+  .hd-links { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .hd-links a, .hd-btn { font-size: 13px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); color: var(--text); background: var(--surface); text-decoration: none; cursor: pointer; }
+  .hd-links a.go { background: var(--accent, #3b6ef5); color: #fff; border-color: transparent; }
+  .hd-raw { white-space: pre-wrap; font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
+  .hd-more { text-align: center; margin: 12px 0; }
+  .hd-empty { color: var(--muted); padding: 16px 4px; text-align: center; }
+  .hd-box { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 12px; margin-bottom: 10px; }
+  .hd-box h3 { margin: 0 0 8px; font-size: 15px; }
+  .hd-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+  .hd-row input[type=text], .hd-row input[type=password], .hd-row input[type=number], .hd-box textarea { flex: 1; min-width: 8em; font-size: 15px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); box-sizing: border-box; }
+  .hd-box textarea { width: 100%; min-height: 4.5em; }
+  .hd-ch { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .hd-ch:last-child { border-bottom: 0; }
+  .hd-ch .sub { grid-column: 2 / 4; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .hd-ch .err { color: var(--danger, #c0392b); }
+  .hd-ch input[type=text] { width: 100%; font-size: 14px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); box-sizing: border-box; }
+  .hd-muted { color: var(--muted); font-size: 13px; }
+  .hd-ok { color: #188038; font-weight: 700; }
+  .hd-toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: #222; color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 14px; z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .hd-toast.on { opacity: .92; }
+</style>
+
+<div class="hd-tabs" role="tablist">
+  <button type="button" class="on" data-tab="deals" role="tab">딜</button>
+  <button type="button" data-tab="ch" role="tab">채널 관리</button>
+</div>
+
+<section id="hdDeals">
+  <form class="hd-search" id="hdForm" role="search">
+    <input type="search" id="hdQ" placeholder="상품·쇼핑몰·원문 검색" aria-label="핫딜 검색" enterkeyhint="search">
+  </form>
+  <div class="hd-filters">
+    <select id="hdShop" aria-label="쇼핑몰"><option value="">쇼핑몰 전체</option></select>
+    <select id="hdCh" aria-label="출처 채널"><option value="">채널 전체</option></select>
+    <select id="hdDays" aria-label="기간"><option value="0">전체 기간</option><option value="1">하루</option><option value="3">3일</option><option value="7">7일</option><option value="30">30일</option></select>
+    <select id="hdSort" aria-label="정렬"><option value="new">최신순</option><option value="price">가격 낮은순</option><option value="price_desc">가격 높은순</option></select>
+    <label><input type="checkbox" id="hdHideDup" checked> 중복 숨기기</label>
+  </div>
+  <div class="hd-count" id="hdCount"></div>
+  <ul class="hd-list" id="hdList"><li class="hd-empty">불러오는 중...</li></ul>
+  <div class="hd-more"><button type="button" class="hd-btn" id="hdMore" hidden>더 보기</button></div>
+</section>
+
+<section id="hdChan" hidden>
+  <div class="hd-box" id="hdLogin"><h3>텔레그램 로그인</h3><div class="hd-muted">확인 중...</div></div>
+  <div class="hd-box">
+    <h3>채널</h3>
+    <div id="hdChList" class="hd-muted">불러오는 중...</div>
+    <div class="hd-row"><button type="button" class="hd-btn" id="hdDlgBtn">내 구독 채널에서 추가</button>
+      <button type="button" class="hd-btn" id="hdRunBtn">지금 가져오기</button></div>
+    <div id="hdDlg"></div>
+    <div class="hd-muted" id="hdRunInfo"></div>
+  </div>
+  <div class="hd-box">
+    <h3>알림·보관</h3>
+    <div class="hd-row"><label><input type="checkbox" id="hdKwOn"> 키워드 알림</label><span class="hd-muted">— 키워드가 들어간 새 딜만 보냄</span></div>
+    <textarea id="hdKw" placeholder="한 줄에 하나 (예: 에어팟)"></textarea>
+    <div class="hd-row"><label><input type="checkbox" id="hdFeedOn"> 새 딜 전체 피드 보내기</label><span class="hd-muted">(중복 뺀 것만)</span></div>
+    <div class="hd-row"><label>보관 기간 <input type="number" id="hdKeep" min="7" max="730" style="width:5em;flex:none;"> 일</label>
+      <button type="button" class="hd-btn" id="hdSetSave">저장</button></div>
+    <div class="hd-muted">보내는 곳(봇·방)은 설정 > 알림의 "핫딜 키워드 알림"·"핫딜 전체 피드"에서 정해요.</div>
+  </div>
+</section>
+<div class="hd-toast" id="hdToast" role="status" aria-live="polite"></div>
+
+<script>
+(function() {
+  var $ = function(id) { return document.getElementById(id); };
+  var PAGE = 40, offset = 0, items = [], CH = [], timer = null;
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+  function toast(m) { var t = $("hdToast"); t.textContent = m; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(function() { t.classList.remove("on"); }, 2200); }
+  function api(url, body) {
+    return fetch(url, body === undefined ? { cache: "no-store" } : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function(r) { return r.json().catch(function() { return {}; }).then(function(d) { return { status: r.status, d: d }; }); });
+  }
+  function ago(ts) {
+    var s = Math.max(0, Date.now() / 1000 - ts);
+    if (s < 60) return "방금"; if (s < 3600) return Math.floor(s / 60) + "분 전"; if (s < 86400) return Math.floor(s / 3600) + "시간 전";
+    if (s < 86400 * 7) return Math.floor(s / 86400) + "일 전";
+    var d = new Date(ts * 1000); return (d.getMonth() + 1) + "/" + d.getDate();
+  }
+  function safeUrl(u) { return /^https?:\/\//i.test(u || "") ? u : ""; }
+  function card(x) {
+    var url = safeUrl(x.url), src = safeUrl(x.source_link);
+    var meta = [x.price ? "<b>" + Number(x.price).toLocaleString("ko-KR") + "원</b>" : "", esc(x.shop || ""), x.source ? "[" + esc(x.source) + "]" : "", ago(x.ts)]
+      .filter(Boolean).join(" · ");
+    return '<li class="hd-card' + (x.is_dup ? " dup" : "") + '"><div class="hd-title">' + esc(x.title || (x.raw || "").split("\n")[0] || "(제목 없음)") + '</div>' +
+      '<div class="hd-meta">' + meta + (x.is_dup ? " · 중복" : "") + '</div><div class="hd-links">' +
+      (url ? '<a class="go" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">상품 바로가기</a>' : "") +
+      (src ? '<a href="' + esc(src) + '" target="_blank" rel="noopener noreferrer">원문 보기</a>' : "") +
+      '<button type="button" class="hd-btn" data-raw="' + esc(x.id) + '">원문 펼치기</button></div><div class="hd-raw" hidden></div></li>';
+  }
+  function params() {
+    return "q=" + encodeURIComponent($("hdQ").value.trim()) + "&shop=" + encodeURIComponent($("hdShop").value) + "&ch=" + encodeURIComponent($("hdCh").value) +
+      "&days=" + $("hdDays").value + "&sort=" + $("hdSort").value + "&dup=" + ($("hdHideDup").checked ? "0" : "1");
+  }
+  function load(more) {
+    if (!more) offset = 0;
+    api("/api/hotdeal/search?" + params() + "&offset=" + offset + "&limit=" + PAGE).then(function(r) {
+      if (r.status !== 200 || !r.d.ok) { $("hdList").innerHTML = '<li class="hd-empty">불러오지 못했어요</li>'; return; }
+      var d = r.d;
+      items = more ? items.concat(d.items) : d.items;
+      offset = items.length;
+      var shopSel = $("hdShop"), cur = shopSel.value;
+      shopSel.innerHTML = '<option value="">쇼핑몰 전체</option>' + d.shops.map(function(s) { return '<option' + (s === cur ? " selected" : "") + '>' + esc(s) + '</option>'; }).join("");
+      $("hdList").innerHTML = items.length ? items.map(card).join("") :
+        '<li class="hd-empty">' + (d.channels ? "조건에 맞는 딜이 없어요." : "아직 채널이 없어요. [채널 관리]에서 텔레그램 로그인 후 채널을 추가하세요.") + '</li>';
+      $("hdCount").textContent = d.total ? "딜 " + d.total.toLocaleString("ko-KR") + "개" : "";
+      $("hdMore").hidden = items.length >= d.total;
+    });
+  }
+  $("hdForm").addEventListener("submit", function(e) { e.preventDefault(); load(false); });
+  $("hdQ").addEventListener("input", function() { clearTimeout(timer); timer = setTimeout(function() { load(false); }, 350); });
+  ["hdShop", "hdCh", "hdDays", "hdSort", "hdHideDup"].forEach(function(id) { $(id).addEventListener("change", function() { load(false); }); });
+  $("hdMore").onclick = function() { load(true); };
+  $("hdList").addEventListener("click", function(e) {
+    var b = e.target.closest("button[data-raw]"); if (!b) return;
+    var x = items.filter(function(i) { return i.id === b.getAttribute("data-raw"); })[0], box = b.closest(".hd-card").querySelector(".hd-raw");
+    box.hidden = !box.hidden; box.textContent = x ? x.raw : ""; b.textContent = box.hidden ? "원문 펼치기" : "원문 접기";
+  });
+  document.querySelectorAll(".hd-tabs button").forEach(function(b) {
+    b.onclick = function() {
+      document.querySelectorAll(".hd-tabs button").forEach(function(x) { x.classList.toggle("on", x === b); });
+      var ch = b.getAttribute("data-tab") === "ch";
+      $("hdDeals").hidden = ch; $("hdChan").hidden = !ch;
+      if (ch) loadChan();
+    };
+  });
+
+  // ── 채널 관리
+  function loginBox(s) {
+    var h = "<h3>텔레그램 로그인</h3>";
+    if (!s.telethon) return h + '<div class="hd-muted">telethon이 설치되지 않았어요(배포 확인 필요).</div>';
+    if (!s.api) return h + '<div class="hd-muted">my.telegram.org에서 받은 API ID·HASH를 넣어 주세요(.env의 TG_API_ID·TG_API_HASH가 있으면 그걸 써요).</div>' +
+      '<div class="hd-row"><input type="text" id="hdApiId" inputmode="numeric" placeholder="API ID" autocomplete="off"><input type="password" id="hdApiHash" placeholder="API HASH" autocomplete="off"></div>' +
+      '<div class="hd-row"><button type="button" class="hd-btn" id="hdApiSave">저장</button></div>';
+    if (s.authorized) return h + '<div><span class="hd-ok">✓ 로그인됨</span> ' + esc(s.me) + '</div><div class="hd-row"><button type="button" class="hd-btn" id="hdLogout">로그아웃</button></div>';
+    var out = h + (s.error ? '<div class="hd-muted">상태 확인 실패: ' + esc(s.error) + '</div>' : "");
+    if (s.step === "password") return out + '<div class="hd-muted">2단계 인증 비밀번호를 넣어 주세요.</div><div class="hd-row"><input type="password" id="hdPw" autocomplete="current-password"><button type="button" class="hd-btn" id="hdPwBtn">로그인</button></div>';
+    if (s.pending) return out + '<div class="hd-muted">텔레그램 앱으로 온 인증코드를 넣어 주세요.</div><div class="hd-row"><input type="text" id="hdCode" inputmode="numeric" autocomplete="one-time-code"><button type="button" class="hd-btn" id="hdCodeBtn">확인</button></div>';
+    return out + '<div class="hd-muted">텔레그램 계정 전화번호(국가번호 포함, 예: +821012345678)</div><div class="hd-row"><input type="text" id="hdPhone" inputmode="tel" placeholder="+82..." autocomplete="tel"><button type="button" class="hd-btn" id="hdSend">인증코드 받기</button></div>';
+  }
+  var STEP = "";
+  function loadLogin() {
+    api("/api/hotdeal/login").then(function(r) {
+      var s = r.d || {}; s.step = STEP;
+      $("hdLogin").innerHTML = loginBox(s);
+      var on = function(id, fn) { var e = $(id); if (e) e.onclick = fn; };
+      on("hdApiSave", function() { post("/api/hotdeal/login", { action: "api", api_id: $("hdApiId").value, api_hash: $("hdApiHash").value }, "저장했어요", loadLogin); });
+      on("hdSend", function() { post("/api/hotdeal/login", { action: "send", phone: $("hdPhone").value }, "인증코드를 보냈어요", loadLogin); });
+      on("hdCodeBtn", function() { post("/api/hotdeal/login", { action: "code", code: $("hdCode").value }, "", function(d) { STEP = d.step === "password" ? "password" : ""; if (!STEP) toast("로그인됐어요"); loadLogin(); loadChan(); }); });
+      on("hdPwBtn", function() { post("/api/hotdeal/login", { action: "password", password: $("hdPw").value }, "로그인됐어요", function() { STEP = ""; loadLogin(); loadChan(); }); });
+      on("hdLogout", function() { if (confirm("텔레그램 로그아웃할까요? (수집이 멈춰요)")) post("/api/hotdeal/login", { action: "logout" }, "로그아웃했어요", loadLogin); });
+    });
+  }
+  function post(url, body, msg, then) {
+    return api(url, body).then(function(r) {
+      if (r.status !== 200 || !r.d.ok) { toast((r.d && r.d.error) || "실패했어요"); return; }
+      if (msg) toast(msg);
+      if (then) then(r.d);
+    });
+  }
+  function chRow(c) {
+    var sub = (c.username ? "@" + esc(c.username) + " · " : "") + "마지막 " + (c.last_ok ? ago(c.last_ok) : "-") + (c.last_error ? ' · <span class="err">' + esc(c.last_error) + '</span>' : "");
+    return '<div class="hd-ch"><input type="checkbox" data-en="' + esc(c.chat_id) + '"' + (c.enabled ? " checked" : "") + ' aria-label="' + esc(c.display) + ' 켜기">' +
+      '<input type="text" data-name="' + esc(c.chat_id) + '" value="' + esc(c.display) + '" aria-label="표시 이름">' +
+      '<button type="button" class="hd-btn" data-del="' + esc(c.chat_id) + '">빼기</button><div class="sub">' + sub + '</div></div>';
+  }
+  function loadChan() {
+    loadLogin();
+    api("/api/hotdeal/channels").then(function(r) {
+      if (!r.d.ok) return;
+      CH = r.d.channels;
+      $("hdChList").innerHTML = CH.length ? CH.map(chRow).join("") : '<div class="hd-muted">등록한 채널이 없어요.</div>';
+      var st = r.d.settings || {};
+      $("hdKwOn").checked = !!st.kw_on; $("hdFeedOn").checked = !!st.feed_on; $("hdKw").value = (st.keywords || []).join("\n"); $("hdKeep").value = st.keep_days || 90;
+      var run = r.d.run || {};
+      $("hdRunInfo").textContent = run.at ? "마지막 수집 " + ago(run.at) + " · 새 딜 " + (run.new || 0) + "개" + (run.error ? " · " + run.error : "") + (run.running ? " · 가져오는 중…" : "") : "아직 수집 전";
+      fillChSel();
+    });
+  }
+  function fillChSel() {
+    var sel = $("hdCh"), cur = sel.value;
+    sel.innerHTML = '<option value="">채널 전체</option>' + CH.map(function(c) { return '<option value="' + esc(c.chat_id) + '"' + (c.chat_id === cur ? " selected" : "") + '>' + esc(c.display) + '</option>'; }).join("");
+  }
+  $("hdChList").addEventListener("change", function(e) {
+    var en = e.target.closest("input[data-en]"), nm = e.target.closest("input[data-name]");
+    if (en) post("/api/hotdeal/channels", { action: "update", chat_id: en.getAttribute("data-en"), enabled: en.checked }, en.checked ? "켰어요" : "껐어요", loadChan);
+    if (nm) post("/api/hotdeal/channels", { action: "update", chat_id: nm.getAttribute("data-name"), display: nm.value }, "이름을 바꿨어요", loadChan);
+  });
+  $("hdChList").addEventListener("click", function(e) {
+    var b = e.target.closest("button[data-del]"); if (!b) return;
+    var keep = confirm("이 채널을 뺄까요?\n[확인] 모은 딜도 지움 / [취소] 그만두기");
+    if (keep) post("/api/hotdeal/channels", { action: "delete", chat_id: b.getAttribute("data-del"), with_deals: true }, "뺐어요", loadChan);
+  });
+  $("hdDlgBtn").onclick = function() {
+    $("hdDlg").innerHTML = '<div class="hd-muted">불러오는 중...</div>';
+    api("/api/hotdeal/dialogs").then(function(r) {
+      if (!r.d.ok) { $("hdDlg").innerHTML = '<div class="hd-muted">' + esc(r.d.error || "불러오지 못했어요") + '</div>'; return; }
+      var have = {}; CH.forEach(function(c) { have[c.chat_id] = 1; });
+      $("hdDlg").innerHTML = r.d.dialogs.map(function(d) {
+        return '<div class="hd-ch"><span>' + (d.broadcast ? "📢" : "👥") + '</span><span>' + esc(d.title) + '</span>' +
+          (have[d.chat_id] ? '<span class="hd-muted">등록됨</span>' : '<button type="button" class="hd-btn" data-add="' + esc(d.chat_id) + '" data-un="' + esc(d.username) + '" data-ti="' + esc(d.title) + '">추가</button>') +
+          '<div class="sub">' + (d.username ? "@" + esc(d.username) : "비공개") + '</div></div>';
+      }).join("") || '<div class="hd-muted">구독 중인 채널이 없어요.</div>';
+    });
+  };
+  $("hdDlg").addEventListener("click", function(e) {
+    var b = e.target.closest("button[data-add]"); if (!b) return;
+    b.disabled = true;
+    post("/api/hotdeal/channels", { action: "add", chat_id: b.getAttribute("data-add"), username: b.getAttribute("data-un"), title: b.getAttribute("data-ti") },
+      "추가했어요 — 다음 수집 때 최근 7일치를 가져와요", function() { b.outerHTML = '<span class="hd-muted">등록됨</span>'; loadChan(); });
+  });
+  $("hdRunBtn").onclick = function() { post("/api/hotdeal/run", {}, "가져오기 시작했어요(1~2분)", function() { setTimeout(loadChan, 4000); setTimeout(function() { loadChan(); load(false); }, 60000); }); };
+  $("hdSetSave").onclick = function() {
+    post("/api/hotdeal/settings", { kw_on: $("hdKwOn").checked, feed_on: $("hdFeedOn").checked, keep_days: $("hdKeep").value,
+      keywords: $("hdKw").value.split("\n").map(function(s) { return s.trim(); }).filter(Boolean) }, "저장했어요", loadChan);
+  };
+  api("/api/hotdeal/channels").then(function(r) { if (r.d && r.d.ok) { CH = r.d.channels; fillChSel(); } });
+  load(false);
+})();
+</script>

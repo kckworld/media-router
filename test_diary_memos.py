@@ -93,7 +93,8 @@ def test_life_group_menu_and_swipe_order(dy, monkeypatch):
     assert order.index("/encode_log") + 1 == order.index("/recon") and order.index("/recon") + 1 == order.index("/fixed")
     assert order.index("/fixed") + 1 == order.index("/parcels") and order.index("/parcels") + 1 == order.index("/journal")  # 고정비·택배(11-13)
     assert order.index("/journal") + 1 == order.index("/people") and order.index("/people") + 1 == order.index("/notes")
-    assert order.index("/notes") + 1 == order.index("/settings")                     # 메모장(11-11)은 생활 맨 끝
+    assert order.index("/notes") + 1 == order.index("/hotdeal")                      # 메모장(11-11) 다음 핫딜(11-13)
+    assert order.index("/hotdeal") + 1 == order.index("/settings")                   # 핫딜은 생활 맨 끝
     assert "/diary" not in order
     nav = re.search(r'<nav class="bottomnav".*?</nav>', html, re.S).group(0)
     assert ">생활<" in nav.replace("</svg>", ">") and 'href="/recon"' in nav
