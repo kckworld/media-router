@@ -10,8 +10,10 @@ import kakao_send as ks
 
 class FakeX:
     """xdotool/xclip 흉내. windows: {id: 제목}"""
-    def __init__(self, windows, active="", steal_after_paste=False, stubborn=False, rows=None, late=False):
+    def __init__(self, windows, active="", steal_after_paste=False, stubborn=False, rows=None, late=False, broken_ctrl=0):
         self.windows, self.active_w, self.keys = dict(windows), active, []
+        self.clip, self.input = "", ""   # 클립보드·입력칸(11-14: 붙여넣은 글을 다시 읽어 확인)
+        self.broken_ctrl = broken_ctrl  # 앞에서 몇 번의 Ctrl 조합을 놓칠지(Wine이 Ctrl을 놓쳐 'av'만 간 일)
         self.late = late                # True: 방 창은 생기지만 앞으로 오지 않음(재시작 직후처럼 늦게 뜸)
         self.steal, self.stubborn = steal_after_paste, stubborn
         self.rows = rows or {}          # 채팅 목록 줄 y → 더블클릭하면 열리는 방 이름
@@ -31,6 +33,11 @@ class FakeX:
                 self.next_id += 1
                 self.windows[str(self.next_id)] = pop
                 return ""
+        if a[0] == "xclip":
+            if "-i" in a:
+                self.clip = (stdin or b"").decode()
+                return ""
+            return self.clip
         if a[0] == "pgrep":
             return "3958 C:\\Program Files (x86)\\Kakao\\KakaoTalk\\KakaoTalk.exe"
         if a[:2] == ["xdotool", "search"]:
@@ -62,6 +69,17 @@ class FakeX:
             return ""
         if a[:2] == ["xdotool", "key"]:
             self.keys.append(a[3:])
+            for k in a[2:]:
+                if k.startswith("ctrl+") and self.broken_ctrl > 0:
+                    self.broken_ctrl -= 1
+                    self.input += k[5:]           # Ctrl을 놓치면 글자만 입력됨
+                    continue
+                if k == "ctrl+v":
+                    self.input = self.clip
+                elif k == "ctrl+c":
+                    self.clip = self.input
+                elif k in ("Delete", "BackSpace"):
+                    self.input = ""
             if self.steal and "ctrl+v" in a:
                 self.active_w = "999"                 # 붙여넣은 직후 다른 창이 앞으로
             return ""
@@ -205,3 +223,16 @@ def test_prepare_reports_blocker(monkeypatch, tmp_path):
     monkeypatch.setattr(ks, "LOCK", str(tmp_path / "lock"))
     r = ks.prepare("건이네가족")
     assert not r["ok"] and r["blocker"] == "보안 인증" and not fake.clicks
+
+
+def test_paste_verified_before_enter(monkeypatch, tmp_path):
+    # 11-14: Ctrl이 안 먹어 입력칸이 'av'가 되면 Enter 안 누르고 비운 뒤 다시 → 같아지면 그때 보냄
+    fake = FakeX({"11": "김창기", "12": "KakaoTalk"}, broken_ctrl=3)
+    r = run(monkeypatch, tmp_path, fake, {"room": "김창기", "text": "📅 오늘 날씨\n맑음"})
+    assert r["ok"] and fake.keys[-1] == ["Return"] and fake.input.replace(" ", "") == "📅오늘날씨\n맑음".replace(" ", "")
+
+
+def test_paste_never_matches_no_enter(monkeypatch, tmp_path):
+    fake = FakeX({"11": "김창기", "12": "KakaoTalk"}, broken_ctrl=999)
+    r = run(monkeypatch, tmp_path, fake, {"room": "김창기", "text": "안내"})
+    assert not r["ok"] and "달라" in r["message"] and ["Return"] not in fake.keys

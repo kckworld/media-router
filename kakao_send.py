@@ -13,7 +13,7 @@ Media Router(컨테이너)가 run_all.sh 강제 명령(SSH 'kakao-send')으로 �
   - 이미지 미리보기 대화상자는 그 방 창에 딸린(WM_TRANSIENT_FOR) 것일 때만 Enter.
 """
 from __future__ import annotations
-import fcntl, json, subprocess, sys, time, urllib.request
+import fcntl, json, re, subprocess, sys, time, urllib.request
 
 DOCKER = ["sudo", "-n", "/usr/local/bin/docker"]
 CONTAINER = "kakao-desktop"
@@ -276,13 +276,44 @@ def send_image(w: str, room: str, url: str) -> None:
     raise Fail("이미지 미리보기 창이 닫히지 않음 - 보내지 않음")
 
 
+def _keys(*combos) -> None:
+    """(11-14) 키 조합을 하나씩, 간격을 두고. 한 번에 'ctrl+a Delete ctrl+v'를 보냈더니 Wine 카톡이 Ctrl을 놓쳐
+    날씨 알림이 'av'로만 감 → 조합마다 따로 + --delay"""
+    for k in combos:
+        x("xdotool", "key", "--clearmodifiers", "--delay", "80", k)
+        time.sleep(0.15)
+
+
+def _same(a: str, b: str) -> bool:
+    return re.sub(r"\s+", "", a or "") == re.sub(r"\s+", "", b or "")    # Wine은 줄바꿈을 \r\n으로 바꿈
+
+
+def _clear_input() -> None:
+    _keys("ctrl+a", "Delete")
+    x("xdotool", "key", "--delay", "20", *(["BackSpace"] * 40))         # Ctrl이 안 먹어 글자가 남았을 때까지
+
+
 def send_text(w: str, room: str, text: str) -> None:
-    x("xclip", "-selection", "clipboard", "-i", stdin=text.encode())
     focus(w, room)
-    x("xdotool", "key", "--clearmodifiers", "ctrl+a", "Delete", "ctrl+v")   # 입력칸에 남은 글은 지우고
-    time.sleep(0.5)
+    for _ in range(3):
+        x("xclip", "-selection", "clipboard", "-i", stdin=text.encode())
+        _keys("ctrl+a", "Delete", "ctrl+v")                               # 입력칸에 남은 글은 지우고
+        time.sleep(0.5)
+        if active() != w or win_name(w) != room:
+            raise Fail("붙여넣은 뒤 활성 창이 바뀜 - 보내지 않음")
+        # 입력칸을 다시 복사해 보낼 글과 같은지 확인한 뒤에만 Enter(11-14). 다르면 비우고 다시
+        x("xclip", "-selection", "clipboard", "-i", stdin=b"")
+        _keys("ctrl+a", "ctrl+c")
+        time.sleep(0.3)
+        if _same(x("xclip", "-selection", "clipboard", "-o", check=False), text):
+            break
+        _clear_input()
+        time.sleep(0.5)
+    else:
+        raise Fail("입력칸 글이 보낼 글과 달라 보내지 않음(Ctrl 키가 안 먹음)")
     if active() != w or win_name(w) != room:
-        raise Fail("붙여넣은 뒤 활성 창이 바뀜 - 보내지 않음")
+        raise Fail("확인하는 동안 활성 창이 바뀜 - 보내지 않음")
+    _keys("ctrl+End")                                                     # 전체 선택 풀기
     x("xdotool", "key", "--clearmodifiers", "Return")
 
 
