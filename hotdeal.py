@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 DUP_WINDOW = 48 * 3600
-PARSE_VER = 3          # 파싱 규칙을 바꾸면 올림 → 수집 때 저장된 딜을 다시 정리
+PARSE_VER = 4          # 파싱 규칙을 바꾸면 올림 → 수집 때 저장된 딜을 다시 정리
 _lock = threading.Lock()
 
 # 쇼핑몰 판별: 도메인 끝부분 → 이름
@@ -101,7 +101,7 @@ INFO_PREFIX = ("💰", "🏬", "🔗", "📢", "※", "👉", "▶", "➡", "�
 # '정상가 26,486원', '할인: 9,826원', '적립', '쿠폰' 줄의 금액은 판매가가 아님(11-13 뽐질)
 NOT_PRICE = re.compile(r"정상가|정가|원가|할인\s*[:：]|할인\s*금액|할인액|적립|쿠폰|캐시백|포인트|배송비|이상\s*구매|최소")
 # 첫 줄이 '👍대박 16,660원 (37.1% 할인)'처럼 가격 머리말이면 가격으로 쓰고 제목은 다음 줄에서
-PRICE_HEAD = re.compile(r"^(?:(?:대박|초특가|특가|역대가|역대급|최저가|핫딜|할인가|판매가|가격)\s*[:：]?\s*)?((?:\d{1,3}(?:,\d{3})+|\d{3,8}))\s*원(?:\s*\([^)]*\))?\s*$")
+PRICE_HEAD = re.compile(r"^(?:(?:대박|초대박|초특가|특가|역대가|역대급|최저가|핫딜|할인가|판매가|가격|무지성)\s*[:：]?\s*)?((?:\d{1,3}(?:,\d{3})+|\d{3,8}))\s*원(?:\s*\([^)]*\))?\s*$")
 
 
 def _shop_word(s: str) -> str:
@@ -148,7 +148,10 @@ def parse(text: str, urls=()) -> dict:
                 continue
             shop_text = shop_text or _shop_word(t) or (t if len(t) <= 10 else "")
         c = _clean_line(_strip_emoji(line))
+        c = re.sub(r"[^\w)]+$", "", c).strip()               # 끝의 🔥🔥🔥 같은 꾸밈
         m = PRICE_HEAD.match(c)
+        if not m and "%" in c:                                 # '아무말 15,470원 (45.5% 할인)'도 머리말
+            m = re.match(r"^\S{1,6}\s+((?:\d{1,3}(?:,\d{3})+|\d{3,8}))\s*원\s*\([^)]*%[^)]*\)$", c)
         if m and not title:
             if price is None:
                 price = int(m.group(1).replace(",", ""))

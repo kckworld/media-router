@@ -75,6 +75,10 @@ def test_parse_jirum_format():
          "📦 특가 바로가기\nhttps://toss.shopping/_m/pdWrSfVu\n\n✱ 이 포스팅은 토스쇼핑 쉐어링크 활동의 일환으로")
     p = hotdeal.parse(t)
     assert p["title"] == "양푼이 우거지 감자탕, 5kg, 1팩" and p["price"] == 16660 and p["shop"] == "토스쇼핑"
+    p = hotdeal.parse("🔥🔥🔥무지성 15,470원 (45.5% 할인)🔥🔥🔥\n풀무원 아임리얼100 푸룬, 120ml, 24개\n\n🔥선구매후고민\n📌 가격 현황\n- 정상가: 28,385원")
+    assert p["title"] == "풀무원 아임리얼100 푸룬, 120ml, 24개" and p["price"] == 15470
+    p = hotdeal.parse("☆특가 3,680원\n가격더다운* 240g\n\n📦 특가 바로가기\nhttps://link.coupang.com/a/iAAGqJXJpQ")
+    assert p["title"] == "가격더다운 240g" and p["price"] == 3680 and p["shop"] == "쿠팡"
     p = hotdeal.parse("에어팟 프로2\n정가 359,000원\n할인: 160,000원\n판매가 199,000원")
     assert p["price"] == 199000
 
