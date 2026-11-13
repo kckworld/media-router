@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 DUP_WINDOW = 48 * 3600
+PARSE_VER = 2          # 파싱 규칙을 바꾸면 올림 → 수집 때 저장된 딜을 다시 정리
 _lock = threading.Lock()
 
 # 쇼핑몰 판별: 도메인 끝부분 → 이름
@@ -81,23 +82,83 @@ def _clean_line(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip(" -:·•[]")
 
 
+# 글에 적힌 쇼핑몰 이름 → 표시 이름 (11-13: '🏬 지마켓', '[뽐뿌] [지마켓] …'처럼 링크가 중계 주소여도 쇼핑몰을 알게)
+SHOP_WORDS = {"지마켓": "G마켓", "g마켓": "G마켓", "gmarket": "G마켓", "쿠팡": "쿠팡", "coupang": "쿠팡", "네이버": "네이버",
+              "스마트스토어": "네이버", "네이버쇼핑": "네이버", "11번가": "11번가", "옥션": "옥션", "ssg": "SSG", "쓱": "SSG",
+              "ssg닷컴": "SSG", "이마트": "SSG", "롯데온": "롯데온", "컬리": "컬리", "마켓컬리": "컬리", "무신사": "무신사",
+              "토스": "토스쇼핑", "토스쇼핑": "토스쇼핑", "알리": "알리", "알리익스프레스": "알리", "aliexpress": "알리", "테무": "테무",
+              "아마존": "아마존", "amazon": "아마존", "위메프": "위메프", "티몬": "티몬", "하이마트": "하이마트", "오늘의집": "오늘의집",
+              "올리브영": "올리브영", "29cm": "29CM", "gs샵": "GS샵", "현대h몰": "현대H몰", "cj온스타일": "CJ온스타일",
+              "카카오": "카카오", "카카오톡선물하기": "카카오", "톡딜": "카카오", "홈플러스": "홈플러스", "다이소": "다이소", "인터파크": "인터파크",
+              "yes24": "예스24", "교보문고": "교보문고", "에누리": "에누리", "다나와": "다나와", "롯데홈쇼핑": "롯데홈쇼핑", "cj더마켓": "CJ더마켓",
+              "lg전자": "LG전자", "삼성전자": "삼성전자", "삼성닷컴": "삼성전자", "애플": "애플", "스팀": "스팀", "에픽": "에픽"}
+# 커뮤니티 이름 태그는 쇼핑몰이 아님
+COMMUNITY = {"뽐뿌", "해외뽐뿌", "해뽐", "클리앙", "퀘이사존", "루리웹", "에펨", "에펨코리아", "아카라이브", "딜바다", "알구몰", "뽐질"}
+IMG = re.compile(r"\.(?:jpe?g|png|gif|webp|bmp)(?:[?#]|$)", re.I)
+# 머리말 줄('🛍 쇼핑 특가', '🔥 핫딜 알림')·정보 줄(💰 가격, 🏬 쇼핑몰, 🔗 링크, 📢 홍보, ※ 안내)은 제목이 아님
+HEADER = re.compile(r"^(?:쇼핑\s*특가|오늘의\s*특가|특가|핫딜|핫딜\s*알림|타임\s*딜|가격\s*하락|가격하락\s*알림|새\s*글|알림|공지|광고)$")
+INFO_PREFIX = ("💰", "🏬", "🔗", "📢", "※", "👉", "▶", "➡", "🛒")
+
+
+def _shop_word(s: str) -> str:
+    k = re.sub(r"\s", "", (s or "").lower())
+    return SHOP_WORDS.get(k, "")
+
+
+def _strip_emoji(s: str) -> str:
+    return re.sub(r"^[^\w\[(가-힣]+", "", s).strip()
+
+
 def parse(text: str, urls=()) -> dict:
     """원문 + (entities·버튼에서 꺼낸) URL 목록 → {title, price, shop, url, url_key}. 못 찾으면 빈 값."""
     text = text or ""
     allurls = [u for u in list(urls) + URL.findall(text) if u]
-    # 텔레그램 자체 링크(t.me)·채널 홍보 링크는 상품 링크가 아님
-    goods = [u for u in allurls if not re.match(r"https?://(t\.me|telegram\.me|telegra\.ph)/", u)]
+    # 텔레그램 자체 링크(t.me)·채널 홍보 링크·그림 주소는 상품 링크가 아님
+    goods = [u for u in allurls if not re.match(r"https?://(t\.me|telegram\.me|telegra\.ph)/", u) and not IMG.search(u)]
     url = goods[0] if goods else ""
-    title = ""
-    for line in text.splitlines():
-        c = _clean_line(line)
-        if len(c) >= 2 and not re.fullmatch(r"[\d,\s원%↓→\-()]+", c):
-            title = c
-            break
-    prices = [int(p.replace(",", "")) for p in PRICE.findall(text)]
-    prices = [p for p in prices if 100 <= p <= 100_000_000]
-    price = min(prices) if prices else None          # '정가 39,900원 → 12,900원'이면 싼 쪽
-    return {"title": title[:200], "price": price, "shop": shop_of(url) if url else "",
+    shop_text, title, price = "", "", None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("🏬") or re.match(r"^(쇼핑몰|판매처|구매처)\s*[:：]", line):
+            shop_text = shop_text or _strip_emoji(re.sub(r"^(쇼핑몰|판매처|구매처)\s*[:：]", "", line))
+            continue
+        if line.startswith("💰"):
+            m = PRICE.search(line)
+            if m and price is None:
+                price = int(m.group(1).replace(",", ""))
+            continue
+        if line.startswith(INFO_PREFIX):
+            continue
+        # 앞쪽 [태그]들: 쇼핑몰 이름이면 쇼핑몰, 커뮤니티 이름이면 버림
+        tags = []
+        while True:
+            m = re.match(r"^\s*[\[【]([^\]】]{1,20})[\]】]\s*", line)
+            if not m:
+                break
+            tags.append(m.group(1).strip())
+            line = line[m.end():]
+        for t in tags:
+            if t in COMMUNITY:
+                continue
+            shop_text = shop_text or _shop_word(t) or (t if len(t) <= 10 else "")
+        c = _clean_line(_strip_emoji(line))
+        if title or len(c) < 2 or re.fullmatch(r"[\d,\s원%↓→\-()/]+", c) or HEADER.match(c.replace(" ", " ")):
+            continue
+        if len(c) <= 8 and re.search(r"(특가|핫딜|알림|세일)$", c):
+            continue
+        title = re.sub(r"\s*\(\s*[\d,]+\s*원[^)]*\)\s*(\(무료\)|\(유료\))?\s*$", "", c).strip() or c   # 끝의 '(30,305원/무료)'는 가격 칸에
+    if price is None:
+        prices = [int(p.replace(",", "")) for p in PRICE.findall(text)]
+        prices = [p for p in prices if 100 <= p <= 100_000_000]
+        price = min(prices) if prices else None          # '정가 39,900원 → 12,900원'이면 싼 쪽
+    shop = _shop_word(shop_text) or shop_text
+    if not shop and url:
+        shop = shop_of(url)
+    elif url and shop_of(url) in [n for _, n in SHOPS] and shop_of(url) not in ("뽐뿌", "퀘이사존", "에펨코리아", "루리웹", "다나와"):
+        shop = shop or shop_of(url)
+    return {"title": title[:200], "price": price, "shop": shop[:20],
             "url": url, "url_key": url_key(url) if url else ""}
 
 
@@ -200,22 +261,48 @@ class Store:
     # ── 딜
     def add_deal(self, ch: dict, msg_id: int, ts: int, text: str, urls=(), source_link: str = "") -> dict | None:
         """새로 넣었으면 저장한 dict, 이미 있으면 None"""
-        did = "%s_%s" % (ch["chat_id"], msg_id)
-        p = parse_for(ch, text, urls)
+        rows = self.add_deals(ch, [(msg_id, ts, text, urls, source_link)])
+        return rows[0] if rows else None
+
+    def add_deals(self, ch: dict, msgs) -> list:
+        """한 채널 메시지 여러 개를 한 번에(한 트랜잭션) — 11-13 처음 7일치를 한 건씩 넣다 수집이 시간 초과났음.
+        msgs: [(msg_id, ts, text, urls, source_link)]. 새로 넣은 것만 돌려줌"""
+        out = []
         with _lock, self._db() as c:
-            if c.execute("select 1 from hotdeals where id=?", (did,)).fetchone():
-                return None
-            dup = 0
-            if p["url_key"]:
-                dup = 1 if c.execute("select 1 from hotdeals where url_key=? and ts>=? and ts<=? and id!=? limit 1",
-                                     (p["url_key"], ts - DUP_WINDOW, ts, did)).fetchone() else 0
-            row = dict(id=did, chat_id=str(ch["chat_id"]), msg_id=int(msg_id), title=p["title"], price=p["price"],
-                       shop=p["shop"], url=p["url"], url_key=p["url_key"], source=ch.get("display") or ch.get("title") or "",
-                       source_link=source_link, ts=int(ts), raw=(text or "")[:4000], is_dup=dup)
-            c.execute("insert into hotdeals(%s) values(%s)" % (", ".join(row), ", ".join("?" * len(row))), list(row.values()))
-            if self.fts:
-                c.execute("insert into hotdeals_fts(id, title, raw, shop) values(?,?,?,?)", (did, row["title"], row["raw"], row["shop"]))
-        return row
+            for msg_id, ts, text, urls, link in msgs:
+                did = "%s_%s" % (ch["chat_id"], msg_id)
+                if c.execute("select 1 from hotdeals where id=?", (did,)).fetchone():
+                    continue
+                p = parse_for(ch, text, urls)
+                dup = 0
+                if p["url_key"]:
+                    dup = 1 if c.execute("select 1 from hotdeals where url_key=? and ts>=? and ts<=? and id!=? limit 1",
+                                         (p["url_key"], ts - DUP_WINDOW, ts, did)).fetchone() else 0
+                row = dict(id=did, chat_id=str(ch["chat_id"]), msg_id=int(msg_id), title=p["title"], price=p["price"],
+                           shop=p["shop"], url=p["url"], url_key=p["url_key"], source=ch.get("display") or ch.get("title") or "",
+                           source_link=link, ts=int(ts), raw=(text or "")[:4000], is_dup=dup)
+                c.execute("insert into hotdeals(%s) values(%s)" % (", ".join(row), ", ".join("?" * len(row))), list(row.values()))
+                if self.fts:
+                    c.execute("insert into hotdeals_fts(id, title, raw, shop) values(?,?,?,?)", (did, row["title"], row["raw"], row["shop"]))
+                out.append(row)
+        return out
+
+    def reparse_all(self) -> int:
+        """파싱 규칙을 고친 뒤 저장된 딜을 원문으로 다시 정리(제목·가격·쇼핑몰·링크). 중복 표시는 그대로"""
+        chans = {c["chat_id"]: c for c in self.channels()}
+        n = 0
+        with _lock, self._db() as c:
+            rows = c.execute("select id, chat_id, url, raw from hotdeals").fetchall()
+            for r in rows:
+                ch = chans.get(r["chat_id"]) or {"chat_id": r["chat_id"]}
+                p = parse_for(ch, r["raw"], [r["url"]] if r["url"] and not IMG.search(r["url"]) else [])
+                c.execute("update hotdeals set title=?, price=?, shop=?, url=?, url_key=? where id=?",
+                          (p["title"], p["price"], p["shop"], p["url"], p["url_key"], r["id"]))
+                if self.fts:
+                    c.execute("delete from hotdeals_fts where id=?", (r["id"],))
+                    c.execute("insert into hotdeals_fts(id, title, raw, shop) values(?,?,?,?)", (r["id"], p["title"], r["raw"], p["shop"]))
+                n += 1
+        return n
 
     def purge(self, keep_days: int) -> int:
         cut = int(time.time()) - max(1, int(keep_days)) * 86400

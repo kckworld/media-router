@@ -4427,17 +4427,20 @@ def _hd_collect() -> None:
         _hd_run["running"] = True
     st, tg, new_rows, err = _hd_store(), _hd_tg(), [], ""
     try:
-        chans = st.channels(only_enabled=True)
+        if st.meta("parse_ver") != hotdeal_store.PARSE_VER:      # 파싱 규칙을 고쳤으면 저장된 딜도 다시 정리(11-13)
+            n = st.reparse_all()
+            st.set_meta("parse_ver", hotdeal_store.PARSE_VER)
+            app.logger.info("핫딜 다시 정리 %d개", n)
+        # 오래 못 가져온 채널부터(시간이 모자라 뒤 채널이 계속 밀리지 않게)
+        chans = sorted(st.channels(only_enabled=True), key=lambda c: int(c.get("last_ok") or 0))
         if chans and tg.api()[0] and (HOTDEAL_DIR / "tg.session").exists():
-            def on_msg(ch, mid, ts, text, urls, link):
-                row = st.add_deal(ch, mid, ts, text, urls, link)
-                if row:
-                    new_rows.append(row)
-                return bool(row)
-            res = tg.collect(chans, on_msg, log=lambda *a: app.logger.info("핫딜 %s", " ".join(map(str, a))))
-            now = int(time.time())
-            for cid, r in res.items():
-                st.update_channel(cid, last_msg_id=r["last"], last_error=r["error"], **({"last_ok": now} if not r["error"] else {}))
+            def on_channel(ch, msgs, last, error):
+                rows = st.add_deals(ch, msgs)            # 채널 하나 끝날 때마다 바로 저장(11-13)
+                new_rows.extend(rows)
+                st.update_channel(ch["chat_id"], last_msg_id=last, last_error=error,
+                                  **({"last_ok": int(time.time())} if not error else {}))
+                return len(rows)
+            tg.collect(chans, on_channel, log=lambda *a: app.logger.warning("핫딜 %s", " ".join(map(str, a))))
         cfg = _hd_settings()
         st.purge(int(cfg.get("keep_days") or 90))
         fresh = [r for r in new_rows if r["ts"] >= time.time() - 6 * 3600]   # 처음 7일 백필은 알림 안 함

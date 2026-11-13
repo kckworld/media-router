@@ -157,16 +157,24 @@ class TG:
         return self._run(f, timeout=90)
 
     # ── 수집
-    def collect(self, channels: list, on_message, log=lambda *a: None) -> dict:
-        """channels: [{chat_id, username, last_msg_id, ...}], on_message(ch, msg_id, ts, text, urls, link) → 저장.
-        반환 {chat_id: {"new": n, "last": id, "error": ""}}"""
+    def collect(self, channels: list, on_channel, log=lambda *a: None, budget: int = 240) -> dict:
+        """channels: [{chat_id, username, last_msg_id, ...}] — 오래 못 가져온 채널부터 넣어 줄 것.
+        채널 하나 끝날 때마다 on_channel(ch, msgs[(msg_id, ts, text, urls, link)], last_msg_id, error) → 바로 저장.
+        (11-13) 처음 7일치를 다 가져온 뒤 한꺼번에 저장하다 280초를 넘겨 아무것도 안 남던 문제 → 채널별 저장, 시간(budget)이 지나면
+        다음 채널은 다음 회차로. 반환 {chat_id: {"new": n, "last": id, "error": ""}}"""
+        start = time.time()
+
         async def f(c):
             if not await c.is_user_authorized():
                 raise RuntimeError("텔레그램 로그인이 필요해요")
             res = {}
             for ch in channels:
+                if time.time() - start > budget:
+                    log("시간이 다 돼 나머지 채널은 다음에")
+                    break
                 cid = ch["chat_id"]
                 r = res[cid] = {"new": 0, "last": int(ch.get("last_msg_id") or 0), "error": ""}
+                out = []
                 try:
                     ent = await c.get_entity(int(cid))
                     since = time.time() - BACKFILL_DAYS * 86400
@@ -178,6 +186,7 @@ class TG:
                         if not r["last"] and m.date.timestamp() < since:
                             break
                         msgs.append(m)
+                    un = ch.get("username") or getattr(ent, "username", "") or ""
                     for m in sorted(msgs, key=lambda x: x.id):
                         text = m.message or ""
                         urls = []
@@ -192,21 +201,21 @@ class TG:
                                 if isinstance(b, KeyboardButtonUrl):
                                     urls.append(b.url)
                         if text or urls:
-                            un = ch.get("username") or getattr(ent, "username", "") or ""
                             link = ("https://t.me/%s/%d" % (un, m.id)) if un else \
                                    ("https://t.me/c/%s/%d" % (str(cid).replace("-100", "", 1), m.id))
-                            if on_message(ch, m.id, int(m.date.timestamp()), text, urls, link):
-                                r["new"] += 1
+                            out.append((m.id, int(m.date.timestamp()), text, urls, link))
                         r["last"] = max(r["last"], m.id)
-                    await asyncio.sleep(1)                     # 채널 사이 쉼(계정 보호)
                 except errors.FloodWaitError as e:
                     r["error"] = "잠시 막힘(FloodWait %d초) — 다음에 다시" % e.seconds
-                    if e.seconds > 60:
-                        log("FloodWait", e.seconds)
-                        break
-                    await asyncio.sleep(e.seconds)
+                    log("FloodWait", e.seconds)
                 except Exception as e:
                     r["error"] = "%s: %s" % (type(e).__name__, str(e)[:120])
+                try:
+                    r["new"] = on_channel(ch, out, r["last"], r["error"]) or 0
+                except Exception as e:
+                    r["error"] = r["error"] or "저장 실패 %s" % type(e).__name__
+                if r["error"].startswith("잠시 막힘"):
+                    break
+                await asyncio.sleep(1)                     # 채널 사이 쉼(계정 보호)
             return res
-        return self._run(f, timeout=280)
-
+        return self._run(f, timeout=budget + 240)

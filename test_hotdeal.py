@@ -13,7 +13,7 @@ import web_admin
 def test_parse_basic_and_hidden_links():
     t = "[쿠팡] 삼다수 2L 12개\n정가 19,900원 → 12,900원 (무료배송)\n#생수"
     p = hotdeal.parse(t, ["https://www.coupang.com/vp/products/12345?itemId=9&vendorItemId=8&utm_source=tg"])
-    assert p["title"] == "쿠팡 삼다수 2L 12개" and p["price"] == 12900 and p["shop"] == "쿠팡"
+    assert p["title"] == "삼다수 2L 12개" and p["price"] == 12900 and p["shop"] == "쿠팡"
     assert p["url_key"] == "coupang:12345"
     # 텔레그램 링크는 상품 링크가 아님, 본문 안 URL도 찾음
     p = hotdeal.parse("에어팟 프로 2 199000원 https://smartstore.naver.com/abc/products/777?NaPm=x", ["https://t.me/somechan"])
@@ -56,6 +56,28 @@ def test_store_dup_search_purge(st):
     assert st.purge(90) == 1 and st.search(hide_dup=False)["total"] == 3
     st.delete_channel("-1001", with_deals=True)
     assert st.search(hide_dup=False)["total"] == 0 and st.channels() == []
+
+
+def test_parse_channel_formats():
+    # 11-13 실제 채널: 10초 핫딜(머리말 '🛍 쇼핑 특가' + 🏬 쇼핑몰 + 💰 가격, 중계 링크), 뽐뿌([뽐뿌] [지마켓] … (가격/무료), 그림 링크)
+    a = ("🛍 쇼핑 특가\n\n레노버 Legion Y700 8.4인치 (822,940원) (무료)\n\n💰 822,940원\n\n🏬 지마켓\n\n가격과 옵션을 확인해 보세요.\n\n"
+         "🔗 할인가 확인\nhttps://shop.hongzi.us/d/92QoVxYIGY?p=telegram\n\n📢 핫딜 알림 채널 @tenseco")
+    p = hotdeal.parse(a)
+    assert p["title"] == "레노버 Legion Y700 8.4인치" and p["price"] == 822940 and p["shop"] == "G마켓"
+    b = " [뽐뿌] [토스] 강원도 영월 절임배추 10kg (30,305원/무료) \nhttps://www.ppomppu.co.kr/zboard/view.php?id=ppomppu&no=1"
+    p = hotdeal.parse(b, ["https://cdn4.ppomppu.co.kr/zboard/data3/x.jpg"])
+    assert p["title"] == "강원도 영월 절임배추 10kg" and p["shop"] == "토스쇼핑" and p["price"] == 30305 and "view.php" in p["url"]
+
+
+def test_reparse_all(st):
+    st.add_channel("-1", "a", "a")
+    ch = st.channels()[0]
+    st.add_deal(ch, 1, int(time.time()), "🛍 쇼핑 특가\n\n폰타나 파스타소스 1세트\n\n💰 13,900원\n\n🏬 토스쇼핑")
+    with st._db() as c:
+        c.execute("update hotdeals set title='🛍 쇼핑 특가', shop='x'")
+    assert st.reparse_all() == 1
+    r = st.search(q="파스타")["items"][0]
+    assert r["title"] == "폰타나 파스타소스 1세트" and r["shop"] == "토스쇼핑"
 
 
 def test_keywords_and_feed_text():
@@ -139,11 +161,11 @@ def test_collect_saves_and_notifies(hd, monkeypatch):
         def api(self):
             return (1, "h")
 
-        def collect(self, chans, on_msg, log=None):
+        def collect(self, chans, on_channel, log=None):
             now = int(time.time())
-            on_msg(chans[0], 10, now, "에어팟 프로2 199,000원", ["https://smartstore.naver.com/a/products/9"], "https://t.me/a/10")
-            on_msg(chans[0], 11, now, "삼다수 12,900원", ["https://www.coupang.com/vp/products/5"], "https://t.me/a/11")
-            on_msg(chans[0], 5, now - 5 * 86400, "옛날 딜 에어팟", [], "https://t.me/a/5")      # 백필은 알림 안 함
+            on_channel(chans[0], [(5, now - 5 * 86400, "옛날 딜 에어팟", [], "https://t.me/a/5"),      # 백필은 알림 안 함
+                                  (10, now, "에어팟 프로2 199,000원", ["https://smartstore.naver.com/a/products/9"], "https://t.me/a/10"),
+                                  (11, now, "삼다수 12,900원", ["https://www.coupang.com/vp/products/5"], "https://t.me/a/11")], 11, "")
             return {"-1001": {"new": 3, "last": 11, "error": ""}}
     monkeypatch.setitem(web_admin._hd, "tg", FakeTG())
     (web_admin.HOTDEAL_DIR / "tg.session").write_text("x")
