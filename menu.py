@@ -42,6 +42,9 @@ GROUPS = [
     {"key": "life", "label": "생활", "pages": [
         {"key": "recon", "label": "가계부", "href": "/recon", "prefixes": ["/recon", "/api/recon"],
          "legacy_hidden": True, "caution": True},
+        # 고정비·택배(11-13): 가계부·쇼핑 메일에서 뽑은 금융·주문 정보 — 나만
+        {"key": "fixed", "label": "고정비", "href": "/fixed", "prefixes": ["/fixed", "/api/fixed"], "owner_only": True},
+        {"key": "parcels", "label": "택배", "href": "/parcels", "prefixes": ["/parcels", "/api/parcels"], "owner_only": True},
         {"key": "journal", "label": "일기", "href": "/journal", "prefixes": ["/journal", "/api/journal", "/diary", "/api/diary"],
          "legacy_hidden": True, "caution": True},
         {"key": "people", "label": "검색직", "href": "/people", "prefixes": ["/people", "/api/people"], "owner_only": True},

@@ -1,0 +1,79 @@
+# -*- coding: utf-8 -*-
+"""생활 > 고정비·택배 (2026-11-13): 호스트가 만든 JSON 보여 주기, 사용자 수정(*_rules.json) 뒤 호스트 다시 계산, 소유자만"""
+import json
+
+import pytest
+
+import accounts
+import web_admin
+
+
+@pytest.fixture
+def lf(monkeypatch, tmp_path):
+    d = tmp_path / "card_recon"
+    d.mkdir()
+    (d / "fixed.json").write_text(json.dumps({"per_month": 100, "per_year": 1200, "month_total": 100, "year_only_total": 0,
+                                              "items": [{"key": "kt", "name": "KT", "amount": 100, "cycle": "month", "day": 21,
+                                                         "status": "due", "next_date": "2026-11-21", "excluded": False}]}), encoding="utf-8")
+    monkeypatch.setattr(web_admin, "RECON_DIR", d)
+    monkeypatch.setattr(web_admin, "authed", lambda req: True)
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "admin")
+    monkeypatch.setattr(web_admin, "current_user", lambda req: accounts.OWNER)
+    calls = []
+    monkeypatch.setattr(web_admin, "_life_refresh", lambda kind: (calls.append(kind), (True, ""))[1])
+    web_admin.app.config["TESTING"] = True
+    return web_admin.app.test_client(), d, calls
+
+
+def test_pages_render(lf):
+    c, d, _ = lf
+    assert 'id="fxList"' in c.get("/fixed").get_data(as_text=True)
+    assert 'id="pcBody"' in c.get("/parcels").get_data(as_text=True) and "setupShopping" in c.get("/parcels").get_data(as_text=True)
+    assert c.get("/api/fixed").get_json()["data"]["per_month"] == 100
+    assert c.get("/api/parcels").get_json()["data"] is None          # 아직 메일 없음
+
+
+def test_fixed_rules(lf):
+    c, d, calls = lf
+    assert c.post("/api/fixed/rules", json={"action": "exclude", "key": "kt"}).get_json()["ok"]
+    r = json.loads((d / "fixed_rules.json").read_text(encoding="utf-8"))
+    assert r["exclude"] == ["kt"] and calls == ["fixed"]
+    c.post("/api/fixed/rules", json={"action": "include", "key": "kt"})
+    assert json.loads((d / "fixed_rules.json").read_text(encoding="utf-8"))["exclude"] == []
+    assert c.post("/api/fixed/rules", json={"action": "add", "name": "넷플릭스", "amount": "17,000", "cycle": "year",
+                                            "month": 3, "day": 5}).get_json()["ok"]
+    m = json.loads((d / "fixed_rules.json").read_text(encoding="utf-8"))["manual"]
+    assert m[0]["name"] == "넷플릭스" and m[0]["amount"] == 17000 and m[0]["month"] == 3
+    c.post("/api/fixed/rules", json={"action": "delete", "id": m[0]["id"]})
+    assert json.loads((d / "fixed_rules.json").read_text(encoding="utf-8"))["manual"] == []
+    for bad in ({"action": "add", "name": "x", "amount": "abc", "day": 1}, {"action": "add", "name": "", "amount": 1, "day": 1},
+                {"action": "add", "name": "x", "amount": 1, "day": 40}, {"action": "zzz"}, {"action": "exclude"}):
+        assert c.post("/api/fixed/rules", json=bad).status_code == 400
+
+
+def test_parcels_hide_and_refresh(lf, monkeypatch):
+    c, d, calls = lf
+    assert c.post("/api/parcels/hide", json={"id": "np:123"}).get_json()["ok"]
+    assert json.loads((d / "parcels_rules.json").read_text(encoding="utf-8"))["hidden"] == ["np:123"]
+    c.post("/api/parcels/hide", json={"id": "np:123", "hidden": False})
+    assert json.loads((d / "parcels_rules.json").read_text(encoding="utf-8"))["hidden"] == []
+    assert c.post("/api/parcels/hide", json={}).status_code == 400
+    assert c.post("/api/parcels/refresh").get_json()["ok"] and calls[-1] == "parcels"
+    monkeypatch.setattr(web_admin, "_life_refresh", lambda kind: (False, "실패"))
+    assert c.post("/api/fixed/refresh").status_code == 502
+
+
+def test_owner_only(lf, monkeypatch):
+    c, _, _ = lf
+    monkeypatch.setattr(web_admin, "current_user", lambda req: "someone")
+    monkeypatch.setattr(web_admin, "_req_user_perms", lambda req: ("someone", {}))
+    for url in ("/api/fixed", "/api/parcels"):
+        assert c.get(url).status_code in (302, 403)
+    assert c.post("/api/fixed/rules", json={"action": "exclude", "key": "kt"}).status_code in (302, 403)
+    monkeypatch.setattr(web_admin, "session_role", lambda req: "viewer")
+    assert c.post("/api/parcels/hide", json={"id": "x"}).status_code in (302, 403)
+
+
+def test_run_all_life_refresh_command():
+    s = open("run_all.sh", encoding="utf-8").read()
+    assert '"life-refresh fixed"|"life-refresh parcels")' in s and "fixed_costs.py" in s and "parcels.py" in s

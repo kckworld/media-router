@@ -1,0 +1,140 @@
+{% set active_page = 'fixed' %}
+{% extends "base.html" %}
+
+{% block page_css %}
+  <style>
+    .fx-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .fx-sum { font-size: 18px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+    .fx-sum small { font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+    .fx-top .btn { margin-left: auto; }
+    .fx-alert { background: var(--warn-soft, #fff4ce); border: 1px solid var(--warn-line, #f0c36d); border-radius: 10px; padding: 8px 12px; margin-top: 10px; font-size: 13px; color: var(--text); }
+    .fx-alert div + div { margin-top: 4px; }
+    .fx-list { list-style: none; margin: 0; padding: 0; }
+    .fx-list li { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 10px 0; border-bottom: 1px solid var(--line); align-items: center; }
+    .fx-list li:last-child { border-bottom: 0; }
+    .fx-name { font-weight: 600; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+    .fx-amt { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; color: var(--text); }
+    .fx-sub { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+    .fx-act { display: flex; gap: 6px; justify-content: flex-end; }
+    .fx-chip { font-size: 12px; font-weight: 700; border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+    .fx-chip.paid { color: var(--success, #188038); background: color-mix(in srgb, var(--success, #188038) 12%, transparent); }
+    .fx-chip.due { color: var(--muted); background: var(--line); }
+    .fx-chip.missing, .fx-chip.up { color: var(--danger, #b3261e); background: color-mix(in srgb, var(--danger, #b3261e) 12%, transparent); }
+    .fx-chip.manual { color: var(--muted); border: 1px solid var(--line); }
+    .fx-h { margin: 14px 0 4px; font-size: 14px; color: var(--muted); }
+    .fx-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }
+    .fx-form label { font-size: 12px; color: var(--muted); display: grid; gap: 3px; }
+    .fx-form input, .fx-form select { width: 100%; box-sizing: border-box; }
+    details.fx-more > summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 10px; }
+    .fx-empty { color: var(--muted); padding: 12px 2px; }
+  </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+      <div class="fx-top">
+        <div class="fx-sum" id="fxSum">불러오는 중...</div>
+        <button type="button" class="btn small" id="fxRefresh" data-write>새로 계산</button>
+      </div>
+      <div class="hint" id="fxInfo" style="margin-top:6px;"></div>
+      <div id="fxAlert"></div>
+    </div>
+
+    <div class="card">
+      <ul class="fx-list" id="fxList"><li class="fx-empty">불러오는 중...</li></ul>
+      <details class="fx-more" id="fxExWrap" hidden><summary id="fxExSum"></summary><ul class="fx-list" id="fxEx"></ul></details>
+      <details class="fx-more">
+        <summary>＋ 직접 추가 (가계부에 안 잡히는 고정비·연간 구독)</summary>
+        <div class="fx-form">
+          <label>이름<input type="text" id="adName" maxlength="40" placeholder="예: 넷플릭스"></label>
+          <label>금액(원)<input type="text" inputmode="numeric" id="adAmt" placeholder="17000"></label>
+          <label>주기<select id="adCycle"><option value="month">매달</option><option value="year">매년</option></select></label>
+          <label id="adMonthL" hidden>월<input type="number" id="adMonth" min="1" max="12" value="1"></label>
+          <label>일<input type="number" id="adDay" min="1" max="31" value="1"></label>
+        </div>
+        <div style="text-align:right;margin-top:8px;"><button type="button" class="btn small primary" id="adBtn" data-write>추가</button></div>
+      </details>
+      <div class="hint" style="margin-top:10px;">가계부 지출에서 매달 비슷한 날·금액으로 3번 넘게 나온 것을 고정비로 봐요(매년은 1년 간격 두 번). 고정비가 아니면 [제외]하세요.
+        금액이 오르거나, 새로 생기거나, 결제일+5일이 지나도 안 보이거나, 연간 갱신 7일 전이면 오전 10시에 텔레그램으로 알려요.</div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    var D = null;
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+    function won(n) { return Number(n || 0).toLocaleString("ko-KR") + "원"; }
+    function md(iso) { var m = /\d{4}-(\d{2})-(\d{2})/.exec(iso || ""); return m ? (+m[1]) + "/" + (+m[2]) : ""; }
+    function when(i) { return i.cycle === "year" ? "매년 " + i.month + "/" + i.day : "매달 " + i.day + "일"; }
+    function chip(i) {
+      if (i.manual) return '<span class="fx-chip manual">직접 넣음 · 다음 ' + md(i.next_date) + '</span>';
+      var s = "";
+      if (i.status === "paid") s = '<span class="fx-chip paid">✓ ' + (i.cycle === "year" ? "올해 냄" : "이번 달 냄") + '</span>';
+      else if (i.status === "missing") s = '<span class="fx-chip missing">❓ 결제 안 보임</span>';
+      else s = '<span class="fx-chip due">' + md(i.next_date) + ' 예정</span>';
+      if (i.up) s += ' <span class="fx-chip up">📈 ' + won(i.prev_amount) + '에서 오름</span>';
+      return s;
+    }
+    function row(i, excluded) {
+      var btn = i.manual ? '<button type="button" class="btn small" data-write data-del="' + esc((i.key || "").slice(7)) + '">삭제</button>'
+        : '<button type="button" class="btn small" data-write data-' + (excluded ? "inc" : "exc") + '="' + esc(i.key) + '">' + (excluded ? "다시 넣기" : "제외") + '</button>';
+      return '<li><span class="fx-name">' + esc(i.name) + '</span><span class="fx-amt">' + won(i.amount) + '</span>' +
+        '<span class="fx-sub">' + when(i) + (i.asset ? ' · ' + esc(i.asset) : '') + ' ' + chip(i) + '</span><span class="fx-act">' + btn + '</span></li>';
+    }
+    function render(d) {
+      D = d;
+      var list = document.getElementById("fxList");
+      if (!d) {
+        document.getElementById("fxSum").textContent = "아직 계산 전이에요";
+        list.innerHTML = '<li class="fx-empty">[새로 계산]을 누르면 가계부에서 고정비를 찾아요.</li>';
+        return;
+      }
+      document.getElementById("fxSum").innerHTML = "매달 약 " + won(d.per_month) + "<small>1년 약 " + won(d.per_year) + "</small>";
+      document.getElementById("fxInfo").textContent = "가계부 백업 " + String(d.mmbak_time || "-").slice(5).replace("T", " ") + " 기준 · 계산 " + String(d.made_at || "").slice(5, 16).replace("T", " ");
+      var live = d.items.filter(function(i) { return !i.excluded; }), ex = d.items.filter(function(i) { return i.excluded; });
+      var warn = live.filter(function(i) { return i.status === "missing" || i.up; });
+      document.getElementById("fxAlert").innerHTML = warn.length ? '<div class="fx-alert">' + warn.map(function(i) {
+        return '<div>' + (i.status === "missing" ? "❓ <b>" + esc(i.name) + "</b> " + when(i) + " 결제가 안 보여요 — 해지했나요?" :
+          "📈 <b>" + esc(i.name) + "</b> " + won(i.prev_amount) + " → " + won(i.amount)) + '</div>'; }).join("") + '</div>' : "";
+      var month = live.filter(function(i) { return i.cycle === "month"; }), year = live.filter(function(i) { return i.cycle === "year"; });
+      list.innerHTML = (month.length ? '<li class="fx-h" style="border:0;padding:0;">매달 ' + month.length + '개 · ' + won(d.month_total) + '</li>' + month.map(function(i) { return row(i, false); }).join("") : "") +
+        (year.length ? '<li class="fx-h" style="border:0;padding:0;">매년 ' + year.length + '개 · ' + won(d.year_only_total) + '</li>' + year.map(function(i) { return row(i, false); }).join("") : "") ||
+        '<li class="fx-empty">찾은 고정비가 없어요.</li>';
+      var w = document.getElementById("fxExWrap");
+      w.hidden = !ex.length;
+      document.getElementById("fxExSum").textContent = "제외한 것 " + ex.length + "개";
+      document.getElementById("fxEx").innerHTML = ex.map(function(i) { return row(i, true); }).join("");
+    }
+    function post(url, body, msg) {
+      return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
+        .then(mrJson).then(function(res) {
+          if (!res.data || !res.data.ok) { showToast((res.data && res.data.error) || "실패했어요", "error"); if (res.data && res.data.data) render(res.data.data); return false; }
+          render(res.data.data);
+          if (res.data.refreshed === false) showToast("저장했지만 다시 계산 못 했어요: " + res.data.error, "error");
+          else if (msg) showToast(msg, "success");
+          return true;
+        });
+    }
+    document.addEventListener("click", function(e) {
+      var b = e.target.closest("button[data-exc],button[data-inc],button[data-del]");
+      if (!b) return;
+      b.disabled = true;
+      var p = b.hasAttribute("data-exc") ? post("/api/fixed/rules", { action: "exclude", key: b.getAttribute("data-exc") }, "제외했어요")
+        : b.hasAttribute("data-inc") ? post("/api/fixed/rules", { action: "include", key: b.getAttribute("data-inc") }, "다시 넣었어요")
+        : post("/api/fixed/rules", { action: "delete", id: b.getAttribute("data-del") }, "지웠어요");
+      p.finally(function() { b.disabled = false; });
+    });
+    document.getElementById("adCycle").onchange = function(e) { document.getElementById("adMonthL").hidden = e.target.value !== "year"; };
+    document.getElementById("adBtn").onclick = function() {
+      var body = { action: "add", name: document.getElementById("adName").value.trim(), amount: document.getElementById("adAmt").value.replace(/[,\s원]/g, ""),
+        cycle: document.getElementById("adCycle").value, month: document.getElementById("adMonth").value, day: document.getElementById("adDay").value };
+      if (!body.name || !/^\d+$/.test(body.amount)) { showToast("이름과 금액(숫자)을 넣어 주세요", "error"); return; }
+      post("/api/fixed/rules", body, "추가했어요").then(function(ok) { if (ok) { document.getElementById("adName").value = ""; document.getElementById("adAmt").value = ""; } });
+    };
+    document.getElementById("fxRefresh").onclick = function() {
+      var b = this; b.disabled = true; b.textContent = "계산 중…";
+      post("/api/fixed/refresh", {}, "새로 계산했어요").finally(function() { b.disabled = false; b.textContent = "새로 계산"; });
+    };
+    fetch("/api/fixed", { cache: "no-store" }).then(mrJson).then(function(res) { if (res.ok && res.data.ok) render(res.data.data); });
+  </script>
+{% endblock %}

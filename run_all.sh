@@ -40,6 +40,15 @@ case "${SSH_ORIGINAL_COMMAND:-}" in "card-recon "*)
     fi
     exit 0 ;;
 esac
+# 생활 > 고정비·택배 [새로] (2026-11-13): 'life-refresh fixed|parcels' → card-recon의 fixed_costs.py / parcels.py run(알림 없음)
+case "${SSH_ORIGINAL_COMMAND:-}" in "life-refresh fixed"|"life-refresh parcels")
+    lr_kind="${SSH_ORIGINAL_COMMAND#life-refresh }"
+    lr_py="fixed_costs.py"; [ "$lr_kind" = "parcels" ] && lr_py="parcels.py"
+    lr_rc=0
+    (cd /volume1/docker/card-recon && timeout 80 python3 "$lr_py" run >/dev/null 2>&1) || lr_rc=$?
+    if [ "$lr_rc" -eq 0 ]; then echo '{"ok": true}'; else echo "{\"ok\": false, \"message\": \"$lr_py 실패(종료코드 $lr_rc)\"}"; fi
+    exit 0 ;;
+esac
 LOGDIR="/volume1/docker/media-router/logs"
 mkdir -p "$LOGDIR"
 LOGFILE="$LOGDIR/run_all.$(date +%F).log"

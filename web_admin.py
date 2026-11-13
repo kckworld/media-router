@@ -2812,6 +2812,148 @@ def api_recon_min_spend():
     return jsonify({"ok": True, "assets": out})
 
 
+# ── 생활 > 고정비·택배 (2026-11-13): 호스트 card-recon/fixed_costs.py·parcels.py가 data/card_recon/fixed.json·parcels.json을 만듦
+# (4시간마다 recon.py auto, [새로]는 run_all.sh 강제 명령 'life-refresh fixed|parcels'). 사용자가 고친 것은 *_rules.json → 다시 계산.
+def _recon_write(name: str, obj) -> None:
+    RECON_DIR.mkdir(parents=True, exist_ok=True)
+    path = RECON_DIR / name
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(path)
+    os.chmod(path, 0o644)
+
+
+def _life_refresh(kind: str) -> tuple[bool, str]:
+    if not Path(RUN_BATCH_SSH_KEY).exists():
+        return False, "SSH 키가 없어요."
+    try:
+        r = subprocess.run(["ssh", "-i", RUN_BATCH_SSH_KEY, "-p", RUN_BATCH_SSH_PORT, "-o", "StrictHostKeyChecking=no",
+                            "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                            f"{RUN_BATCH_SSH_USER}@{RUN_BATCH_SSH_HOST}", f"life-refresh {kind}"],
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
+        res = json.loads((r.stdout.strip().splitlines() or ["{}"])[-1])
+        return bool(res.get("ok")), str(res.get("message") or "")
+    except subprocess.TimeoutExpired:
+        return False, "90초 안에 안 끝났어요"
+    except Exception as e:
+        return False, f"실행 실패: {type(e).__name__}"
+
+
+def _life_auth():
+    auth = authed(request)
+    if auth is not True:
+        return jsonify({"ok": False, "error": "로그인이 필요합니다."}), 401
+    return None
+
+
+@app.route("/fixed", methods=["GET"])
+def fixed_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("fixed.html", authed=True)
+
+
+@app.route("/api/fixed", methods=["GET"])
+def api_fixed():
+    bad = _life_auth()
+    if bad:
+        return bad
+    return jsonify({"ok": True, "data": _recon_read("fixed.json")})
+
+
+@app.route("/api/fixed/refresh", methods=["POST"])
+def api_fixed_refresh():
+    bad = _life_auth()
+    if bad:
+        return bad
+    ok, msg = _life_refresh("fixed")
+    return jsonify({"ok": ok, "error": msg, "data": _recon_read("fixed.json")}), (200 if ok else 502)
+
+
+@app.route("/api/fixed/rules", methods=["POST"])
+def api_fixed_rules():
+    """{action: exclude|include, key} · {action: add, name, amount, cycle(month|year), day, month} · {action: delete, id}"""
+    bad = _life_auth()
+    if bad:
+        return bad
+    b = request.get_json(silent=True) or {}
+    rules = _recon_read("fixed_rules.json") or {}
+    ex = [str(x) for x in rules.get("exclude") or []]
+    manual = [m for m in rules.get("manual") or [] if isinstance(m, dict)]
+    act = str(b.get("action") or "")
+    if act in ("exclude", "include"):
+        key = str(b.get("key") or "").strip()[:80]
+        if not key:
+            return jsonify({"ok": False, "error": "항목이 없어요."}), 400
+        ex = [k for k in ex if k != key] + ([key] if act == "exclude" else [])
+    elif act == "add":
+        name = str(b.get("name") or "").strip()[:40]
+        try:
+            amount = int(str(b.get("amount") or "").replace(",", "").strip())
+            day = int(b.get("day") or 0)
+            month = int(b.get("month") or 1)
+        except ValueError:
+            return jsonify({"ok": False, "error": "금액·날짜는 숫자로 넣어 주세요."}), 400
+        cycle = "year" if b.get("cycle") == "year" else "month"
+        if not name or not 0 < amount <= 100_000_000 or not 1 <= day <= 31 or not 1 <= month <= 12 or len(manual) >= 50:
+            return jsonify({"ok": False, "error": "이름·금액·날짜를 확인해 주세요."}), 400
+        manual.append({"id": secrets.token_hex(4), "name": name, "amount": amount, "cycle": cycle, "day": day,
+                       "month": month if cycle == "year" else None})
+    elif act == "delete":
+        mid = str(b.get("id") or "")
+        manual = [m for m in manual if str(m.get("id")) != mid]
+    else:
+        return jsonify({"ok": False, "error": "알 수 없는 동작이에요."}), 400
+    _recon_write("fixed_rules.json", {"exclude": ex, "manual": manual,
+                                      "updated_at": datetime.now().isoformat(timespec="seconds")})
+    ok, msg = _life_refresh("fixed")
+    return jsonify({"ok": True, "refreshed": ok, "error": "" if ok else msg, "data": _recon_read("fixed.json")})
+
+
+@app.route("/parcels", methods=["GET"])
+def parcels_page():
+    auth = authed(request)
+    if auth is not True:
+        return auth
+    return render_template("parcels.html", authed=True)
+
+
+@app.route("/api/parcels", methods=["GET"])
+def api_parcels():
+    bad = _life_auth()
+    if bad:
+        return bad
+    return jsonify({"ok": True, "data": _recon_read("parcels.json")})
+
+
+@app.route("/api/parcels/refresh", methods=["POST"])
+def api_parcels_refresh():
+    bad = _life_auth()
+    if bad:
+        return bad
+    ok, msg = _life_refresh("parcels")
+    return jsonify({"ok": ok, "error": msg, "data": _recon_read("parcels.json")}), (200 if ok else 502)
+
+
+@app.route("/api/parcels/hide", methods=["POST"])
+def api_parcels_hide():
+    """{id, hidden: true|false} — 받았거나 필요 없는 건 숨기기"""
+    bad = _life_auth()
+    if bad:
+        return bad
+    b = request.get_json(silent=True) or {}
+    pid = str(b.get("id") or "").strip()[:120]
+    if not pid:
+        return jsonify({"ok": False, "error": "항목이 없어요."}), 400
+    hidden = [str(x) for x in (_recon_read("parcels_rules.json") or {}).get("hidden") or [] if str(x) != pid]
+    if b.get("hidden", True):
+        hidden.append(pid)
+    _recon_write("parcels_rules.json", {"hidden": hidden[-500:]})
+    ok, msg = _life_refresh("parcels")
+    return jsonify({"ok": True, "refreshed": ok, "error": "" if ok else msg, "data": _recon_read("parcels.json")})
+
+
 @app.route("/api/recon/run", methods=["POST"])
 def api_recon_run():
     auth = authed(request)
