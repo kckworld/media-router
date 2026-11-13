@@ -112,6 +112,7 @@ def test_parcels_received_and_edit(lf):
         assert c.post("/api/parcels/edit", json=bad).status_code == 400
     html = c.get("/parcels").get_data(as_text=True)
     assert "data-got=" in html and "data-edit=" in html and "/api/parcels/edit" in html
+    assert "o.invoice" in html and "pc-inv" in html                              # 택배사·송장번호(11-13)
 
 
 def test_run_all_life_refresh_command():

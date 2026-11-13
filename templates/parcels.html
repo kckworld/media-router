@@ -23,6 +23,7 @@
     .pc-edit label.wide { grid-column: 1 / -1; }
     .pc-edit input { width: 100%; box-sizing: border-box; }
     .pc-edit .row { grid-column: 1 / -1; display: flex; gap: 6px; justify-content: flex-end; }
+    .pc-inv { user-select: all; font-variant-numeric: tabular-nums; }
     .pc-tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
     details.pc-more > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
     .pc-empty { color: var(--muted); padding: 10px 2px; }
@@ -67,7 +68,8 @@
       return '<li data-row="' + id + '"><span class="pc-shop">' + esc(o.shop) + '</span><span class="pc-item">' + esc(o.item) +
         (o.edited ? '<span class="pc-tag">직접 고침</span>' : '') + (o.marked ? '<span class="pc-tag">받음 표시</span>' : '') + '</span>' +
         '<span class="pc-act">' + acts + '</span>' +
-        '<span class="pc-sub"><span class="pc-when ' + w[1] + '">' + esc(w[0]) + '</span>' + (o.total ? " · " + won(o.total) : "") + " · 주문 " + md(o.ordered_at) + '</span></li>';
+        '<span class="pc-sub"><span class="pc-when ' + w[1] + '">' + esc(w[0]) + '</span>' + (o.total ? " · " + won(o.total) : "") + " · 주문 " + md(o.ordered_at) +
+        (o.invoice ? ' · ' + esc(o.carrier || "") + ' <span class="pc-inv">' + esc(o.invoice) + '</span>' : '') + '</span></li>';   // 택배사·송장번호(11-13)
     }
     function render(d) {
       var body = document.getElementById("pcBody"), setup = document.getElementById("pcSetup");
