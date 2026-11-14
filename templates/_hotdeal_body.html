@@ -16,6 +16,9 @@
   .hd-meta { font-size: 13px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
   .hd-meta b { color: var(--danger, #c0392b); font-size: 15px; }
   .hd-links { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .hd-save-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .hd-btn.hd-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); font-weight: 600; padding: 7px 14px; }
+  .hd-btn:disabled { opacity: .6; cursor: default; }
   .hd-links a, .hd-btn { font-size: 13px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); color: var(--text); background: var(--surface); text-decoration: none; cursor: pointer; }
   .hd-links a.go { background: var(--accent, #3b6ef5); color: #fff; border-color: transparent; }
   .hd-raw { white-space: pre-wrap; font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
@@ -73,9 +76,10 @@
     <div class="hd-row"><label><input type="checkbox" id="hdKwOn"> 키워드 알림</label><span class="hd-muted">— 키워드가 들어간 새 딜만 보냄</span></div>
     <textarea id="hdKw" placeholder="한 줄에 하나 (예: 에어팟)"></textarea>
     <div class="hd-row"><label><input type="checkbox" id="hdFeedOn"> 새 딜 전체 피드 보내기</label><span class="hd-muted">(중복 뺀 것만)</span></div>
-    <div class="hd-row"><label>보관 기간 <input type="number" id="hdKeep" min="7" max="730" style="width:5em;flex:none;"> 일</label>
-      <button type="button" class="hd-btn" id="hdSetSave">저장</button></div>
+    <div class="hd-row"><label>보관 기간 <input type="number" id="hdKeep" min="7" max="730" style="width:5em;flex:none;"> 일</label></div>
     <div class="hd-muted">보내는 곳(봇·방)은 설정 > 알림의 "핫딜 키워드 알림"·"핫딜 전체 피드"에서 정해요.</div>
+    <div class="hd-save-bar"><span class="hd-muted" id="hdSetDirty"></span>
+      <button type="button" class="hd-btn hd-primary" id="hdSetSave">알림·보관 설정 저장</button></div>
   </div>
 </section>
 <div class="hd-toast" id="hdToast" role="status" aria-live="polite"></div>
@@ -229,9 +233,17 @@
       "추가했어요 — 다음 수집 때 최근 7일치를 가져와요", function() { b.outerHTML = '<span class="hd-muted">등록됨</span>'; loadChan(); });
   });
   $("hdRunBtn").onclick = function() { post("/api/hotdeal/run", {}, "가져오기 시작했어요(1~2분)", function() { setTimeout(loadChan, 4000); setTimeout(function() { loadChan(); load(false); }, 60000); }); };
+  // 위 칸(키워드 알림·키워드·전체 피드·보관 기간)을 하나라도 바꾸면 '저장 안 됨' 표시 — 저장 버튼이 전부 저장함을 알게(11-14)
+  ["hdKwOn", "hdFeedOn", "hdKw", "hdKeep"].forEach(function(id) {
+    var e = $(id); e.addEventListener("input", function() { $("hdSetDirty").textContent = "바뀐 내용이 아직 저장 안 됐어요"; });
+    e.addEventListener("change", function() { $("hdSetDirty").textContent = "바뀐 내용이 아직 저장 안 됐어요"; });
+  });
   $("hdSetSave").onclick = function() {
+    var b = this; b.disabled = true; b.textContent = "저장 중…";
     post("/api/hotdeal/settings", { kw_on: $("hdKwOn").checked, feed_on: $("hdFeedOn").checked, keep_days: $("hdKeep").value,
-      keywords: $("hdKw").value.split("\n").map(function(s) { return s.trim(); }).filter(Boolean) }, "저장했어요", loadChan);
+      keywords: $("hdKw").value.split("\n").map(function(s) { return s.trim(); }).filter(Boolean) }, "알림·보관 설정을 저장했어요",
+      function() { $("hdSetDirty").textContent = ""; })     // 저장 뒤 채널·로그인 상태를 다시 불러오지 않음(로그인 확인이 10초 넘게 걸리던 일)
+      .then(function() { b.disabled = false; b.textContent = "알림·보관 설정 저장"; });
   };
   api("/api/hotdeal/channels").then(function(r) { if (r.d && r.d.ok) { CH = r.d.channels; fillChSel(); } });
   load(false);

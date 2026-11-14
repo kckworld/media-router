@@ -97,7 +97,7 @@ class TG:
     # ── 로그인
     def status(self, fresh: bool = False) -> dict:
         t, cached = self._status
-        if cached and not fresh and time.time() - t < 600:
+        if cached and not fresh and time.time() - t < 1800:   # 수집(5분마다)이 새로 채워 줌
             return dict(cached, pending=bool(self._pending))
         if cached and _RUN_LOCK.locked():                 # 수집 중이면 기다리지 않고 기억해 둔 값
             return dict(cached, pending=bool(self._pending), busy=True)
@@ -105,6 +105,12 @@ class TG:
         if not out.get("error"):
             self._status = (time.time(), out)
         return out
+
+    def _status_now_offline(self) -> dict:
+        aid, _ = self.api()
+        return {"api": bool(aid), "api_source": self.api_source(), "telethon": HAVE_TELETHON,
+                "session": (self.dir / "tg.session").exists(), "authorized": False, "me": "",
+                "pending": bool(self._pending)}
 
     def _status_now(self) -> dict:
         aid, _ = self.api()
@@ -187,7 +193,16 @@ class TG:
 
         async def f(c):
             if not await c.is_user_authorized():
+                self._status = (0.0, None)
                 raise RuntimeError("텔레그램 로그인이 필요해요")
+            # 수집이 로그인돼 있음을 확인했으니 화면용 로그인 상태도 새로 기억 — 화면이 따로 텔레그램에 접속(10~15초)하지 않게(11-14)
+            try:
+                me = await c.get_me()
+                st = self._status_now_offline()
+                st.update(authorized=True, me=(me.first_name or "") + (" @" + me.username if me.username else ""))
+                self._status = (time.time(), st)
+            except Exception:
+                pass
             res = {}
             for ch in channels:
                 if time.time() - start > budget:
