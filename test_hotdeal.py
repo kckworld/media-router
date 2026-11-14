@@ -86,7 +86,28 @@ def test_parse_jirum_format():
     p = hotdeal.parse("🔥🔥🔥무지성 15,470원 (45.5% 할인)🔥🔥🔥\n풀무원 아임리얼100 푸룬, 120ml, 24개\n\n🔥선구매후고민\n📌 가격 현황\n- 정상가: 28,385원")
     assert p["title"] == "풀무원 아임리얼100 푸룬, 120ml, 24개" and p["price"] == 15470
     p = hotdeal.parse("☆특가 3,680원\n가격더다운* 240g\n\n📦 특가 바로가기\nhttps://link.coupang.com/a/iAAGqJXJpQ")
-    assert p["title"] == "가격더다운 240g" and p["price"] == 3680 and p["shop"] == "쿠팡"
+    assert p["title"] == "(상품명 없음) 가격더다운 240g" and p["price"] == 3680 and p["shop"] == "쿠팡"
+    # 11-14 원문에 상품명이 없는 글 — 꼬리표를 제목으로 쓰지 않음
+    for tag, want in [("역대최저가", "역대최저가"), ("원래가", "원래가"), ("개당", "개당"), ("100g당", "100g당"),
+                      ("지금특가 * 6개", "지금특가 6개"), ("댕댕이특가 * 300g", "댕댕이특가 300g"), ("지금특가 * 2g × 2개", "지금특가 2g × 2개")]:
+        p = hotdeal.parse("☆특가 8,720원\n%s\n\n📦 특가 바로가기\nhttps://link.coupang.com/a/iFJOKZdQjs\n\n이 포스팅은 쿠팡 파트너스 활동의 일환" % tag)
+        assert p["title"] == "(상품명 없음) " + want and p["price"] == 8720 and p["shop"] == "쿠팡", tag
+    assert hotdeal.parse("☆특가 9,000원\n지금특가 * 1kg 곰곰 한돈 삼겹살 구이용 (냉장)")["title"] == "곰곰 한돈 삼겹살 구이용 (냉장)"
+    assert hotdeal.parse("☆특가 9,000원\n지금특가 * 400g × 2봉")["title"] == "(상품명 없음) 지금특가 400g × 2봉"
+    # 상품명이 있으면 그대로
+    assert hotdeal.parse("☆특가 5,000원\n대상 종가 석박지\n\n📦 특가 바로가기")["title"] == "대상 종가 석박지"
+    assert hotdeal.parse("☆특가 5,000원\n꿀꽈배기, 141g, 3개")["title"] == "꿀꽈배기, 141g, 3개"
+
+
+def test_parse_price_check_header_and_tail_price():
+    t = ("📉 가격 체크 | -8%\n\n아디다스 테크노카오스 2000 운동화 (40,740원) (무료)\n\n💰 40,740원\n"
+         "최근 추적가 44,440원 → 3,700원 하락\n\n🏬 지마켓\n\n최근 추적 가격보다 8% 저렴해졌습니다.\n")
+    p = hotdeal.parse(t)
+    assert p["title"] == "아디다스 테크노카오스 2000 운동화" and p["price"] == 40740 and p["shop"] == "G마켓"
+    p = hotdeal.parse(" 아디다스 방한화 30,520원 \nhttps://www.clien.net/service/board/jirum/19290000")
+    assert p["title"] == "아디다스 방한화" and p["price"] == 30520
+    p = hotdeal.parse("[뽐뿌] [기타] PS5 Pro 2TB 1,298,000원 / 듀얼센스 87,500원\nhttps://www.ppomppu.co.kr/zboard/view.php?id=ppomppu&no=1")
+    assert p["title"] == "PS5 Pro 2TB 1,298,000원 / 듀얼센스 87,500원"
     p = hotdeal.parse("에어팟 프로2\n정가 359,000원\n할인: 160,000원\n판매가 199,000원")
     assert p["price"] == 199000
 

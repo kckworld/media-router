@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 DUP_WINDOW = 48 * 3600
-PARSE_VER = 5          # 파싱 규칙을 바꾸면 올림 → 수집 때 저장된 딜을 다시 정리
+PARSE_VER = 6          # 파싱 규칙을 바꾸면 올림 → 수집 때 저장된 딜을 다시 정리
 _lock = threading.Lock()
 
 # 쇼핑몰 판별: 도메인 끝부분 → 이름
@@ -101,6 +101,12 @@ INFO_PREFIX = ("💰", "🏬", "🔗", "📢", "※", "👉", "▶", "➡", "�
 # '정상가 26,486원', '할인: 9,826원', '적립', '쿠폰' 줄의 금액은 판매가가 아님(11-13 뽐질)
 NOT_PRICE = re.compile(r"정상가|정가|원가|할인\s*[:：]|할인\s*금액|할인액|적립|쿠폰|캐시백|포인트|배송비|이상\s*구매|최소")
 # 첫 줄이 '👍대박 16,660원 (37.1% 할인)'처럼 가격 머리말이면 가격으로 쓰고 제목은 다음 줄에서
+# 뽐질 '☆특가 8,720원\n역대최저가' 처럼 둘째 줄이 상품명 아닌 꼬리표뿐인 글(11-14) — 원문에 상품명이 아예 없음
+# '역대최저가', '원래가', '개당', '100g당', '지금특가 * 100g', '댕댕이특가 * 300g', '가격더다운* 240g'
+NONAME = re.compile(r"^(?:역대\s*최저가|최저가|원래가|개당|[\d.]*\s*(?:g|kg|ml|L|개|매|롤|봉)\s*당|"
+                    r"(?:\S{0,4}\s)?\S{0,6}(?:특가|최저가|다운)\s*\*?\s*(?:\d[\d.,]*\s*(?:g|kg|ml|L|개입|개|봉|팩|매|롤|입|구)\b.*)?)$", re.I)
+# 10초핫딜 '📉 가격 체크 | -8%' 머리말(11-14)
+HEAD_PCT = re.compile(r"^(?:가격\s*체크|가격\s*하락|가격\s*인하)(?:\s*[|·:]?\s*-?\d+(?:\.\d+)?%?)?$")
 PRICE_HEAD = re.compile(r"^(?:(?:대박|초대박|초특가|특가|역대가|역대급|최저가|핫딜|할인가|판매가|가격|무지성)\s*[:：]?\s*)?((?:\d{1,3}(?:,\d{3})+|\d{3,8}))\s*원(?:\s*\([^)]*\))?\s*$")
 
 
@@ -120,7 +126,7 @@ def parse(text: str, urls=()) -> dict:
     # 텔레그램 자체 링크(t.me)·채널 홍보 링크·그림 주소는 상품 링크가 아님
     goods = [u for u in allurls if not re.match(r"https?://(t\.me|telegram\.me|telegra\.ph)/", u) and not IMG.search(u)]
     url = goods[0] if goods else ""
-    shop_text, title, price = "", "", None
+    shop_text, title, price, note = "", "", None, ""
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -156,11 +162,29 @@ def parse(text: str, urls=()) -> dict:
             if price is None:
                 price = int(m.group(1).replace(",", ""))
             continue
+        if not title and NONAME.match(c):
+            # '지금특가 1kg 곰곰 한돈 삼겹살'처럼 용량 뒤에 이름이 붙어 있으면 그걸 제목으로
+            rest = re.sub(r"^.*?(?:특가|최저가|다운)\s*\*?\s*\d[\d.,]*\s*(?:g|kg|ml|L|개입|개|봉|팩|매|롤|입|구)\s*", "", c, flags=re.I)
+            if rest != c and len(re.findall(r"[가-힣A-Za-z]", rest)) >= 4 and not re.match(r"^[×x*\d]", rest):
+                c = rest
+            else:
+                note = note or re.sub(r"\s*\*\s*", " ", c).strip()
+                continue
+        if re.search(r"파트너스\s*활동|쉐어링크\s*활동|수수료를\s*제공받", c):   # 제휴 고지문은 제목 아님
+            continue
+        if not title and HEAD_PCT.match(c):
+            continue
         if title or len(c) < 2 or re.fullmatch(r"[\d,\s원%↓→\-()/]+", c) or HEADER.match(c.replace(" ", " ")):
             continue
         if len(c) <= 8 and re.search(r"(특가|핫딜|알림|세일)$", c):
             continue
         title = re.sub(r"\s*\(\s*[\d,]+\s*원[^)]*\)\s*(\(무료\)|\(유료\))?\s*$", "", c).strip() or c   # 끝의 '(30,305원/무료)'는 가격 칸에
+    # 클리앙·뽐뿌 '아디다스 방한화 30,520원' — 제목 끝 가격은 가격 칸으로('PS5 1,298,000원 / 듀얼센스 87,500원'처럼 가격이 여럿이면 그대로)
+    m = re.search(r"\s+((?:\d{1,3}(?:,\d{3})+|\d{3,8}))\s*원$", title)
+    if m and len(title[:m.start()].strip()) >= 4 and "원" not in title[:m.start()]:
+        if price is None:
+            price = int(m.group(1).replace(",", ""))
+        title = title[:m.start()].strip()
     if price is None:
         # 뽐뿌·클리앙 '(34,700원/2,500원)' = (가격/배송비) → 슬래시 앞이 가격(11-14: 배송비 2,500원이 가격으로 잡힘)
         m = re.search(r"\(\s*((?:\d{1,3}(?:,\d{3})+|\d{3,8}))\s*원\s*/[^)]*\)", text)
@@ -176,6 +200,8 @@ def parse(text: str, urls=()) -> dict:
                 prices += [int(x.replace(",", "")) for x in PRICE.findall(l)]
         prices = [p for p in prices if 100 <= p <= 100_000_000]
         price = min(prices) if prices else None          # '정가 39,900원 → 12,900원'이면 싼 쪽
+    if not title and note:
+        title = "(상품명 없음) " + note          # 원문에 이름이 없음 — 링크를 눌러 봐야 앎
     shop = _shop_word(shop_text) or shop_text
     if not shop and url:
         shop = shop_of(url)
