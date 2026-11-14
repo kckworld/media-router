@@ -21,7 +21,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 DUP_WINDOW = 48 * 3600
 PARSE_VER = 6          # 파싱 규칙을 바꾸면 올림 → 수집 때 저장된 딜을 다시 정리
-_lock = threading.Lock()
+_lock = threading.RLock()   # DB 연결 하나를 스레드들이 같이 씀 → 읽기·쓰기 모두 이 잠금 안에서
 
 # 쇼핑몰 판별: 도메인 끝부분 → 이름
 SHOPS = [
@@ -232,6 +232,7 @@ class Store:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.fts = False
+        self._conn = None
         with self._db() as c:
             c.execute("pragma journal_mode=wal")          # 5분마다 쓰는 동안에도 화면 검색이 막히지 않게
             c.executescript("""
@@ -253,14 +254,18 @@ class Store:
 
     @contextmanager
     def _db(self):
-        """쓰고 나면 꼭 닫음 — 안 닫은 연결이 잠금을 쥐고 있으면 다른 쓰기가 timeout만큼 기다림(11-13 시험에서 발견)"""
-        c = sqlite3.connect(str(self.path), timeout=15)
-        c.row_factory = sqlite3.Row
-        try:
+        """연결을 열어 둔 채 다시 씀(11-15). 쓸 때마다 열고 닫으면 마지막 연결을 닫을 때 WAL 체크포인트+fsync가 돌아
+        이 NAS(btrfs)에서 저장 한 번에 6~10초 걸림(복사본 측정) — 07-25 체크 목록 저장 지연(db.py)과 같은 원인.
+        `with c:`가 매번 커밋/롤백하므로 트랜잭션이 열린 채 남아 다른 쓰기를 막지는 않음."""
+        with _lock:
+            c = self._conn
+            if c is None or not self.path.exists():
+                c = sqlite3.connect(str(self.path), timeout=15, check_same_thread=False)
+                c.row_factory = sqlite3.Row
+                c.execute("pragma synchronous=normal")      # WAL에선 체크포인트 때만 fsync
+                self._conn = c
             with c:
                 yield c
-        finally:
-            c.close()
 
     # ── 설정·상태(작은 key/value)
     def meta(self, k: str, default=None):

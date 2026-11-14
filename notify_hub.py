@@ -180,9 +180,19 @@ def set_rooms(d: dict, rooms: list) -> str | None:
 
 
 # ───────────────────────────── 기록 ─────────────────────────────
+_conns: dict = {}
+
+
 def _db(path: Path) -> sqlite3.Connection:
+    """경로별 연결을 열어 둔 채 다시 씀(_lock 안에서만 부를 것). 매번 열고 닫으면 닫을 때 WAL 체크포인트+fsync로
+    btrfs에서 몇 초씩 걸림(11-15 측정, 07-25 db.py와 같은 원인) — 그래서 호출하는 쪽은 닫지 않음."""
+    key = str(path)
+    c = _conns.get(key)
+    if c is not None and Path(path).exists():
+        return c
     new = not Path(path).exists()
-    c = sqlite3.connect(str(path), timeout=10)
+    c = sqlite3.connect(str(path), timeout=10, check_same_thread=False)
+    _conns[key] = c
     # NAS 디스크가 바쁘면 커밋마다 fsync가 몇 초씩 걸려 알림이 늦어진다(11-10 테스트에서 확인) → WAL + NORMAL
     c.execute("PRAGMA journal_mode=WAL")
     c.execute("PRAGMA synchronous=NORMAL")
@@ -202,15 +212,12 @@ def log(path: Path, key: str, name: str, channel: str, target: str, text: str, p
         error: str = "", source: str = "") -> None:
     with _lock:
         c = _db(path)
-        try:
+        with c:                                     # 실패해도 롤백 — 열어 둔 연결에 트랜잭션이 남아 다른 쓰기를 막지 않게
             c.execute("INSERT INTO log (ts,key,name,channel,target,text,photo,status,error,source) VALUES (?,?,?,?,?,?,?,?,?,?)",
                       (now_str(), key, name, channel, target, (text or "")[:TEXT_MAX], (photo or "")[:500], status,
                        (error or "")[:300], source))
             cut = (datetime.now(KST) - timedelta(days=LOG_KEEP_DAYS)).strftime("%Y-%m-%d")
             c.execute("DELETE FROM log WHERE ts < ?", (cut,))
-            c.commit()
-        finally:
-            c.close()
 
 
 def query_log(path: Path, key: str = "", status: str = "", q: str = "", date_from: str = "", date_to: str = "",
@@ -237,11 +244,8 @@ def query_log(path: Path, key: str = "", status: str = "", q: str = "", date_fro
     args.append(max(1, min(int(limit or 200), 1000)))
     with _lock:
         c = _db(path)
-        try:
-            cols = ["id", "ts", "key", "name", "channel", "target", "text", "photo", "status", "error", "source"]
-            return [dict(zip(cols, r)) for r in c.execute(sql, args).fetchall()]
-        finally:
-            c.close()
+        cols = ["id", "ts", "key", "name", "channel", "target", "text", "photo", "status", "error", "source"]
+        return [dict(zip(cols, r)) for r in c.execute(sql, args).fetchall()]
 
 
 # ───────────────────────────── 중복 막기 (11-11) ─────────────────────────────
@@ -267,11 +271,8 @@ def seen_recently(key: str, target: str, text: str, photo: str = "", log_path: P
         cut = (datetime.now(KST) - timedelta(seconds=DEDUPE_SEC)).strftime("%Y-%m-%d %H:%M:%S")
         with _lock:
             c = _db(log_path)
-            try:
-                r = c.execute("SELECT 1 FROM log WHERE key=? AND target=? AND text=? AND status='ok' AND ts>=? LIMIT 1",
-                              (key, target, (text or "")[:TEXT_MAX], cut)).fetchone()
-            finally:
-                c.close()
+            r = c.execute("SELECT 1 FROM log WHERE key=? AND target=? AND text=? AND status='ok' AND ts>=? LIMIT 1",
+                          (key, target, (text or "")[:TEXT_MAX], cut)).fetchone()
         if r:
             return True
     return False
